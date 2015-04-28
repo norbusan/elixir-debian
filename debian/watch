@@ -1,0 +1,2 @@
+version=3
+https://github.com/elixir-lang/elixir/releases/ .*/elixir/archive/v(.*).tar.gz

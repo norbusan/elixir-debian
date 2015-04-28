@@ -1,0 +1,5 @@
+elixir (1.1.0~0.20150505-1) UNRELEASED; urgency=medium
+
+  * Initial release (Closes: #nnnn)
+
+ -- Antonio Terceiro <terceiro@debian.org>  Tue, 28 Apr 2015 14:33:52 -0300
