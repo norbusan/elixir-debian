@@ -6,3 +6,13 @@ export PREFIX=/usr
 
 %:
 	dh $@
+
+override_dh_auto_test: .home
+	HOME=$(CURDIR)/.home dh_auto_test
+
+override_dh_auto_clean:
+	$(RM) -r .home
+	dh_auto_clean
+
+.home:
+	mkdir $@
