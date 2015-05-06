@@ -1,4 +1,4 @@
-Source: elixir
+Source: elixir-lang
 Section: interpreters
 Priority: optional
 Maintainer: Antonio Terceiro <terceiro@debian.org>
