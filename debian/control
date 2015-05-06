@@ -11,7 +11,7 @@ Testsuite: autopkgtest
 
 Package: elixir
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: erlang, ${shlibs:Depends}, ${misc:Depends}
 Description: dynamic, functional language on top of the Erlang VM
  Elixir is a dynamic, functional language designed for building scalable and
  maintainable applications.
