@@ -26,7 +26,7 @@ form_error(Meta, File, Module, Desc) ->
 -spec form_warn(list(), binary(), module(), any()) -> ok.
 
 form_warn(Meta, File, Module, Desc) when is_list(Meta) ->
-  {MetaLine, MetaFile} = meta_location(Meta, File),
+  {MetaFile, MetaLine} = meta_location(Meta, File),
   warn(MetaLine, MetaFile, format_error(Module, Desc)).
 
 %% Compilation error.
@@ -57,8 +57,12 @@ parse_error(Line, File, <<"syntax error before: ">>, <<"'end'">>) ->
 
 %% Produce a human-readable message for errors before a sigil
 parse_error(Line, File, <<"syntax error before: ">>, <<"{sigil,", _Rest/binary>> = Full) ->
-  {sigil, _, Sigil, [Content], _} = parse_erl_term(Full),
-  Message = <<"syntax error before: sigil ~", Sigil," with content '", Content/binary, "'">>,
+  {sigil, _, Sigil, [Content|_], _} = parse_erl_term(Full),
+  Content2 = case is_binary(Content) of
+    true -> Content;
+    false -> <<>>
+  end,
+  Message = <<"syntax error before: sigil ~", Sigil," starting with content '", Content2/binary, "'">>,
   do_raise(Line, File, 'Elixir.SyntaxError', Message);
 
 %% Aliases are wrapped in ['']
@@ -196,7 +200,7 @@ handle_file_error(File, {Line, Module, Desc}) ->
 %% Helpers
 
 raise(Meta, File, Kind, Message) when is_list(Meta) ->
-  {MetaLine, MetaFile} = meta_location(Meta, File),
+  {MetaFile, MetaLine} = meta_location(Meta, File),
   do_raise(MetaLine, MetaFile, Kind, Message).
 
 file_format(0, File) ->
@@ -236,15 +240,9 @@ translate_comp_op('=/=') -> '!==';
 translate_comp_op(Other) -> Other.
 
 meta_location(Meta, File) ->
-  case lists:keyfind(file, 1, Meta) of
-    {file, MetaFile} when is_binary(MetaFile) ->
-      case lists:keyfind(keep, 1, Meta) of
-        {keep, MetaLine} when is_integer(MetaLine) -> ok;
-        _ -> MetaLine = 0
-      end,
-      {MetaLine, MetaFile};
-    _ ->
-      {?line(Meta), File}
+  case elixir_utils:meta_location(Meta) of
+    {F, L} -> {F, L};
+    nil    -> {File, ?line(Meta)}
   end.
 
 do_warn(Warning) ->
