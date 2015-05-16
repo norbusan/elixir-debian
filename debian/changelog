@@ -1,5 +1,5 @@
-elixir-lang (1.1.0~0.20150516-1) UNRELEASED; urgency=medium
+elixir-lang (1.1.0~0.20150516-1) unstable; urgency=medium
 
   * Initial release (Closes: #765522)
 
- -- Antonio Terceiro <terceiro@debian.org>  Tue, 28 Apr 2015 14:33:52 -0300
+ -- Antonio Terceiro <terceiro@debian.org>  Sat, 16 May 2015 17:08:30 -0300
