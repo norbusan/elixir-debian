@@ -111,12 +111,46 @@ defmodule ExUnitTest do
     assert output =~ "4 tests, 1 failure, 3 skipped"
   end
 
-  defp run_with_filter(filters, {async, sync, load_us}) do
-    opts = Keyword.merge(ExUnit.configuration, filters)
-    output = capture_io fn ->
-      Process.put :capture_result, ExUnit.Runner.run(async, sync, opts, load_us)
+  test "log capturing" do
+    defmodule LogCapturingTest do
+      use ExUnit.Case
+
+      require Logger
+
+      setup_all do
+        :ok = Logger.remove_backend(:console)
+        on_exit(fn -> Logger.add_backend(:console, flush: true) end)
+      end
+
+      @tag :capture_log
+      test "one" do
+        Logger.debug("one")
+        assert 1 == 1
+      end
+
+      @tag :capture_log
+      test "two" do
+        Logger.debug("two")
+        assert 1 == 2
+      end
+
+      @tag capture_log: []
+      test "three" do
+        Logger.debug("three")
+        assert 1 == 2
+      end
+
+      test "four" do
+        Logger.debug("four")
+        assert 1 == 2
+      end
     end
-    {Process.get(:capture_result), output}
+
+    output = capture_io(&ExUnit.run/0)
+    assert output =~ "[debug] two"
+    refute output =~ "[debug] one"
+    assert output =~ "[debug] three"
+    refute output =~ "[debug] four"
   end
 
   test "it registers only the first test with any given name" do
@@ -137,5 +171,33 @@ defmodule ExUnitTest do
     assert capture_io(fn ->
       assert ExUnit.run == %{failures: 0, skipped: 0, total: 1}
     end) =~ "1 test, 0 failure"
+  end
+
+  test "it produces error on not implemented tests" do
+    defmodule TestNotImplemented do
+      use ExUnit.Case, async: false
+
+      setup context do
+        assert context[:not_implemented]
+        :ok
+      end
+
+      test "this is not implemented yet"
+    end
+
+    output = capture_io(fn ->
+      assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
+    end)
+
+    assert output =~ "Not yet implemented"
+    assert output =~ "1 test, 1 failure"
+  end
+
+  defp run_with_filter(filters, {async, sync, load_us}) do
+    opts = Keyword.merge(ExUnit.configuration, filters)
+    output = capture_io fn ->
+      Process.put(:capture_result, ExUnit.Runner.run(async, sync, opts, load_us))
+    end
+    {Process.get(:capture_result), output}
   end
 end

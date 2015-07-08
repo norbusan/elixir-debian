@@ -55,14 +55,15 @@ defmodule Mix.Tasks.Archive.Install do
     previous = previous_versions(src)
 
     if opts[:force] || should_install?(src, previous) do
-      remove_previous_versions(previous)
-
       archive = Path.join(Mix.Local.archives_path(), basename(src))
       check_file_exists(src, archive)
+      opts = [force: true] ++ opts
 
       if Mix.Utils.copy_path!(src, archive, opts) do
         Mix.shell.info [:green, "* creating ", :reset, Path.relative_to_cwd(archive)]
         Mix.Local.check_archive_elixir_version archive
+
+        unless archive in previous, do: remove_previous_versions(previous)
       end
 
       true = Code.append_path(Mix.Archive.ebin(archive))

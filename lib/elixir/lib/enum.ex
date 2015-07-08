@@ -1403,6 +1403,8 @@ defmodule Enum do
   Invokes `fun` for each element in the collection passing that element and the
   accumulator `acc` as arguments. `fun`'s return value is stored in `acc`.
   The first element of the collection is used as the initial value of `acc`.
+  If you wish to use another value for `acc`, use `Enumerable.reduce/3`.
+  This function won't call the specified function for enumerables that are 1-element long.
   Returns the accumulator.
 
   ## Examples
@@ -1433,6 +1435,25 @@ defmodule Enum do
       :first        -> raise Enum.EmptyError
       {:acc, acc} -> acc
     end
+  end
+
+  @doc """
+  Reduces the collection until halt is emitted.
+
+  The return value for `fun` is expected to be
+  `{:cont, acc}`, return `{:halt, acc}` to end the reduction early.
+  Returns the accumulator.
+
+  ## Examples
+
+      iex> Enum.reduce_while(1..100, 0, fn i, acc ->
+      ...>   if i < 3, do: {:cont, acc + i}, else: {:halt, acc}
+      ...> end)
+      3
+
+  """
+  def reduce_while(collection, acc, fun) do
+    Enumerable.reduce(collection, {:cont, acc}, fun) |> elem(1)
   end
 
   @doc """

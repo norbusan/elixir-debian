@@ -381,7 +381,7 @@ defmodule Stream do
   end
 
   @doc """
-  Creates a stream that emits a value every `n` milliseconds.
+  Creates a stream that emits a value after the given period `n` in milliseconds.
 
   The values emitted are an increasing counter starting at `0`.
 
@@ -391,6 +391,7 @@ defmodule Stream do
       [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
   """
+  # TODO: Allow it to handle system messages.
   @spec interval(non_neg_integer) :: Enumerable.t
   def interval(n) do
     unfold 0, fn (count) ->
@@ -715,9 +716,11 @@ defmodule Stream do
         next.({:halt, next_acc})
         :erlang.raise(kind, reason, stacktrace)
     else
-      {:halted, [:outer|acc]} ->
+      # Only take into account outer halts when the op is not halt itself.
+      # Otherwise, we were the ones wishing to halt, so we should just stop.
+      {:halted, [:outer|acc]} when op != :halt ->
         do_transform(user_acc, user, fun, next_acc, next, {:cont, acc}, inner)
-      {:halted, [:inner|acc]} ->
+      {:halted, [_|acc]} ->
         next.({:halt, next_acc})
         {:halted, acc}
       {:done, [_|acc]} ->

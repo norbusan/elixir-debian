@@ -15,11 +15,11 @@ defmodule String.Unicode do
   data_path = Path.join(__DIR__, "UnicodeData.txt")
 
   {codes, whitespace} = Enum.reduce File.stream!(data_path), {[], []}, fn(line, {cacc, wacc}) ->
-    [ codepoint, _name, _category,
-      _class, bidi, _decomposition,
-      _numeric_1, _numeric_2, _numeric_3,
-      _bidi_mirror, _unicode_1, _iso,
-      upper, lower, title ] = :binary.split(line, ";", [:global])
+    [codepoint, _name, _category,
+     _class, bidi, _decomposition,
+     _numeric_1, _numeric_2, _numeric_3,
+     _bidi_mirror, _unicode_1, _iso,
+     upper, lower, title] = :binary.split(line, ";", [:global])
 
     title = :binary.part(title, 0, byte_size(title) - 1)
 
@@ -36,42 +36,42 @@ defmodule String.Unicode do
   special_path = Path.join(__DIR__, "SpecialCasing.txt")
 
   codes = Enum.reduce File.stream!(special_path), codes, fn(line, acc) ->
-    [ codepoint, lower, title, upper, _comment ] = :binary.split(line, "; ", [:global])
+    [codepoint, lower, title, upper, _comment] = :binary.split(line, "; ", [:global])
     key = to_binary.(codepoint)
     :lists.keystore(key, 1, acc, {key, to_binary.(upper), to_binary.(lower), to_binary.(title)})
   end
 
   # Downcase
 
-  def downcase(string), do: do_downcase(string) |> IO.iodata_to_binary
+  def downcase(string), do: downcase(string, "")
 
   for {codepoint, _upper, lower, _title} <- codes, lower && lower != codepoint do
-    defp do_downcase(unquote(codepoint) <> rest) do
-      unquote(:binary.bin_to_list(lower)) ++ downcase(rest)
+    defp downcase(unquote(codepoint) <> rest, acc) do
+      downcase(rest, acc <> unquote(lower))
     end
   end
 
-  defp do_downcase(<< char, rest :: binary >>) do
-    [char|do_downcase(rest)]
+  defp downcase(<<char, rest :: binary>>, acc) do
+    downcase(rest, <<acc::binary, char>>)
   end
 
-  defp do_downcase(""), do: []
+  defp downcase("", acc), do: acc
 
   # Upcase
 
-  def upcase(string), do: do_upcase(string) |> IO.iodata_to_binary
+  def upcase(string), do: upcase(string, "")
 
   for {codepoint, upper, _lower, _title} <- codes, upper && upper != codepoint do
-    defp do_upcase(unquote(codepoint) <> rest) do
-      unquote(:binary.bin_to_list(upper)) ++ do_upcase(rest)
+    defp upcase(unquote(codepoint) <> rest, acc) do
+      upcase(rest, acc <> unquote(upper))
     end
   end
 
-  defp do_upcase(<< char, rest :: binary >>) do
-    [char|do_upcase(rest)]
+  defp upcase(<<char, rest :: binary>>, acc) do
+    upcase(rest, <<acc::binary, char>>)
   end
 
-  defp do_upcase(""), do: []
+  defp upcase("", acc), do: acc
 
   # Titlecase once
 
@@ -88,6 +88,7 @@ defmodule String.Unicode do
   end
 
   # Strip
+
   def lstrip(string)
 
   def lstrip(""), do: ""
@@ -100,27 +101,45 @@ defmodule String.Unicode do
 
   def lstrip(string) when is_binary(string), do: string
 
-  def rstrip(string) when is_binary(string) do
-    do_rstrip(string, [], [])
-  end
-
+  @whitespace_max_size 3
   for codepoint <- whitespace do
-    c = :binary.bin_to_list(codepoint) |> :lists.reverse
+    # We need to increment @whitespace_max_size as well
+    # as the small table (_s) if we add a new entry here.
+    case byte_size(codepoint) do
+      3 ->
+        defp do_rstrip_l(unquote(codepoint)), do: -3
+      2 ->
+        defp do_rstrip_l(<<_, unquote(codepoint)>>), do: -2
 
-    defp do_rstrip(unquote(codepoint) <> rest, acc1, acc2) do
-      do_rstrip(rest, unquote(c) ++ (acc1 || acc2), acc2)
+        defp do_rstrip_s(unquote(codepoint)), do: <<>>
+      1 ->
+        defp do_rstrip_l(<<unquote(codepoint), unquote(codepoint), unquote(codepoint)>>), do: -3
+        defp do_rstrip_l(<<_, unquote(codepoint), unquote(codepoint)>>), do: -2
+        defp do_rstrip_l(<<_, _, unquote(codepoint)>>), do: -1
+
+        defp do_rstrip_s(<<x, unquote(codepoint)>>), do: do_rstrip_s(<<x>>)
+        defp do_rstrip_s(unquote(codepoint)), do: <<>>
     end
   end
 
-  defp do_rstrip(<< char, rest :: binary >>, nil, acc2) do
-    do_rstrip(rest, nil, [char|acc2])
+  defp do_rstrip_l(_), do: 0
+  defp do_rstrip_s(o), do: o
+
+  def rstrip(string) when is_binary(string) do
+    rstrip(string, byte_size(string))
   end
 
-  defp do_rstrip(<< char, rest :: binary >>, acc1, _acc2) do
-    do_rstrip(rest, nil, [char|acc1])
+  defp rstrip(string, size) when size < @whitespace_max_size do
+    do_rstrip_s(string)
   end
 
-  defp do_rstrip(<<>>, _acc1, acc2), do: acc2 |> :lists.reverse |> IO.iodata_to_binary
+  defp rstrip(string, size) do
+    trail = binary_part(string, size, -@whitespace_max_size)
+    case do_rstrip_l(trail) do
+      0 -> string
+      x -> rstrip(binary_part(string, 0, size + x), size + x)
+    end
+  end
 
   # Split
 
@@ -191,7 +210,7 @@ defmodule String.Graphemes do
   end
 
   cluster = Enum.reduce File.stream!(cluster_path), HashDict.new, fn(line, dict) ->
-    [ _full, first, last, class ] = Regex.run(regex, line)
+    [_full, first, last, class] = Regex.run(regex, line)
 
     # Skip surrogates
     if first == "D800" and last == "DFFF" do

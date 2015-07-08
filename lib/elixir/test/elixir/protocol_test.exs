@@ -123,10 +123,10 @@ defmodule ProtocolTest do
   test "protocol defines callbacks" do
     if :erlang.system_info(:otp_release) >= '18' do
       assert get_callbacks(Sample, :ok, 1) ==
-        [{:type, 9, :fun, [{:type, 9, :product, [{:user_type, 9, :t, []}]}, {:type, 9, :boolean, []}]}]
+        [{:type, [9], :fun, [{:type, [9], :product, [{:user_type, [9], :t, []}]}, {:type, [9], :boolean, []}]}]
 
       assert get_callbacks(WithAny, :ok, 1) ==
-        [{:type, 16, :fun, [{:type, 16, :product, [{:user_type, 16, :t, []}]}, {:type, 16, :term, []}]}]
+        [{:type, [16], :fun, [{:type, [16], :product, [{:user_type, [16], :t, []}]}, {:type, [16], :term, []}]}]
     else
       assert get_callbacks(Sample, :ok, 1) ==
         [{:type, 9, :fun, [{:type, 9, :product, [{:type, 9, :t, []}]}, {:type, 9, :boolean, []}]}]
@@ -196,12 +196,12 @@ defmodule ProtocolTest do
   test "derives protocol implicitly" do
     struct = %ImplStruct{a: 1, b: 1}
     assert WithAny.ok(struct) == {:ok, struct}
+
+    struct = %NoImplStruct{a: 1, b: 1}
+    assert WithAny.ok(struct) == {:ok, struct}
   end
 
   test "derives protocol explicitly" do
-    struct = %ImplStruct{a: 1, b: 1}
-    assert Derivable.ok(struct) == {:ok, struct, %ImplStruct{}, []}
-
     struct = %ImplStruct{a: 1, b: 1}
     assert Derivable.ok(struct) == {:ok, struct, %ImplStruct{}, []}
 

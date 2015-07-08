@@ -555,6 +555,14 @@ defmodule BadStructError do
   end
 end
 
+defmodule BadMapError do
+  defexception [term: nil]
+
+  def message(exception) do
+    "expected a map, got: #{inspect(exception.term)}"
+  end
+end
+
 defmodule MatchError do
   defexception [term: nil]
 
@@ -672,7 +680,12 @@ defmodule KeyError do
   defexception key: nil, term: nil
 
   def message(exception) do
-    "key #{inspect exception.key} not found in: #{inspect exception.term}"
+    msg = "key #{inspect exception.key} not found"
+    if exception.term != nil do
+      msg <> " in: #{inspect exception.term}"
+    else
+      msg
+    end
   end
 end
 
@@ -769,6 +782,20 @@ defmodule ErlangError do
 
   def normalize({:badmatch, term}, _stacktrace) do
     %MatchError{term: term}
+  end
+
+  def normalize({:badmap, term}, _stacktrace) do
+    %BadMapError{term: term}
+  end
+
+  def normalize({:badkey, key}, stacktrace) do
+    term =
+      case stacktrace || :erlang.get_stacktrace do
+        [{:maps, :update, [_, _, map], _}|_] -> map
+        [{:maps, :get, [_, map], _}|_] -> map
+        _ -> nil
+      end
+    %KeyError{key: key, term: term}
   end
 
   def normalize({:case_clause, term}, _stacktrace) do

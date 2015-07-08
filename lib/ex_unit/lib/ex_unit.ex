@@ -23,11 +23,11 @@ defmodule ExUnit do
         end
       end
 
-  To run the tests above, run the file
-  using `elixir` from the command line. Assuming you named the file
-  `assertion_test.exs`, you can run it as:
+  To run the tests above, run the file using `elixir` from the
+  command line. Assuming you named the file `assertion_test.exs`,
+  you can run it as:
 
-      bin/elixir assertion_test.exs
+      elixir assertion_test.exs
 
   ## Case, Callbacks and Assertions
 
@@ -72,13 +72,11 @@ defmodule ExUnit do
       * `:state` - the test state (see ExUnit.state)
       * `:time`  - the time to run the test
       * `:tags`  - the test tags
+      * `:logs`  - the captured logs
 
     """
-    defstruct name: nil,
-              case: nil,
-              state: nil,
-              time: 0,
-              tags: %{}
+    defstruct [:name, :case, :state,
+               time: 0, tags: %{}, logs: ""]
 
     @type t :: %__MODULE__{
                  name: atom,
@@ -169,8 +167,11 @@ defmodule ExUnit do
 
   ExUnit supports the following options:
 
+    * `:assert_receive_timeout` - the timeout to be used on `assert_receive`
+      calls. Defaults to 100ms.
+
     * `:colors` - a keyword list of colors to be used by some formatters.
-      The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/1`
+      The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/0`
 
     * `:formatters` - the formatters that will print results;
       defaults to `[ExUnit.CLIFormatter]`
@@ -188,6 +189,9 @@ defmodule ExUnit do
 
     * `:exclude` - specify which tests are run by skipping tests that match the
       filter
+
+    * `:refute_receive_timeout` - the timeout to be used on `refute_receive`
+      calls. Defaults to 100ms.
 
     * `:seed` - an integer seed value to randomize the test suite
 

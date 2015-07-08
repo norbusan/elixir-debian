@@ -13,7 +13,7 @@ defmodule Logger do
       to avoid clogging logger backends.
 
     * Alternates between sync and async modes to remain
-      performant when required but also apply back-pressure
+      performant when required but also apply backpressure
       when under stress.
 
     * Wraps OTP's `error_logger` to prevent it from
@@ -57,6 +57,13 @@ defmodule Logger do
       no overhead at runtime. Defaults to `:debug` and only
       applies to the `Logger.debug`, `Logger.info`, etc style of calls.
 
+  For example, to configure the `:backends` and `compile_time_purge_level`
+  in a `config/config.exs` file:
+
+      config :logger,
+        backends: [:console],
+        compile_time_purge_level: :info
+
   ### Runtime Configuration
 
   All configuration below can be set via config files but also
@@ -76,10 +83,17 @@ defmodule Logger do
 
     * `:sync_threshold` - if the logger manager has more than
       `sync_threshold` messages in its queue, Logger will change
-      to sync mode, to apply back-pressure to the clients.
+      to sync mode, to apply backpressure to the clients.
       Logger will return to async mode once the number of messages
       in the queue is reduced to `sync_threshold * 0.75` messages.
       Defaults to 20 messages.
+
+  For example, to configure the `:level` and `:truncate` in a
+  `config/config.exs` file:
+
+      config :logger,
+        level: :warn,
+        truncate: 4096
 
   ### Error logger configuration
 
@@ -89,12 +103,12 @@ defmodule Logger do
 
     * `:handle_otp_reports` - redirects OTP reports to Logger so
       they are formatted in Elixir terms. This uninstalls Erlang's
-      logger that prints terms to terminal.
+      logger that prints terms to terminal. Defaults to `true`.
 
     * `:handle_sasl_reports` - redirects supervisor, crash and
       progress reports to Logger so they are formatted in Elixir
       terms. This uninstalls `sasl`'s logger that prints these
-      reports to the terminal.
+      reports to the terminal. Defaults to `false`.
 
     * `:discard_threshold_for_error_logger` - a value that, when
       reached, triggers the error logger to discard messages. This
@@ -102,6 +116,13 @@ defmodule Logger do
       number of messages accepted per second. Once above this
       threshold, the `error_logger` enters discard mode for the
       remainder of that second. Defaults to 500 messages.
+
+  For example, to configure Logger to redirect all `error_logger` messages
+  using a `config/config.exs` file:
+
+      config :logger,
+        handle_otp_reports: true,
+        handle_sasl_reports: true
 
   Furthermore, Logger allows messages sent by Erlang's `error_logger`
   to be translated into an Elixir format via translators. Translators
@@ -115,7 +136,7 @@ defmodule Logger do
 
   The available backends by default are:
 
-    * `:console` - Logs messages to the console (enabled by default)
+    * `:console` - logs messages to the console (enabled by default)
 
   Developers may also implement their own backends, an option that
   is explored with detail below.
@@ -159,7 +180,7 @@ defmodule Logger do
   `config/config.exs` file:
 
       config :logger, :console,
-        format: "\n$date $time [$level] $metadata$message",
+        format: "\n$time $metadata[$level] $levelpad$message\n"
         metadata: [:user_id]
 
   You can read more about formatting in `Logger.Formatter`.
@@ -185,7 +206,7 @@ defmodule Logger do
       {level, group_leader,
         {Logger, message, timestamp, metadata}}
 
-  The level is one of `:error`, `:info`, `:warn` or `:error`,
+  The level is one of `:debug`, `:info`, `:warn` or `:error`,
   as previously described, the group leader is the group
   leader of the process who logged the message, followed by
   a tuple starting with the atom `Logger`, the message as
@@ -428,8 +449,8 @@ defmodule Logger do
       Logger.warn fn -> "expensive to calculate warning" end
 
   """
-  defmacro warn(chardata, metadata \\ []) do
-    macro_log(:warn, chardata, metadata, __CALLER__)
+  defmacro warn(chardata_or_fn, metadata \\ []) do
+    macro_log(:warn, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -441,8 +462,8 @@ defmodule Logger do
       Logger.info fn -> "expensive to calculate info" end
 
   """
-  defmacro info(chardata, metadata \\ []) do
-    macro_log(:info, chardata, metadata, __CALLER__)
+  defmacro info(chardata_or_fn, metadata \\ []) do
+    macro_log(:info, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -454,8 +475,8 @@ defmodule Logger do
       Logger.error fn -> "expensive to calculate error" end
 
   """
-  defmacro error(chardata, metadata \\ []) do
-    macro_log(:error, chardata, metadata, __CALLER__)
+  defmacro error(chardata_or_fn, metadata \\ []) do
+    macro_log(:error, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -467,8 +488,8 @@ defmodule Logger do
       Logger.debug fn -> "expensive to calculate debug" end
 
   """
-  defmacro debug(chardata, metadata \\ []) do
-    macro_log(:debug, chardata, metadata, __CALLER__)
+  defmacro debug(chardata_or_fn, metadata \\ []) do
+    macro_log(:debug, chardata_or_fn, metadata, __CALLER__)
   end
 
   defp macro_log(level, chardata, metadata, caller) do

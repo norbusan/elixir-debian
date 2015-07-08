@@ -1347,8 +1347,9 @@ defmodule Kernel do
               :erlang.error atom.exception([])
             %{__struct__: struct, __exception__: true} = other when is_atom(struct) ->
               :erlang.error other
-            _ ->
-              :erlang.error ArgumentError.exception("raise/1 expects an alias or a string as the first argument")
+            other ->
+              message = "raise/1 expects an alias, string or exception as the first argument, got: #{inspect other}"
+              :erlang.error ArgumentError.exception(message)
           end
         end
     end
@@ -1428,8 +1429,9 @@ defmodule Kernel do
               :erlang.raise :error, atom.exception([]), stacktrace
             %{__struct__: struct, __exception__: true} = other when is_atom(struct) ->
               :erlang.raise :error, other, stacktrace
-            _ ->
-              :erlang.error ArgumentError.exception("reraise/2 expects an alias or a string as the first argument")
+            other ->
+              message = "reraise/2 expects an alias, string or exception as the first argument, got: #{inspect other}"
+              :erlang.error ArgumentError.exception(message)
           end
         end
     end
@@ -2036,7 +2038,7 @@ defmodule Kernel do
   outside of the function call (unlike regular pattern matching with the `=`
   operator):
 
-      iex> match?(x, 1)
+      iex> match?(_x, 1)
       true
       iex> binding()
       []
@@ -3160,9 +3162,18 @@ defmodule Kernel do
       @behaviour Exception
       fields = defstruct unquote(fields)
 
-      @spec exception(String.t) :: Exception.t
-      def exception(msg) when is_binary(msg) do
-        exception(message: msg)
+      if Map.has_key?(fields, :message) do
+        @spec message(Exception.t) :: String.t
+        def message(exception) do
+          exception.message
+        end
+
+        defoverridable message: 1
+
+        @spec exception(String.t) :: Exception.t
+        def exception(msg) when is_binary(msg) do
+          exception(message: msg)
+        end
       end
 
       @spec exception(Keyword.t) :: Exception.t
@@ -3171,15 +3182,6 @@ defmodule Kernel do
       end
 
       defoverridable exception: 1
-
-      if Map.has_key?(fields, :message) do
-        @spec message(Exception.t) :: String.t
-        def message(exception) do
-          exception.message
-        end
-
-        defoverridable message: 1
-      end
     end
   end
 

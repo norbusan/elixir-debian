@@ -96,27 +96,15 @@ defmodule IEx.HelpersTest do
     assert capture_io(fn -> s Enum.all?/1 end) ==
            "@spec all?(t()) :: boolean()\n"
     assert capture_io(fn -> s struct end) ==
-           "@spec struct(module() | %{}, Enum.t()) :: %{}\n"
+           "@spec struct(module() | map(), Enum.t()) :: map()\n"
   end
 
   test "v helper" do
-    assert capture_iex("v") == ":ok"
-    assert capture_iex("1\n2\nv") == String.rstrip """
-      1
-      2
-      1: 1
-      #=> 1
-
-      2: 2
-      #=> 2
-
-      :ok
-      """
-
     assert "** (RuntimeError) v(0) is out of bounds" <> _
            = capture_iex("v(0)")
     assert capture_iex("1\n2\nv(2)") == "1\n2\n2"
     assert capture_iex("1\n2\nv(2)") == capture_iex("1\n2\nv(-1)")
+    assert capture_iex("1\n2\nv(2)") == capture_iex("1\n2\nv()")
   end
 
   test "flush helper" do

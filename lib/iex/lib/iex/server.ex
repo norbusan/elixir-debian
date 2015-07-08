@@ -8,10 +8,21 @@ defmodule IEx.Server do
   @moduledoc false
 
   @doc """
-  Finds where the current IEx server is located.
+  Finds the IEx server, on this or another node.
   """
   @spec whereis :: pid | nil
   def whereis() do
+    Enum.find_value([node()|Node.list], fn node ->
+      server = :rpc.call(node, IEx.Server, :local, [])
+      if is_pid(server), do: server
+    end)
+  end
+
+  @doc """
+  Returns the pid of the IEx server on the local node if exists.
+  """
+  @spec local :: pid | nil
+  def local() do
     # Locate top group leader, always registered as user
     # can be implemented by group (normally) or user
     # (if oldshell or noshell)
@@ -28,6 +39,23 @@ defmodule IEx.Server do
             [current_group: group] -> :group.interfaces(group)[:shell]
           end
       end
+    end
+  end
+
+  @doc """
+  Returns the current session environment if a session exists.
+  """
+  @spec current_env :: Macro.Env.t
+  def current_env() do
+    case IEx.Server.whereis() do
+      nil -> %Macro.Env{}
+      server ->
+        send(server, {:peek_env, self()})
+        receive do
+          {:peek, %Macro.Env{} = env} -> env
+        after
+          5000 -> %Macro.Env{}
+        end
     end
   end
 

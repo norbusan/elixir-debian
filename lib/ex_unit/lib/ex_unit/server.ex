@@ -38,12 +38,25 @@ defmodule ExUnit.Server do
     GenServer.call(__MODULE__, {:remove_device, device})
   end
 
+  def log_capture_on(pid) do
+    GenServer.call(__MODULE__, {:log_capture_on, pid})
+  end
+
+  def log_capture_off(ref) do
+    GenServer.call(__MODULE__, {:log_capture_off, ref})
+  end
+
   ## Callbacks
 
   def init(:ok) do
-    config = %{async_cases: HashSet.new, sync_cases: HashSet.new,
-               start_load: :os.timestamp, captured_devices: HashSet.new}
-    {:ok, config}
+    {:ok, %{
+      async_cases: HashSet.new,
+      sync_cases: HashSet.new,
+      start_load: :os.timestamp,
+      captured_devices: HashSet.new,
+      log_captures: HashSet.new,
+      log_status: nil
+    }}
   end
 
   def handle_call(:start_run, _from, config) do
@@ -68,8 +81,22 @@ defmodule ExUnit.Server do
       %{config | captured_devices: Set.delete(config.captured_devices, device)}}
   end
 
-  def handle_call(request, from, config) do
-    super(request, from, config)
+  def handle_call({:log_capture_on, pid}, _from, config) do
+    ref  = Process.monitor(pid)
+    refs = HashSet.put(config.log_captures, ref)
+
+    if HashSet.size(refs) == 1 do
+      status = Logger.remove_backend(:console)
+      {:reply, {:ok, ref}, %{config | log_captures: refs, log_status: status}}
+    else
+      {:reply, {:ok, ref}, %{config | log_captures: refs}}
+    end
+  end
+
+  def handle_call({:log_capture_off, ref}, _from, config) do
+    Process.demonitor(ref, [:flush])
+    config = remove_log_capture(ref, config)
+    {:reply, :ok, config}
   end
 
   def handle_cast(:start_load, config) do
@@ -87,7 +114,28 @@ defmodule ExUnit.Server do
       %{config | sync_cases: Set.put(config.sync_cases, name)}}
   end
 
-  def handle_cast(request, config) do
-    super(request, config)
+  def handle_info({:DOWN, ref, _, _, _}, config) do
+    config = remove_log_capture(ref, config)
+    {:noreply, config}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  defp remove_log_capture(ref, %{log_captures: refs} = config) do
+    if ref in refs do
+      refs = HashSet.delete(refs, ref)
+      maybe_add_console(refs, config.log_status)
+      %{config | log_captures: refs}
+    else
+      config
+    end
+  end
+
+  defp maybe_add_console(refs, status) do
+    if status == :ok and HashSet.size(refs) == 0 do
+      Logger.add_backend(:console, flush: true)
+    end
   end
 end

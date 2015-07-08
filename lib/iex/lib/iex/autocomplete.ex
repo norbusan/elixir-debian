@@ -104,7 +104,7 @@ defmodule IEx.Autocomplete do
   # Elixir.fun
   defp expand_call({:__aliases__, _, list}, hint) do
     expand_alias(list)
-    |> Module.concat()
+    |> normalize_module
     |> expand_require(hint)
   end
 
@@ -143,7 +143,7 @@ defmodule IEx.Autocomplete do
 
   defp expand_elixir_modules(list, hint) do
     expand_alias(list)
-    |> Module.concat()
+    |> normalize_module
     |> expand_elixir_modules(hint, [])
   end
 
@@ -158,28 +158,24 @@ defmodule IEx.Autocomplete do
     module = Module.concat(Elixir, name)
     Enum.find_value env_aliases(), list, fn {alias, mod} ->
       if alias === module do
-        Module.split(mod) ++ rest
+        case Atom.to_string(mod) do
+          "Elixir." <> mod ->
+            Module.concat [mod|rest]
+          _ ->
+            mod
+        end
       end
     end
   end
 
-  defp env_aliases() do
-    case IEx.Server.whereis() do
-      nil -> []
-      server ->
-        send(server, {:peek_env, self()})
-        receive do
-          {:peek, %Macro.Env{} = env} -> env.aliases
-        after
-          5000 -> []
-        end
-    end
+  defp env_aliases do
+    Application.get_env(:iex, :autocomplete_server).current_env.aliases
   end
 
   defp match_aliases(hint) do
     for {alias, _mod} <- env_aliases(),
         [name] = Module.split(alias),
-        String.starts_with?(name, hint) do
+        starts_with?(name, hint) do
       %{kind: :module, type: :alias, name: name}
     end
   end
@@ -191,18 +187,27 @@ defmodule IEx.Autocomplete do
 
     for mod <- match_modules(base, module === Elixir),
         parts = String.split(mod, "."),
-        depth == length(parts) do
-      %{kind: :module, type: :elixir, name: List.last(parts)}
+        depth <= length(parts) do
+      %{kind: :module, type: :elixir, name: Enum.at(parts, depth-1)}
     end
+    |> Enum.uniq
   end
 
   ## Helpers
 
+  defp normalize_module(mod) do
+    if is_list(mod) do
+      Module.concat(mod)
+    else
+      mod
+    end
+  end
+
   defp match_modules(hint, root) do
     get_modules(root)
     |> :lists.usort()
-    |> Enum.drop_while(& not String.starts_with?(&1, hint))
-    |> Enum.take_while(& String.starts_with?(&1, hint))
+    |> Enum.drop_while(& not starts_with?(&1, hint))
+    |> Enum.take_while(& starts_with?(&1, hint))
   end
 
   defp get_modules(true) do
@@ -218,19 +223,20 @@ defmodule IEx.Autocomplete do
   end
 
   defp get_modules_from_applications do
-    for app <- which_applications(),
-        {:ok, modules} = :application.get_key(elem(app, 0), :modules),
+    for [app] <- loaded_applications(),
+        {:ok, modules} = :application.get_key(app, :modules),
         module <- modules do
       Atom.to_string(module)
     end
   end
 
-  defp which_applications() do
-    try do
-      :application.which_applications(5000)
-    catch
-      :exit, {:timeout, _} -> [{:elixir}, {:iex}]
-    end
+  defp loaded_applications do
+    # If we invoke :application.loaded_applications/0,
+    # it can error if we don't call safe_fixtable before.
+    # Since in both cases we are reaching over the
+    # application controller internals, we choose to match
+    # for performance.
+    :ets.match(:ac_tab, {{:loaded, :"$1"}, :_})
   end
 
   defp match_module_funs(mod, hint) do
@@ -247,7 +253,7 @@ defmodule IEx.Autocomplete do
 
         for {fun, arities} <- list,
             name = Atom.to_string(fun),
-            String.starts_with?(name, hint) do
+            starts_with?(name, hint) do
           %{kind: :function, name: name, arities: arities}
         end |> :lists.sort()
 
@@ -270,6 +276,9 @@ defmodule IEx.Autocomplete do
   defp ensure_loaded(Elixir), do: {:error, :nofile}
   defp ensure_loaded(mod),
     do: Code.ensure_compiled(mod)
+
+  defp starts_with?(_string, ""),  do: true
+  defp starts_with?(string, hint), do: String.starts_with?(string, hint)
 
   ## Ad-hoc conversions
 
