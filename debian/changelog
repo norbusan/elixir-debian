@@ -1,3 +1,10 @@
+elixir-lang (1.1.0~0.20150708-1) unstable; urgency=medium
+
+  * New upstream snapshot
+    + fixed to work with Erlang/OTP 18 (Closes: #791626)
+
+ -- Antonio Terceiro <terceiro@debian.org>  Wed, 08 Jul 2015 18:29:52 -0300
+
 elixir-lang (1.1.0~0.20150516-1) unstable; urgency=medium
 
   * Initial release (Closes: #765522)
