@@ -3,7 +3,11 @@ Section: interpreters
 Priority: optional
 Maintainer: Antonio Terceiro <terceiro@debian.org>
 Uploaders: Evgeny Golyshev <eugulixes@gmail.com>
-Build-Depends: debhelper (>= 9~), erlang, erlang-dev, rebar, git
+Build-Depends: debhelper (>= 9~),
+               erlang,
+               erlang-dev,
+               git,
+               rebar
 Standards-Version: 3.9.6
 Vcs-Git: git://anonscm.debian.org/pkg-elixir/elixir.git
 Vcs-Browser: http://anonscm.debian.org/cgit/pkg-elixir/elixir.git
@@ -12,11 +16,10 @@ Testsuite: autopkgtest
 
 Package: elixir
 Architecture: any
-Depends: erlang, ${shlibs:Depends}, ${misc:Depends}
-Description: dynamic, functional language on top of the Erlang VM
- Elixir is a dynamic, functional language designed for building scalable and
- maintainable applications.
- .
- Elixir leverages the Erlang VM, known for running low-latency, distributed and
- fault-tolerant systems, while also being successfully used in web development
- and the embedded software domain.
+Depends: erlang-base | erlang-base-hipe,
+         ${misc:Depends}
+Description: functional meta-programming aware language
+ Elixir is a functional meta-programming aware language intended primarily for
+ developing distributed, fault-tolerant and scalable systems. Elixir source
+ code is compiled to bytecode for the Erlang Virtual Machine (EVM), and can use
+ Erlang libraries transparently.
