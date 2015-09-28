@@ -3,32 +3,30 @@ defmodule Mix.Shell do
   Defines Mix.Shell contract.
   """
 
-  use Behaviour
-
   @doc """
   Informs the given message.
   """
-  defcallback info(message :: IO.ANSI.ansidata) :: any
+  @callback info(message :: IO.ANSI.ansidata) :: any
 
   @doc """
   Warns about the given error message.
   """
-  defcallback error(message :: IO.ANSI.ansidata) :: any
+  @callback error(message :: IO.ANSI.ansidata) :: any
 
   @doc """
   Prompts the user for input.
   """
-  defcallback prompt(message :: String.t) :: String.t
+  @callback prompt(message :: String.t) :: String.t
 
   @doc """
   Asks the user for confirmation.
   """
-  defcallback yes?(message :: String.t) :: boolean
+  @callback yes?(message :: String.t) :: boolean
 
   @doc """
   Executes the given command and returns its exit status.
   """
-  defcallback cmd(command :: String.t) :: integer
+  @callback cmd(command :: String.t) :: integer
 
   @doc """
   Executes the given command and returns its exit status.
@@ -43,14 +41,16 @@ defmodule Mix.Shell do
 
     * `:quiet` - when `true`, do not print the command output
 
+    * `:env` - environment options to the executed command
+
   """
-  defcallback cmd(command :: String.t, options :: Keyword.t) :: integer
+  @callback cmd(command :: String.t, options :: Keyword.t) :: integer
 
   @doc """
   Prints the current application to shell if
   it was not printed yet.
   """
-  defcallback print_app() :: any
+  @callback print_app() :: any
 
   @doc """
   Returns the printable app name.
@@ -72,6 +72,8 @@ defmodule Mix.Shell do
   is shared across different shells.
   """
   def cmd(command, options \\ [], callback) do
+    env = validate_env(Keyword.get(options, :env, []))
+
     args =
       if Keyword.get(options, :stderr_to_stdout, true) do
         [:stderr_to_stdout]
@@ -87,7 +89,7 @@ defmodule Mix.Shell do
       end
 
     port = Port.open({:spawn, shell_command(command)},
-                     [:stream, :binary, :exit_status, :hide, :use_stdio|args])
+                     [:stream, :binary, :exit_status, :hide, :use_stdio, {:env, env}|args])
 
     do_cmd(port, callback)
   end
@@ -119,6 +121,15 @@ defmodule Mix.Shell do
           {nil, _}        -> 'cmd /c ' ++ command
           {cmd, _}        -> '#{cmd} /c ' ++ command
         end
+    end
+  end
+
+  defp validate_env(enum) do
+    Enum.map enum, fn
+      {k, v} ->
+        {String.to_char_list(k), String.to_char_list(v)}
+      other ->
+        raise ArgumentError, "invalid environment key-value #{inspect other}"
     end
   end
 end

@@ -10,7 +10,7 @@ defmodule Logger do
       supervised when plugged into Logger.
 
     * Formats and truncates messages on the client
-      to avoid clogging logger backends.
+      to avoid clogging Logger backends.
 
     * Alternates between sync and async modes to remain
       performant when required but also apply backpressure
@@ -34,10 +34,10 @@ defmodule Logger do
 
   This configuration is split in three categories:
 
-    * Application configuration - must be set before the logger
+    * Application configuration - must be set before the Logger
       application is started
 
-    * Runtime configuration - can be set before the logger
+    * Runtime configuration - can be set before the Logger
       application is started, but may be changed during runtime
 
     * Error logger configuration - configuration for the
@@ -46,7 +46,7 @@ defmodule Logger do
   ### Application configuration
 
   The following configuration must be set via config files
-  before the logger application is started.
+  before the Logger application is started.
 
     * `:backends` - the backends to be used. Defaults to `[:console]`.
       See the "Backends" section for more information.
@@ -55,7 +55,13 @@ defmodule Logger do
       lower than the configured value at compilation time. This means the
       Logger call will be completely removed at compile time, accruing
       no overhead at runtime. Defaults to `:debug` and only
-      applies to the `Logger.debug`, `Logger.info`, etc style of calls.
+      applies to the `Logger.debug/2`, `Logger.info/2`, etc style of calls.
+
+    * `:compile_time_application` - sets the `:application` metadata value
+      to the configured value at compilation time. This configuration is
+      usually only useful for build tools to automatically add the
+      application to the metadata for `Logger.debug/2`, `Logger.info/2`, etc
+      style of calls.
 
   For example, to configure the `:backends` and `compile_time_purge_level`
   in a `config/config.exs` file:
@@ -81,12 +87,17 @@ defmodule Logger do
       to 8192 bytes. Note this configuration is approximate. Truncated
       messages will have `" (truncated)"` at the end.
 
-    * `:sync_threshold` - if the logger manager has more than
+    * `:sync_threshold` - if the Logger manager has more than
       `sync_threshold` messages in its queue, Logger will change
       to sync mode, to apply backpressure to the clients.
       Logger will return to async mode once the number of messages
       in the queue is reduced to `sync_threshold * 0.75` messages.
       Defaults to 20 messages.
+
+    * `:translator_inspect_opts` - when translating OTP reports and
+      errors, the last message and state must be inspected in the
+      error reports. This configuration allow developers to change
+      how much and how the data should be inspected.
 
   For example, to configure the `:level` and `:truncate` in a
   `config/config.exs` file:
@@ -95,11 +106,11 @@ defmodule Logger do
         level: :warn,
         truncate: 4096
 
-  ### Error logger configuration
+  ### Error Logger configuration
 
   The following configuration applies to the Logger wrapper around
   Erlang's `error_logger`. All the configurations below must be set
-  before the logger application starts.
+  before the Logger application starts.
 
     * `:handle_otp_reports` - redirects OTP reports to Logger so
       they are formatted in Elixir terms. This uninstalls Erlang's
@@ -142,7 +153,7 @@ defmodule Logger do
   is explored with detail below.
 
   The initial backends are loaded via the `:backends` configuration,
-  which must be set before the logger application is started.
+  which must be set before the Logger application is started.
 
   ### Console backend
 
@@ -233,7 +244,7 @@ defmodule Logger do
     * `format` - the logging format for that backend
     * `metadata` - the metadata to include the backend
 
-  Check the implementation for `Logger.Backends.Console` for
+  Check the implementation for `Logger.Backends.Console`, for
   examples on how to handle the recommendations in this section
   and how to process the existing options.
   """
@@ -255,7 +266,12 @@ defmodule Logger do
   """
   def metadata(dict) do
     {enabled, metadata} = __metadata__()
-    Process.put(@metadata, {enabled, Keyword.merge(metadata, dict)})
+    metadata =
+      Enum.reduce(dict, metadata, fn
+        {key, nil}, acc -> Keyword.delete(acc, key)
+        {key, val}, acc -> Keyword.put(acc, key, val)
+      end)
+    Process.put(@metadata, {enabled, metadata})
     :ok
   end
 
@@ -287,9 +303,9 @@ defmodule Logger do
   end
 
   @doc """
-  Retrieves the logger level.
+  Retrieves the Logger level.
 
-  The logger level can be changed via `configure/1`.
+  The Logger level can be changed via `configure/1`.
   """
   @spec level() :: level
   def level() do
@@ -298,7 +314,7 @@ defmodule Logger do
   end
 
   @doc """
-  Compare log levels.
+  Compares log levels.
 
   Receives two log levels and compares the `left`
   against `right` and returns `:lt`, `:eq` or `:gt`.
@@ -320,7 +336,7 @@ defmodule Logger do
   See the "Runtime Configuration" section in `Logger` module
   documentation for the available options.
   """
-  @valid_options [:compile_time_purge_level, :sync_threshold, :truncate, :level, :utc_log]
+  @valid_options [:compile_time_purge_level, :compile_time_application, :sync_threshold, :truncate, :level, :utc_log]
 
   def configure(options) do
     Logger.Config.configure(Dict.take(options, @valid_options))
@@ -402,28 +418,24 @@ defmodule Logger do
   end
 
   @doc """
-  Logs a message.
+  Logs a message dynamically.
 
-  Developers should use the macros `Logger.debug/2`,
-  `Logger.warn/2`, `Logger.info/2` or `Logger.error/2` instead
-  of this function as they automatically include caller metadata
-  and can eliminate the Logger call altogether at compile time if
-  desired.
-
-  Use this function only when there is a need to log dynamically
-  or you want to explicitly avoid embedding metadata.
+  Use this function only when there is a need to
+  explicitly avoid embedding metadata.
   """
-  @spec log(level, message | (() -> message), Keyword.t) ::
+  @spec bare_log(level, message | (() -> message), Keyword.t) ::
         :ok | {:error, :noproc} | {:error, term}
-  def log(level, chardata, metadata \\ []) when level in @levels and is_list(metadata) do
+  def bare_log(level, chardata_or_fn, metadata \\ [])
+      when level in @levels and is_list(metadata) do
     case __metadata__() do
       {true, pdict} ->
         %{mode: mode, truncate: truncate,
           level: min_level, utc_log: utc_log?} = Logger.Config.__data__
 
         if compare_levels(level, min_level) != :lt do
-          tuple = {Logger, truncate(chardata, truncate), Logger.Utils.timestamp(utc_log?),
-                   [pid: self()] ++ metadata ++ pdict}
+          metadata = [pid: self()] ++ Keyword.merge(pdict, metadata)
+          tuple = {Logger, truncate(chardata_or_fn, truncate),
+                   Logger.Utils.timestamp(utc_log?), metadata}
           try do
             notify(mode, {level, Process.group_leader(), tuple})
             :ok
@@ -450,7 +462,7 @@ defmodule Logger do
 
   """
   defmacro warn(chardata_or_fn, metadata \\ []) do
-    macro_log(:warn, chardata_or_fn, metadata, __CALLER__)
+    maybe_log(:warn, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -463,7 +475,7 @@ defmodule Logger do
 
   """
   defmacro info(chardata_or_fn, metadata \\ []) do
-    macro_log(:info, chardata_or_fn, metadata, __CALLER__)
+    maybe_log(:info, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -476,7 +488,7 @@ defmodule Logger do
 
   """
   defmacro error(chardata_or_fn, metadata \\ []) do
-    macro_log(:error, chardata_or_fn, metadata, __CALLER__)
+    maybe_log(:error, chardata_or_fn, metadata, __CALLER__)
   end
 
   @doc """
@@ -489,17 +501,38 @@ defmodule Logger do
 
   """
   defmacro debug(chardata_or_fn, metadata \\ []) do
-    macro_log(:debug, chardata_or_fn, metadata, __CALLER__)
+    maybe_log(:debug, chardata_or_fn, metadata, __CALLER__)
   end
 
-  defp macro_log(level, chardata, metadata, caller) do
+  @doc """
+  Logs a message.
+
+  Developers should rather use the macros `Logger.debug/2`,
+  `Logger.warn/2`, `Logger.info/2` or `Logger.error/2` instead
+  of this macro as they can automatically eliminate
+  the Logger call altogether at compile time if desired.
+  """
+  defmacro log(level, chardata_or_fn, metadata \\ []) do
+    macro_log(level, chardata_or_fn, metadata, __CALLER__)
+  end
+
+  defp macro_log(level, data, metadata, caller) do
+    %{module: module, function: fun, line: line} = caller
+
+    caller = [module: module, function: form_fa(fun), line: line]
+    if app = Application.get_env(:logger, :compile_time_application) do
+      caller = [application: app] ++ caller
+    end
+
+    quote do
+      Logger.bare_log(unquote(level), unquote(data), unquote(caller) ++ unquote(metadata))
+    end
+  end
+
+  defp maybe_log(level, data, metadata, caller) do
     min_level = Application.get_env(:logger, :compile_time_purge_level, :debug)
     if compare_levels(level, min_level) != :lt do
-      %{module: module, function: fun, line: line} = caller
-      caller = [module: module, function: form_fa(fun), line: line]
-      quote do
-        Logger.log(unquote(level), unquote(chardata), unquote(caller) ++ unquote(metadata))
-      end
+      macro_log(level, data, metadata, caller)
     else
       :ok
     end

@@ -1,13 +1,13 @@
 defmodule Mix.Tasks.App.Start do
   use Mix.Task
 
-  @shortdoc "Start all registered apps"
+  @shortdoc "Starts all registered apps"
 
   @moduledoc """
   Starts all registered apps.
 
   The application is started by default as temporary. In case
-  `:start_permanent` is set to true in your project configuration
+  `:start_permanent` is set to `true` in your project configuration
   or the `--permanent` flag is given, it is started as permanent,
   which guarantee the node will shutdown in case the application
   crashes permanently.
@@ -20,7 +20,7 @@ defmodule Mix.Tasks.App.Start do
     * `--no-compile` - do not compile even if files require compilation
     * `--no-protocols` - do not load consolidated protocols
     * `--no-deps-check` - do not check dependencies
-    * `--no-elixir-version-check` - do not check elixir version
+    * `--no-elixir-version-check` - do not check Elixir version
     * `--no-start` - do not start applications after compilation
 
   """
@@ -49,13 +49,22 @@ defmodule Mix.Tasks.App.Start do
       end
     end
 
-    unless "--no-start" in args do
-      # Stop the Logger when starting the application as it is
-      # up to the application to decide if it should be restarted
-      # or not.
-      #
-      # Mix should not depend directly on Logger so check that it's loaded.
-      if Process.whereis(Logger), do: Logger.App.stop()
+    # Stop the Logger when starting the application as it is
+    # up to the application to decide if it should be restarted
+    # or not.
+    #
+    # Mix should not depend directly on Logger so check that it's loaded.
+    logger = Process.whereis(Logger)
+    if logger do
+      Logger.App.stop
+    end
+
+    if "--no-start" in args do
+      # Start the Logger again if the application won't be starting it
+      if logger do
+        :ok = Logger.App.start
+      end
+    else
       start(Mix.Project.config, opts)
     end
 
@@ -76,6 +85,8 @@ defmodule Mix.Tasks.App.Start do
 
     type = type(config, opts)
     Enum.each apps, &ensure_all_started(&1, type)
+    check_configured()
+    :ok
   end
 
   defp ensure_all_started(app, type) do
@@ -95,5 +106,25 @@ defmodule Mix.Tasks.App.Start do
       config[:start_permanent] -> :permanent
       true -> :temporary
     end
+  end
+
+  defp check_configured() do
+    configured = Mix.ProjectStack.configured_applications
+    loaded = for {app, _, _} <- :application.loaded_applications(), do: app
+    _ = for app <- configured -- loaded, :code.lib_dir(app) == {:error, :bad_name} do
+      Mix.shell.error """
+      You have configured application #{inspect app} in your config/config.exs
+      but the application is not available.
+
+      This usually means one of:
+
+      1. You have not added the application as a dependency in a mix.exs file.
+
+      2. You are configuring an application that does not really exist.
+
+      Please ensure #{inspect app} exists or remove the configuration.
+      """
+    end
+    :ok
   end
 end

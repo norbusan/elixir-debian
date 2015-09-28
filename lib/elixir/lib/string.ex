@@ -8,7 +8,7 @@ defmodule String do
 
   The functions in this module act according to the Unicode
   Standard, version 6.3.0. As per the standard, a codepoint is
-  an Unicode Character, which may be represented by one or more
+  a Unicode Character, which may be represented by one or more
   bytes. For example, the character "é" is represented with two
   bytes:
 
@@ -26,7 +26,7 @@ defmodule String do
   the same "é" character written above could be represented
   by the letter "e" followed by the accent ́:
 
-      iex> string = "\x{0065}\x{0301}"
+      iex> string = "\u0065\u0301"
       iex> byte_size(string)
       3
       iex> String.length(string)
@@ -67,7 +67,7 @@ defmodule String do
     * `Kernel.bit_size/1` and `Kernel.byte_size/1` - size related functions
     * `Kernel.is_bitstring/1` and `Kernel.is_binary/1` - type checking function
     * Plus a number of functions for working with binaries (bytes)
-      [in the `:binary` module](http://erlang.org/doc/man/binary.html)
+      in the [`:binary` module](http://www.erlang.org/doc/man/binary.html)
 
   There are many situations where using the `String` module can
   be avoided in favor of binary functions or pattern matching.
@@ -151,7 +151,7 @@ defmodule String do
   As we have seen above, codepoints can be inserted into
   a string by their hexadecimal code:
 
-      "ol\x{0061}\x{0301}" #=>
+      "ol\u0061\u0301" #=>
       "olá"
 
   ## Self-synchronization
@@ -358,7 +358,7 @@ defmodule String do
 
   ## Options
 
-    * :trim - when true, does not emit empty patterns
+    * :trim - when `true`, does not emit empty patterns
   """
   @spec splitter(t, pattern, Keyword.t) :: Enumerable.t
   def splitter(string, pattern, options \\ []) do
@@ -422,24 +422,24 @@ defmodule String do
 
   """
   @spec split_at(t, integer) :: {t, t}
-  def split_at(string, offset)
+  def split_at(string, position)
 
-  def split_at(binary, 0), do: {"", binary}
+  def split_at(string, position) when is_integer(position) and position >= 0 do
+    do_split_at(string, position)
+  end
 
-  def split_at(binary, index) when is_integer(index) and index > 0, do:
-    do_split_at(next_grapheme(binary), 0, index, "")
+  def split_at(string, position) when is_integer(position) and position < 0 do
+    position = length(string) - abs(position)
+    case position >= 0 do
+      true  -> do_split_at(string, position)
+      false -> {"", string}
+    end
+  end
 
-  def split_at(binary, index) when is_integer(index) and index < 0, do:
-    do_split_at(next_grapheme(binary), 0, max(0, byte_size(binary)+index), "")
-
-  defp do_split_at(nil, _, _, acc), do:
-    {acc, ""}
-
-  defp do_split_at({grapheme, rest}, current_pos, target_pos, acc) when current_pos < target_pos, do:
-    do_split_at(next_grapheme(rest), current_pos+1, target_pos, acc <> grapheme)
-
-  defp do_split_at({grapheme, rest}, pos, pos, acc), do:
-    {acc, grapheme <> rest}
+  defp do_split_at(string, position) do
+    {byte_size, rest} = String.Graphemes.split_at(string, position)
+    {binary_part(string, 0, byte_size), rest || ""}
+  end
 
   @doc """
   Converts all characters in the given string to uppercase.
@@ -505,7 +505,7 @@ defmodule String do
   end
 
   @doc """
-  Returns a string where trailing Unicode whitespace
+  Returns a string where all trailing Unicode whitespaces
   has been removed.
 
   ## Examples
@@ -518,7 +518,7 @@ defmodule String do
   defdelegate rstrip(binary), to: String.Unicode
 
   @doc """
-  Returns a string where trailing `char` have been removed.
+  Returns a string where all trailing `char`s have been removed.
 
   ## Examples
 
@@ -558,7 +558,7 @@ defmodule String do
   end
 
   @doc """
-  Returns a string where leading Unicode whitespace
+  Returns a string where all leading Unicode whitespaces
   has been removed.
 
   ## Examples
@@ -570,7 +570,7 @@ defmodule String do
   defdelegate lstrip(binary), to: String.Unicode
 
   @doc """
-  Returns a string where leading `char` have been removed.
+  Returns a string where all leading `char`s have been removed.
 
   ## Examples
 
@@ -591,7 +591,7 @@ defmodule String do
   end
 
   @doc """
-  Returns a string where leading and trailing Unicode whitespace
+  Returns a string where all leading and trailing Unicode whitespaces
   has been removed.
 
   ## Examples
@@ -607,7 +607,7 @@ defmodule String do
   end
 
   @doc """
-  Returns a string where leading and trailing `char` have been
+  Returns a string where all leading and trailing `char`s have been
   removed.
 
   ## Examples
@@ -686,10 +686,10 @@ defmodule String do
   Returns a new binary created by replacing occurences of `pattern` in
   `subject` with `replacement`.
 
-  By default, it replaces all occurences, except if the `global` option is
+  By default, it replaces all occurences, unless the `global` option is
   set to `false`.
 
-  A `pattern` may be a string or a regular expression.
+  The `pattern` may be a string or a regular expression.
 
   ## Examples
 
@@ -699,18 +699,20 @@ defmodule String do
       iex> String.replace("a,b,c", ",", "-", global: false)
       "a-b,c"
 
-  The pattern can also be a regular expression. In those cases, one can give `\N` or
+  When the pattern is a regular expression, one can give `\N` or
   `\g{N}` in the `replacement` string to access a specific capture in the
-  regex:
+  regular expression:
 
-      iex> String.replace("a,b,c", ~r/,(.)/, ",\\1\\1")
+      iex> String.replace("a,b,c", ~r/,(.)/, ",\\1\\g{1}")
       "a,bb,cc"
 
   Notice we had to escape the escape character `\`. By giving `\0`,
   one can inject the whole matched pattern in the replacement string.
 
-  When strings are used as a pattern, a developer can also use the
-  replaced part inside the `replacement` via the `:insert_replaced` option:
+  When the pattern is a string, a developer can use the replaced part inside
+  the `replacement` by using the `:insert_replace` option and specifying the
+  position(s) inside the `replacement` where the string pattern will be
+  inserted:
 
       iex> String.replace("a,b,c", "b", "[]", insert_replaced: 1)
       "a,[b],c"
@@ -721,6 +723,8 @@ defmodule String do
       iex> String.replace("a,b,c", ",", "[]", insert_replaced: [1, 1])
       "a[,,]b[,,]c"
 
+  If any position given in the `:insert_replace` option is larger than the
+  replacement string, or is negative, an `ArgumentError` is raised.
   """
   @spec replace(t, pattern | Regex.t, t, Keyword.t) :: t
   def replace(subject, pattern, replacement, options \\ []) when is_binary(replacement) do
@@ -829,7 +833,7 @@ defmodule String do
   defdelegate next_codepoint(string), to: String.Unicode
 
   @doc ~S"""
-  Checks whether `str` contains only valid characters.
+  Checks whether `string` contains only valid characters.
 
   ## Examples
 
@@ -849,11 +853,11 @@ defmodule String do
   @spec valid?(t) :: boolean
   def valid?(string)
 
-  noncharacters = Enum.to_list(?\x{FDD0}..?\x{FDEF}) ++
-    [ ?\x{0FFFE}, ?\x{0FFFF}, ?\x{1FFFE}, ?\x{1FFFF}, ?\x{2FFFE}, ?\x{2FFFF},
-      ?\x{3FFFE}, ?\x{3FFFF}, ?\x{4FFFE}, ?\x{4FFFF}, ?\x{5FFFE}, ?\x{5FFFF},
-      ?\x{6FFFE}, ?\x{6FFFF}, ?\x{7FFFE}, ?\x{7FFFF}, ?\x{8FFFE}, ?\x{8FFFF},
-      ?\x{9FFFE}, ?\x{9FFFF}, ?\x{10FFFE}, ?\x{10FFFF} ]
+  noncharacters = Enum.to_list(0xFDD0..0xFDEF) ++
+    [0x0FFFE, 0x0FFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF,
+     0x3FFFE, 0x3FFFF, 0x4FFFE, 0x4FFFF, 0x5FFFE, 0x5FFFF,
+     0x6FFFE, 0x6FFFF, 0x7FFFE, 0x7FFFF, 0x8FFFE, 0x8FFFF,
+     0x9FFFE, 0x9FFFF, 0x10FFFE, 0x10FFFF]
 
   for noncharacter <- noncharacters do
     def valid?(<< unquote(noncharacter) :: utf8, _ :: binary >>), do: false
@@ -870,7 +874,7 @@ defmodule String do
   are not valid characters. They may be reserved, private,
   or other.
 
-  More info at: http://en.wikipedia.org/wiki/Mapping_of_Unicode_characters#Noncharacters
+  More info at: [Non-characters – Wikipedia](https://en.wikipedia.org/wiki/Universal_Character_Set_characters#Non-characters)
 
   ## Examples
 
@@ -880,7 +884,7 @@ defmodule String do
       iex> String.valid_character?("ø")
       true
 
-      iex> String.valid_character?("\x{ffff}")
+      iex> String.valid_character?("\uFFFF")
       false
 
   """
@@ -894,10 +898,10 @@ defmodule String do
 
   The trait can be one of two options:
 
-    * `:valid` – the string is split into chunks of valid and invalid character
+    * `:valid`     - the string is split into chunks of valid and invalid character
       sequences
 
-    * `:printable` – the string is split into chunks of printable and
+    * `:printable` - the string is split into chunks of printable and
       non-printable character sequences
 
   Returns a list of binaries each of which contains only one kind of
@@ -923,20 +927,20 @@ defmodule String do
 
   def chunk("", _), do: []
 
-  def chunk(str, trait) when trait in [:valid, :printable] do
-    {cp, _} = next_codepoint(str)
+  def chunk(string, trait) when trait in [:valid, :printable] do
+    {cp, _} = next_codepoint(string)
     pred_fn = make_chunk_pred(trait)
-    do_chunk(str, pred_fn.(cp), pred_fn)
+    do_chunk(string, pred_fn.(cp), pred_fn)
   end
 
-  defp do_chunk(str, flag, pred_fn), do: do_chunk(str, [], <<>>, flag, pred_fn)
+  defp do_chunk(string, flag, pred_fn), do: do_chunk(string, [], <<>>, flag, pred_fn)
 
   defp do_chunk(<<>>, acc, <<>>, _, _), do: Enum.reverse(acc)
 
   defp do_chunk(<<>>, acc, chunk, _, _), do: Enum.reverse(acc, [chunk])
 
-  defp do_chunk(str, acc, chunk, flag, pred_fn) do
-    {cp, rest} = next_codepoint(str)
+  defp do_chunk(string, acc, chunk, flag, pred_fn) do
+    {cp, rest} = next_codepoint(string)
     if pred_fn.(cp) != flag do
       do_chunk(rest, [chunk|acc], cp, not flag, pred_fn)
     else
@@ -961,8 +965,10 @@ defmodule String do
   @spec graphemes(t) :: [grapheme]
   defdelegate graphemes(string), to: String.Graphemes
 
+  @compile {:inline, next_grapheme: 1, next_grapheme_size: 1}
+
   @doc """
-  Returns the next grapheme in a String.
+  Returns the next grapheme in a string.
 
   The result is a tuple with the grapheme and the
   remainder of the string or `nil` in case
@@ -974,9 +980,29 @@ defmodule String do
       {"o", "lá"}
 
   """
-  @compile {:inline, next_grapheme: 1}
   @spec next_grapheme(t) :: {grapheme, t} | nil
-  defdelegate next_grapheme(string), to: String.Graphemes
+  def next_grapheme(binary) do
+    case next_grapheme_size(binary) do
+      {size, rest} -> {:binary.part(binary, 0, size), rest}
+      nil          -> nil
+    end
+  end
+
+  @doc """
+  Returns the size of the next grapheme.
+
+  The result is a tuple with the next grapheme size and
+  the remainder of the string or `nil` in case the string
+  reached its end.
+
+  ## Examples
+
+      iex> String.next_grapheme_size("olá")
+      {1, "lá"}
+
+  """
+  @spec next_grapheme_size(t) :: {pos_integer, t} | nil
+  defdelegate next_grapheme_size(string), to: String.Graphemes
 
   @doc """
   Returns the first grapheme from a utf8 string,
@@ -1036,15 +1062,7 @@ defmodule String do
 
   """
   @spec length(t) :: non_neg_integer
-  def length(string) do
-    do_length(next_grapheme(string))
-  end
-
-  defp do_length({_, rest}) do
-    1 + do_length(next_grapheme(rest))
-  end
-
-  defp do_length(nil), do: 0
+  defdelegate length(string), to: String.Graphemes
 
   @doc """
   Returns the grapheme in the `position` of the given utf8 `string`.
@@ -1071,26 +1089,23 @@ defmodule String do
   @spec at(t, integer) :: grapheme | nil
 
   def at(string, position) when is_integer(position) and position >= 0 do
-    do_at(next_grapheme(string), position, 0)
+    do_at(string, position)
   end
 
   def at(string, position) when is_integer(position) and position < 0 do
-    real_pos = length(string) - abs(position)
-    case real_pos >= 0 do
-      true  -> do_at(next_grapheme(string), real_pos, 0)
+    position = length(string) - abs(position)
+    case position >= 0 do
+      true  -> do_at(string, position)
       false -> nil
     end
   end
 
-  defp do_at({_, rest}, desired_pos, current_pos) when desired_pos > current_pos do
-    do_at(next_grapheme(rest), desired_pos, current_pos + 1)
+  defp do_at(string, position) do
+    case String.Graphemes.split_at(string, position) do
+      {_, nil}  -> nil
+      {_, rest} -> first(rest)
+    end
   end
-
-  defp do_at({char, _}, desired_pos, desired_pos) do
-    char
-  end
-
-  defp do_at(nil, _, _), do: nil
 
   @doc """
   Returns a substring starting at the offset `start`, and of
@@ -1136,10 +1151,10 @@ defmodule String do
   end
 
   def slice(string, start, len) when start >= 0 and len >= 0 do
-    case do_count_bytes(next_grapheme(string), start, 0) do
-      {nil, _} -> ""
-      {next, start_bytes} ->
-        {_, len_bytes} = do_count_bytes(next, len, 0)
+    case String.Graphemes.split_at(string, start) do
+      {_, nil} -> ""
+      {start_bytes, rest} ->
+        {len_bytes, _} = String.Graphemes.split_at(rest, len)
         binary_part(string, start_bytes, len_bytes)
     end
   end
@@ -1150,13 +1165,6 @@ defmodule String do
       true  -> slice(string, start, len)
       false -> ""
     end
-  end
-
-  defp do_count_bytes(next, 0, acc), do: {next, acc}
-  defp do_count_bytes(nil, _, acc),  do: {nil, acc}
-
-  defp do_count_bytes({char, rest}, counter, acc) do
-    do_count_bytes(next_grapheme(rest), counter - 1, acc + byte_size(char))
   end
 
   @doc """
@@ -1214,9 +1222,11 @@ defmodule String do
   def slice("", _.._), do: ""
 
   def slice(string, first..-1) when first >= 0 do
-    case do_count_bytes(next_grapheme(string), first, 0) do
-      {nil, _} -> ""
-      {_, start_bytes} -> binary_part(string, start_bytes, byte_size(string) - start_bytes)
+    case String.Graphemes.split_at(string, first) do
+      {_, nil} ->
+        ""
+      {start_bytes, _} ->
+        binary_part(string, start_bytes, byte_size(string) - start_bytes)
     end
   end
 
@@ -1229,7 +1239,7 @@ defmodule String do
   end
 
   def slice(string, first..last) do
-    {bytes, length} = do_acc_bytes(next_grapheme(string), [], 0)
+    {bytes, length} = do_acc_bytes(next_grapheme_size(string), [], 0)
 
     if first < 0, do: first = length + first
     if last < 0,  do: last  = length + last
@@ -1245,8 +1255,8 @@ defmodule String do
     end
   end
 
-  defp do_acc_bytes({char, rest}, bytes, length) do
-    do_acc_bytes(next_grapheme(rest), [byte_size(char)|bytes], length + 1)
+  defp do_acc_bytes({size, rest}, bytes, length) do
+    do_acc_bytes(next_grapheme_size(rest), [size|bytes], length + 1)
   end
 
   defp do_acc_bytes(nil, bytes, length) do
@@ -1271,6 +1281,7 @@ defmodule String do
   """
   @spec starts_with?(t, t | [t]) :: boolean
 
+  # TODO: Remove me by 1.3
   def starts_with?(_string, "") do
     IO.puts :stderr, "[deprecation] Calling String.starts_with?/2 with an empty string is deprecated and " <>
                      "will fail in the future\n" <> Exception.format_stacktrace()
@@ -1303,6 +1314,7 @@ defmodule String do
   """
   @spec ends_with?(t, t | [t]) :: boolean
 
+  # TODO: Remove me by 1.3
   def ends_with?(_string, "") do
     IO.puts :stderr, "[deprecation] Calling String.ends_with?/2 with an empty string is deprecated and " <>
                      "will fail in the future\n" <> Exception.format_stacktrace()
@@ -1366,6 +1378,7 @@ defmodule String do
   """
   @spec contains?(t, pattern) :: boolean
 
+  # TODO: Remove me by 1.3
   def contains?(_string, "") do
     IO.puts :stderr, "[deprecation] Calling String.contains?/2 with an empty string is deprecated and " <>
                      "will fail in the future\n" <> Exception.format_stacktrace()
@@ -1388,7 +1401,7 @@ defmodule String do
   strings.
 
   In case you need to work with bytes, take a look at the
-  [`:binary` module](http://erlang.org/doc/man/binary.html).
+  [`:binary` module](http://www.erlang.org/doc/man/binary.html).
 
   ## Examples
 
@@ -1438,7 +1451,7 @@ defmodule String do
 
   ## Examples
 
-      iex> :my_atom
+      iex> _ = :my_atom
       iex> String.to_existing_atom("my_atom")
       :my_atom
 
@@ -1509,8 +1522,8 @@ defmodule String do
 
   @doc """
   Returns a float value between 0 (equates to no similarity) and 1 (is an exact match)
-  representing [Jaro](http://en.wikipedia.org/wiki/Jaro–Winkler_distance)
-  distance between `str1` and `str2`.
+  representing [Jaro](https://en.wikipedia.org/wiki/Jaro–Winkler_distance)
+  distance between `string1` and `string2`.
 
   The Jaro distance metric is designed and best suited for short strings such as person names.
 
@@ -1524,15 +1537,15 @@ defmodule String do
   """
 
   @spec jaro_distance(t, t) :: 0..1
-  def jaro_distance(str1, str2)
+  def jaro_distance(string1, string2)
 
-  def jaro_distance(str, str), do: 1.0
-  def jaro_distance(_str, ""), do: 0.0
-  def jaro_distance("", _str), do: 0.0
+  def jaro_distance(string, string), do: 1.0
+  def jaro_distance(_string, ""), do: 0.0
+  def jaro_distance("", _string), do: 0.0
 
-  def jaro_distance(str1, str2) do
-    {chars1, len1} = decompose(str1)
-    {chars2, len2} = decompose(str2)
+  def jaro_distance(string1, string2) do
+    {chars1, len1} = decompose(string1)
+    {chars2, len2} = decompose(string2)
 
     case match(chars1, len1, chars2, len2) do
       {0, _trans} -> 0.0
@@ -1544,8 +1557,8 @@ defmodule String do
   end
 
   @compile {:inline, decompose: 1}
-  defp decompose(str) do
-    chars = graphemes(str)
+  defp decompose(string) do
+    chars = graphemes(string)
     {chars, Kernel.length(chars)}
   end
 

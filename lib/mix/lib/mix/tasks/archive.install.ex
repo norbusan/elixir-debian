@@ -1,13 +1,13 @@
 defmodule Mix.Tasks.Archive.Install do
   use Mix.Task
 
-  @shortdoc "Install an archive locally"
+  @shortdoc "Installs an archive locally"
 
   @moduledoc """
-  Install an archive locally.
+  Installs an archive locally.
 
   If no argument is supplied but there is an archive in the root
-  (created with mix archive), then the archive will be installed
+  (created with `mix archive`), then the archive will be installed
   locally. For example:
 
       mix do archive.build, archive.install
@@ -22,23 +22,23 @@ defmodule Mix.Tasks.Archive.Install do
 
   ## Command line options
 
-    * `--system` - uses one of the system tools (curl, wget or powershell
-      on Windows) to download the archive in case a URL is given
+    * `--sha512` - checks the archive matches the given sha512 checksum
 
     * `--force` - forces installation without a shell prompt; primarily
-      intended for automation in build systems like make
+      intended for automation in build systems like `make`
 
   """
+  @switches [force: :boolean, sha512: :string]
   @spec run(OptionParser.argv) :: boolean
   def run(argv) do
-    {opts, argv, _} = OptionParser.parse(argv, switches: [force: :boolean, system: :boolean])
+    {opts, argv, _} = OptionParser.parse(argv, switches: @switches)
 
     if src = List.first(argv) do
       %URI{path: path} = URI.parse(src)
 
       case Path.extname(path) do
         ".ez" -> install_archive(src, opts)
-        _     -> Mix.raise "mix archive.install doesn't know how to install #{path}"
+        _     -> Mix.raise "\"mix archive.install\" doesn't know how to install #{inspect path}"
       end
     else
       src = Mix.Archive.name(Mix.Project.config[:app], Mix.Project.config[:version])
@@ -46,7 +46,8 @@ defmodule Mix.Tasks.Archive.Install do
       if File.exists?(src) do
         install_archive(src, opts)
       else
-        Mix.raise "Expected PATH to be given, please use `mix archive.install PATH`"
+        Mix.raise "Expected local archive to exist or PATH to be given, " <>
+                  "please use \"mix archive.install PATH\""
       end
     end
   end
@@ -55,17 +56,35 @@ defmodule Mix.Tasks.Archive.Install do
     previous = previous_versions(src)
 
     if opts[:force] || should_install?(src, previous) do
-      archive = Path.join(Mix.Local.archives_path(), basename(src))
-      check_file_exists(src, archive)
-      opts = [force: true] ++ opts
+      dirname = Mix.Local.archives_path
+      archive = Path.join(dirname, basename(src))
+      check_file_exists!(src, archive)
 
-      if Mix.Utils.copy_path!(src, archive, opts) do
-        Mix.shell.info [:green, "* creating ", :reset, Path.relative_to_cwd(archive)]
-        Mix.Local.check_archive_elixir_version archive
+      case Mix.Utils.read_path(src, opts) do
+        {:ok, binary} ->
+          File.mkdir_p!(dirname)
+          File.write!(archive, binary)
+        :badpath ->
+          Mix.raise "Expected #{inspect src} to be a URL or a local file path"
+        {:local, message} ->
+          Mix.raise message
+        {kind, message} when kind in [:remote, :checksum] ->
+          Mix.raise """
+          #{message}
 
-        unless archive in previous, do: remove_previous_versions(previous)
+          Could not fetch archive at:
+
+              #{src}
+
+          Please download the archive above manually to your current directory and run:
+
+              mix archive.install ./#{Path.basename(archive)}
+          """
       end
 
+      Mix.shell.info [:green, "* creating ", :reset, Path.relative_to_cwd(archive)]
+      Mix.Local.check_archive_elixir_version archive
+      unless archive in previous, do: remove_previous_versions(previous)
       true = Code.append_path(Mix.Archive.ebin(archive))
     else
       false
@@ -73,12 +92,15 @@ defmodule Mix.Tasks.Archive.Install do
   end
 
   defp basename(path) do
-    %URI{path: path} = URI.parse(path)
-    Path.basename(path)
+    if path = URI.parse(path).path do
+      Path.basename(path)
+    else
+      Mix.raise "Expected #{inspect path} to be a url or a local file path"
+    end
   end
 
   defp should_install?(src, []) do
-    Mix.shell.yes?("Are you sure you want to install archive #{src}?")
+    Mix.shell.yes?("Are you sure you want to install archive #{inspect src}?")
   end
 
   defp should_install?(_src, previous_files) do
@@ -88,7 +110,7 @@ defmodule Mix.Tasks.Archive.Install do
                    "Are you sure you want to replace them?")
   end
 
-  defp check_file_exists(src, path) do
+  defp check_file_exists!(src, path) do
     # OTP keeps loaded archives open, this leads to unfortunate behaviour on
     # Windows when trying overwrite loaded archives. remove_previous_versions
     # completes successfully even though the file will be first removed after

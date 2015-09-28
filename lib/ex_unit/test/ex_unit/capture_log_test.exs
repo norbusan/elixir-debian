@@ -39,6 +39,19 @@ defmodule ExUnit.CaptureLogTest do
     end) == ""
   end
 
+  @tag timeout: 2_000
+  test "capture removal on exit" do
+    {_pid, ref} = spawn_monitor(fn ->
+      capture_log(fn ->
+        spawn_link(Kernel, :exit, [:shutdown])
+        :timer.sleep(:infinity)
+      end)
+    end)
+
+    assert_receive {:DOWN, ^ref, _, _, :shutdown}
+    wait_capture_removal()
+  end
+
   test "log tracking" do
     logged =
       assert capture_log(fn ->
@@ -65,6 +78,15 @@ defmodule ExUnit.CaptureLogTest do
       {:nested, logged} ->
         assert logged =~ "[error] one\n"
         refute logged =~ "[warn]  two\n"
+    end
+  end
+
+  defp wait_capture_removal() do
+    case GenEvent.which_handlers(Logger) do
+      [Logger.Config] -> :ok
+      _otherwise ->
+        :timer.sleep(20)
+        wait_capture_removal()
     end
   end
 end

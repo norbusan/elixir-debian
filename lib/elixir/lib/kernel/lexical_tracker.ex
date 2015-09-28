@@ -11,16 +11,21 @@ defmodule Kernel.LexicalTracker do
   @timeout 30_000
   @behaviour :gen_server
 
-  @import 2
-  @alias  3
-
   @doc """
   Returns all remotes linked to in this lexical scope.
   """
   def remotes(arg) do
-    ets = :gen_server.call(to_pid(arg), :ets, @timeout)
-    :ets.match(ets, {:"$1", :_, :_}) |> List.flatten
+    :gen_server.call(to_pid(arg), :ets, @timeout)
+    |> :ets.match({{:mode, :'$1'}, :'$2'})
+    |> partition([], [])
   end
+
+  defp partition([[remote, :compile]|t], compile, runtime),
+    do: partition(t, [remote|compile], runtime)
+  defp partition([[remote, :runtime]|t], compile, runtime),
+    do: partition(t, compile, [remote|runtime])
+  defp partition([], compile, runtime),
+    do: {compile, runtime}
 
   @doc """
   Gets the destination the lexical scope is meant to
@@ -61,8 +66,8 @@ defmodule Kernel.LexicalTracker do
   end
 
   @doc false
-  def remote_dispatch(pid, module) do
-    :gen_server.cast(pid, {:remote_dispatch, module})
+  def remote_dispatch(pid, module, mode) do
+    :gen_server.cast(pid, {:remote_dispatch, module, mode})
   end
 
   @doc false
@@ -77,28 +82,24 @@ defmodule Kernel.LexicalTracker do
 
   @doc false
   def collect_unused_imports(pid) do
-    unused(pid, @import)
+    unused(pid, :import)
   end
 
   @doc false
   def collect_unused_aliases(pid) do
-    unused(pid, @alias)
+    unused(pid, :alias)
   end
 
-  defp unused(pid, pos) do
-    ets = :gen_server.call(pid, :ets, @timeout)
-    :ets.foldl(fn
-      {module, _, _} = tuple, acc when is_integer(:erlang.element(pos, tuple)) ->
-        [{module, :erlang.element(pos, tuple)}|acc]
-      _, acc ->
-        acc
-    end, [], ets) |> Enum.sort
+  defp unused(pid, tag) do
+    :gen_server.call(pid, :ets, @timeout)
+    |> :ets.select([{{{tag, :"$1"}, :"$2"}, [is_integer: :"$2"], [{{:"$1", :"$2"}}]}])
+    |> Enum.sort
   end
 
   # Callbacks
 
   def init(dest) do
-    {:ok, {:ets.new(:lexical, [:protected]), dest}}
+    {:ok, {:ets.new(__MODULE__, [:protected]), dest}}
   end
 
   @doc false
@@ -110,28 +111,31 @@ defmodule Kernel.LexicalTracker do
     {:reply, dest, {d, dest}}
   end
 
-  def handle_cast({:remote_dispatch, module}, {d, dest}) do
-    add_module(d, module)
+  def handle_cast({:remote_dispatch, module, mode}, {d, dest}) do
+    add_compile(d, module, mode)
     {:noreply, {d, dest}}
   end
 
   def handle_cast({:import_dispatch, module}, {d, dest}) do
-    add_dispatch(d, module, @import)
+    add_dispatch(d, module, :import)
+    # Always compile time because we depend
+    # on the module at compile time
+    add_compile(d, module, :compile)
     {:noreply, {d, dest}}
   end
 
   def handle_cast({:alias_dispatch, module}, {d, dest}) do
-    add_dispatch(d, module, @alias)
+    add_dispatch(d, module, :alias)
     {:noreply, {d, dest}}
   end
 
   def handle_cast({:add_import, module, line, warn}, {d, dest}) do
-    add_directive(d, module, line, warn, @import)
+    add_directive(d, module, line, warn, :import)
     {:noreply, {d, dest}}
   end
 
   def handle_cast({:add_alias, module, line, warn}, {d, dest}) do
-    add_directive(d, module, line, warn, @alias)
+    add_directive(d, module, line, warn, :alias)
     {:noreply, {d, dest}}
   end
 
@@ -158,19 +162,17 @@ defmodule Kernel.LexicalTracker do
 
   # In the table we keep imports and aliases.
   # If the value is false, it was not imported/aliased
-  # If the value is true, it was imported/aliased
   # If the value is a line, it was imported/aliased and has a pending warning
-  defp add_module(d, module) do
-    :ets.insert_new(d, {module, false, false})
+  # If the value is true, it was imported/aliased and used
+  defp add_dispatch(d, module, tag) do
+    :ets.insert(d, {{tag, module}, true})
   end
 
-  defp add_dispatch(d, module, pos) do
-    :ets.update_element(d, module, {pos, true})
-  end
+  defp add_compile(d, module, :runtime), do: :ets.insert_new(d, {{:mode, module}, :runtime})
+  defp add_compile(d, module, :compile), do: :ets.insert(d, {{:mode, module}, :compile})
 
-  defp add_directive(d, module, line, warn, pos) do
-    add_module(d, module)
+  defp add_directive(d, module, line, warn, tag) do
     marker = if warn, do: line, else: true
-    :ets.update_element(d, module, {pos, marker})
+    :ets.insert(d, {{tag, module}, marker})
   end
 end

@@ -55,6 +55,7 @@ defmodule Kernel.FnTest do
     assert is_function &+/2
     assert is_function &(&&/2)
     assert is_function & &1 + &2, 2
+    assert is_function &and/2
   end
 
   test "capture with variable module" do
@@ -133,6 +134,12 @@ defmodule Kernel.FnTest do
       "nofile:1: invalid args for &, expected an expression in the format of &Mod.fun/arity, " <>
       "&local/arity or a capture containing at least one argument as &1, got: :foo",
       "&:foo"
+  end
+
+  test "failure on invalid arity" do
+    assert_compile_fail CompileError,
+      "nofile:1: invalid arity for &, expected a number between 0 and 255, got: 256",
+      "&Mod.fun/256"
   end
 
   test "failure when no captures" do

@@ -18,15 +18,14 @@ defmodule IO do
   ## IO devices
 
   An IO device may be an atom or a pid. In case it is an atom,
-  the atom must be the name of a registered process. However,
-  there are three exceptions for this rule:
+  the atom must be the name of a registered process. In addition,
+  Elixir provides two shorcuts:
 
-    * `:standard_io` - when the `:standard_io` atom is given,
-      it is treated as a shortcut for `Process.group_leader`
+    * `:stdio` - a shortcut for `:standard_io`, which maps to
+      the current `Process.group_leader/0` in Erlang
 
-    * `:stdio` - is a shortcut for `:standard_io`
-
-    * `:stderr` - is a shortcut for `:standard_error`
+    * `:stderr` - a shortcut for the named process `:standard_error`
+      provided in Erlang
 
   """
 
@@ -184,20 +183,24 @@ defmodule IO do
   80 characters. The width can be changed by explicitly
   passing the `:width` option.
 
+  See `Inspect.Opts` for a full list of options.
+
   ## Examples
 
       IO.inspect Process.list, width: 40
 
   """
-  @spec inspect(term, Keyword.t) :: term
+  @spec inspect(item, Keyword.t) :: item when item: var
   def inspect(item, opts \\ []) do
     inspect group_leader(), item, opts
   end
 
   @doc """
   Inspects the item with options using the given device.
+
+  See `Inspect.Opts` for a full list of options.
   """
-  @spec inspect(device, term, Keyword.t) :: term
+  @spec inspect(device, item, Keyword.t) :: item when item: var
   def inspect(device, item, opts) when is_list(opts) do
     opts   = struct(Inspect.Opts, opts)
     iodata = Inspect.Algebra.format(Inspect.Algebra.to_doc(item, opts), opts.width)
@@ -247,7 +250,7 @@ defmodule IO do
   Reads a line from the IO device. It returns:
 
     * `data` - the characters in the line terminated
-      by a LF (or end of file)
+      by a line-feed (LF) or end of file (EOF)
 
     * `:eof` - end of file was encountered
 

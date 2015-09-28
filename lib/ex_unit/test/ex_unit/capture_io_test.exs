@@ -308,6 +308,22 @@ defmodule ExUnit.CaptureIOTest do
     end)
   end
 
+  test "device re-registering" do
+    {_pid, ref} = spawn_monitor(fn ->
+      capture_io(:stderr, fn ->
+        spawn_link(Kernel, :exit, [:shutdown])
+        :timer.sleep(:infinity)
+      end)
+    end)
+
+    # Assert the process is down then invoke capture_io
+    # to trigger the ExUnit.Server, ensuring the DOWN
+    # message from previous capture_io has been processed
+    assert_receive {:DOWN, ^ref, _, _, :shutdown}
+    _ = capture_io(fn -> "trigger" end)
+    assert capture_io(:stderr, fn -> end)
+  end
+
   test "with assert inside" do
     try do
       capture_io(fn ->

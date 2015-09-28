@@ -307,7 +307,7 @@ defmodule Enum do
   @doc """
   Shortcut to `chunk(collection, n, n)`.
   """
-  @spec chunk(t, non_neg_integer) :: [list]
+  @spec chunk(t, pos_integer) :: [list]
   def chunk(collection, n), do: chunk(collection, n, n, nil)
 
   @doc """
@@ -338,7 +338,7 @@ defmodule Enum do
       [[1, 2, 3], [4, 5, 6]]
 
   """
-  @spec chunk(t, non_neg_integer, non_neg_integer, t | nil) :: [list]
+  @spec chunk(t, pos_integer, pos_integer, t | nil) :: [list]
   def chunk(collection, n, step, pad \\ nil) when n > 0 and step > 0 do
     limit = :erlang.max(n, step)
 
@@ -728,7 +728,7 @@ defmodule Enum do
 
   @doc """
   Returns the first item for which `fun` returns a truthy value. If no such
-  item is found, returns `ifnone`.
+  item is found, returns `default`.
 
   ## Examples
 
@@ -743,15 +743,15 @@ defmodule Enum do
 
   """
   @spec find(t, default, (element -> any)) :: element | default
-  def find(collection, ifnone \\ nil, fun)
+  def find(collection, default \\ nil, fun)
 
-  def find(collection, ifnone, fun) when is_list(collection) do
-    do_find(collection, ifnone, fun)
+  def find(collection, default, fun) when is_list(collection) do
+    do_find(collection, default, fun)
   end
 
-  def find(collection, ifnone, fun) do
-    Enumerable.reduce(collection, {:cont, ifnone}, fn(entry, ifnone) ->
-      if fun.(entry), do: {:halt, entry}, else: {:cont, ifnone}
+  def find(collection, default, fun) do
+    Enumerable.reduce(collection, {:cont, default}, fn(entry, default) ->
+      if fun.(entry), do: {:halt, entry}, else: {:cont, default}
     end) |> elem(1)
   end
 
@@ -772,16 +772,16 @@ defmodule Enum do
 
   """
   @spec find_value(t, any, (element -> any)) :: any | :nil
-  def find_value(collection, ifnone \\ nil, fun)
+  def find_value(collection, default \\ nil, fun)
 
-  def find_value(collection, ifnone, fun) when is_list(collection) do
-    do_find_value(collection, ifnone, fun)
+  def find_value(collection, default, fun) when is_list(collection) do
+    do_find_value(collection, default, fun)
   end
 
-  def find_value(collection, ifnone, fun) do
-    Enumerable.reduce(collection, {:cont, ifnone}, fn(entry, ifnone) ->
+  def find_value(collection, default, fun) do
+    Enumerable.reduce(collection, {:cont, default}, fn(entry, default) ->
       fun_entry = fun.(entry)
-      if fun_entry, do: {:halt, fun_entry}, else: {:cont, ifnone}
+      if fun_entry, do: {:halt, fun_entry}, else: {:cont, default}
     end) |> elem(1)
   end
 
@@ -1255,12 +1255,12 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.minmax([2, 3, 1])
+      iex> Enum.min_max([2, 3, 1])
       {1, 3}
 
   """
-  @spec minmax(t) :: element | no_return
-  def minmax(collection) do
+  @spec min_max(t) :: element | no_return
+  def min_max(collection) do
     result =
       Enum.reduce(collection, :first, fn
         entry, {min_value, max_value} ->
@@ -1281,12 +1281,12 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.minmax_by(["aaa", "bb", "c"], fn(x) -> String.length(x) end)
+      iex> Enum.min_max_by(["aaa", "bb", "c"], fn(x) -> String.length(x) end)
       {"c", "aaa"}
 
   """
-  @spec minmax_by(t, (element -> any)) :: element | no_return
-  def minmax_by(collection, fun) do
+  @spec min_max_by(t, (element -> any)) :: element | no_return
+  def min_max_by(collection, fun) do
     result =
       Enum.reduce(collection, :first, fn
         entry, {{_, fun_min} = acc_min, {_, fun_max} = acc_max} ->
@@ -1406,6 +1406,10 @@ defmodule Enum do
   If you wish to use another value for `acc`, use `Enumerable.reduce/3`.
   This function won't call the specified function for enumerables that are 1-element long.
   Returns the accumulator.
+
+  Note that since the first element of the enumerable is used as the initial
+  value of the accumulator, `fun` will only be executed `n - 1` times where `n`
+  is the length of the enumerable.
 
   ## Examples
 
@@ -1552,7 +1556,7 @@ defmodule Enum do
       :random.seed(:os.timestamp)
 
   The implementation is based on the
-  [reservoir sampling](http://en.wikipedia.org/wiki/Reservoir_sampling#Relation_to_Fisher-Yates_shuffle)
+  [reservoir sampling](https://en.wikipedia.org/wiki/Reservoir_sampling#Relation_to_Fisher-Yates_shuffle)
   algorithm.
   It assumes that the sample being returned can fit into memory;
   the input collection doesn't have to - it is traversed just once.
@@ -1567,50 +1571,11 @@ defmodule Enum do
   """
   @spec random(t) :: element
   def random(collection) do
-    case random(collection, 1) do
+    case take_random(collection, 1) do
       [] -> raise Enum.EmptyError
       [e] -> e
     end
   end
-
-  @doc """
-  Returns a random sublist of a collection.
-
-  Notice this function will traverse the whole collection to
-  get the random sublist of collection. If you want the random
-  number between two integers, the best option is to use the
-  :random module.
-
-  See `random/1` for notes on implementation and random seed.
-
-  ## Examples
-
-      iex> Enum.random(1..10, 2)
-      [1, 5]
-      iex> Enum.random(?a..?z, 5)
-      'tfesm'
-
-  """
-  @spec random(t, integer) :: list
-  def random(collection, count) when count > 0 do
-    sample = Tuple.duplicate(nil, count)
-
-    reducer = fn x, {i, sample} ->
-      j = random_index(i)
-      if i < count do
-        swapped = sample |> elem(j)
-        {i + 1, sample |> put_elem(i, swapped) |> put_elem(j, x)}
-      else
-        if j < count, do: sample = sample |> put_elem(j, x)
-        {i + 1, sample}
-      end
-    end
-
-    {n, sample} = reduce(collection, {0, sample}, reducer)
-    sample |> Tuple.to_list |> take(Kernel.min(count, n))
-  end
-
-  def random(_collection, 0), do: []
 
   @doc """
   Applies the given function to each element in the collection,
@@ -1694,9 +1659,9 @@ defmodule Enum do
   """
   @spec slice(t, integer, non_neg_integer) :: list
 
-  def slice(_collection, _start, 0), do: []
+  def slice(_collection, start, 0) when is_integer(start), do: []
 
-  def slice(collection, start, count) when start < 0 do
+  def slice(collection, start, count) when is_integer(start) and start < 0 and is_integer(count) and count >= 0 do
     {list, new_start} = enumerate_and_count(collection, start)
     if new_start >= 0 do
       slice(list, new_start, count)
@@ -1705,11 +1670,11 @@ defmodule Enum do
     end
   end
 
-  def slice(collection, start, count) when is_list(collection) and start >= 0 and count > 0 do
+  def slice(collection, start, count) when is_list(collection) and is_integer(start) and start >= 0 and is_integer(count) and count > 0 do
     do_slice(collection, start, count)
   end
 
-  def slice(collection, start, count) when start >= 0 and count > 0 do
+  def slice(collection, start, count) when is_integer(start) and start >= 0 and is_integer(count) and count > 0 do
     {_, _, list} = Enumerable.reduce(collection, {:cont, {start, count, []}}, fn
       _entry, {start, count, _list} when start > 0 ->
         {:cont, {start-1, count, []}}
@@ -1755,7 +1720,7 @@ defmodule Enum do
   @spec slice(t, Range.t) :: list
   def slice(collection, range)
 
-  def slice(collection, first..last) when first >= 0 and last >= 0 do
+  def slice(collection, first..last) when is_integer(first) and first >= 0 and is_integer(last) and last >= 0 do
     # Simple case, which works on infinite collections
     if last - first >= 0 do
       slice(collection, first, last - first + 1)
@@ -1764,7 +1729,7 @@ defmodule Enum do
     end
   end
 
-  def slice(collection, first..last) do
+  def slice(collection, first..last) when is_integer(first) and is_integer(last) do
     {list, count} = enumerate_and_count(collection, 0)
     corr_first = if first >= 0, do: first, else: first + count
     corr_last = if last >= 0, do: last, else: last + count
@@ -1974,67 +1939,148 @@ defmodule Enum do
   def take(_collection, 0), do: []
   def take([], _count), do: []
 
-  def take(collection, n) when is_list(collection) and is_integer(n) and n > 0 do
-    do_take(collection, n)
+  def take(collection, count) when is_list(collection) and is_integer(count) and count > 0 do
+    do_take(collection, count)
   end
 
-  def take(collection, n) when is_integer(n) and n > 0 do
+  def take(collection, count) when is_integer(count) and count > 0 do
     {_, {res, _}} =
-      Enumerable.reduce(collection, {:cont, {[], n}}, fn(entry, {list, count}) ->
-        case count do
-          0 -> {:halt, {list, count}}
-          1 -> {:halt, {[entry|list], count - 1}}
-          _ -> {:cont, {[entry|list], count - 1}}
+      Enumerable.reduce(collection, {:cont, {[], count}}, fn(entry, {list, n}) ->
+        case n do
+          0 -> {:halt, {list, n}}
+          1 -> {:halt, {[entry|list], n - 1}}
+          _ -> {:cont, {[entry|list], n - 1}}
         end
       end)
     :lists.reverse(res)
   end
 
-  def take(collection, n) when is_integer(n) and n < 0 do
-    n = abs(n)
+  def take(collection, count) when is_integer(count) and count < 0 do
+    count = abs(count)
 
     {_count, buf1, buf2} =
-      reduce(collection, {0, [], []}, fn entry, {count, buf1, buf2} ->
+      reduce(collection, {0, [], []}, fn entry, {n, buf1, buf2} ->
         buf1  = [entry|buf1]
-        count = count + 1
-        if count == n do
+        n = n + 1
+        if n == count do
           {0, [], buf1}
         else
-          {count, buf1, buf2}
+          {n, buf1, buf2}
         end
       end)
 
-    do_take_last(buf1, buf2, n, [])
+    do_take_last(buf1, buf2, count, [])
   end
 
   defp do_take_last(_buf1, _buf2, 0, acc),
     do: acc
   defp do_take_last([], [], _, acc),
     do: acc
-  defp do_take_last([], [h|t], n, acc),
-    do: do_take_last([], t, n-1, [h|acc])
-  defp do_take_last([h|t], buf2, n, acc),
-    do: do_take_last(t, buf2, n-1, [h|acc])
+  defp do_take_last([], [h|t], count, acc),
+    do: do_take_last([], t, count-1, [h|acc])
+  defp do_take_last([h|t], buf2, count, acc),
+    do: do_take_last(t, buf2, count-1, [h|acc])
 
   @doc """
   Returns a collection of every `nth` item in the collection,
   starting with the first element.
 
-  The second argument specifying every `nth` item must be a non-negative integer.
+  The first item is always included, unless `nth` is 0.
+
+  The second argument specifying every `nth` item must be a non-negative integer,
+  otherwise `FunctionClauseError` will be thrown.
 
   ## Examples
 
       iex> Enum.take_every(1..10, 2)
       [1, 3, 5, 7, 9]
 
+      iex> Enum.take_every(1..10, 0)
+      []
+
+      iex> Enum.take_every([1, 2, 3], 1)
+      [1, 2, 3]
+
   """
   @spec take_every(t, non_neg_integer) :: list
+  def take_every(collection, 1), do: to_list(collection)
   def take_every(_collection, 0), do: []
   def take_every([], _nth), do: []
 
   def take_every(collection, nth) when is_integer(nth) and nth > 0 do
     {res, _} = reduce(collection, {[], :first}, R.take_every(nth))
     :lists.reverse(res)
+  end
+
+  @doc """
+  Takes random items from a collection.
+
+  Notice this function will traverse the whole collection to
+  get the random sublist of collection. If you want the random
+  number between two integers, the best option is to use the
+  `:random` module.
+
+  See `random/1` for notes on implementation and random seed.
+
+  ## Examples
+
+      iex> Enum.take_random(1..10, 2)
+      [1, 5]
+      iex> Enum.take_random(?a..?z, 5)
+      'tfesm'
+
+  """
+  @spec take_random(t, integer) :: list
+  def take_random(_collection, 0), do: []
+
+  if :erlang.system_info(:otp_release) >= '18' do
+    def take_random(collection, count) when count > 128 do
+      reducer = fn(elem, {idx, sample}) ->
+        jdx = random_index(idx)
+        cond do
+          idx < count ->
+            value = Map.get(sample, jdx)
+            {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
+          jdx < count ->
+            {idx + 1, Map.put(sample, jdx, elem)}
+          true ->
+            {idx + 1, sample}
+        end
+      end
+
+      {size, sample} = reduce(collection, {0, %{}}, reducer)
+      take_random(sample, Kernel.min(count, size), [])
+    end
+  end
+
+  def take_random(collection, count) when count > 0 do
+    sample = Tuple.duplicate(nil, count)
+
+    reducer = fn(elem, {idx, sample}) ->
+      jdx = random_index(idx)
+      cond do
+        idx < count ->
+          value = elem(sample, jdx)
+          {idx + 1, put_elem(sample, idx, value) |> put_elem(jdx, elem)}
+        jdx < count ->
+          {idx + 1, put_elem(sample, jdx, elem)}
+        true ->
+          {idx + 1, sample}
+      end
+    end
+
+    {size, sample} = reduce(collection, {0, sample}, reducer)
+    sample |> Tuple.to_list |> take(Kernel.min(count, size))
+  end
+
+  if :erlang.system_info(:otp_release) >= '18' do
+    defp take_random(_sample, 0, acc), do: acc
+
+    defp take_random(sample, position, acc) do
+      position = position - 1
+      acc = [Map.get(sample, position) | acc]
+      take_random(sample, position, acc)
+    end
   end
 
   @doc """
@@ -2087,7 +2133,7 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.uniq([1, 2, 3, 3, 2, 1]) |> Enum.to_list
+      iex> Enum.uniq([1, 2, 3, 3, 2, 1])
       [1, 2, 3]
 
   """
@@ -2275,16 +2321,16 @@ defmodule Enum do
 
   ## find
 
-  defp do_find([h|t], ifnone, fun) do
+  defp do_find([h|t], default, fun) do
     if fun.(h) do
       h
     else
-      do_find(t, ifnone, fun)
+      do_find(t, default, fun)
     end
   end
 
-  defp do_find([], ifnone, _) do
-    ifnone
+  defp do_find([], default, _) do
+    default
   end
 
   ## find_index
@@ -2303,12 +2349,12 @@ defmodule Enum do
 
   ## find_value
 
-  defp do_find_value([h|t], ifnone, fun) do
-    fun.(h) || do_find_value(t, ifnone, fun)
+  defp do_find_value([h|t], default, fun) do
+    fun.(h) || do_find_value(t, default, fun)
   end
 
-  defp do_find_value([], ifnone, _) do
-    ifnone
+  defp do_find_value([], default, _) do
+    default
   end
 
   ## shuffle

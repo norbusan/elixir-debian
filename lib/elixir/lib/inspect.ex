@@ -41,7 +41,8 @@ defprotocol Inspect do
   ## Error handling
 
   In case there is an error while your structure is being inspected,
-  Elixir will automatically fall back to a raw representation.
+  Elixir will raise an `ArgumentError` error and will automatically fall back
+  to a raw representation for printing the structure.
 
   You can however access the underlying error by invoking the Inspect
   implementation directly. For example, to test Inspect.HashSet above,
@@ -406,7 +407,7 @@ defimpl Inspect, for: Regex do
   defp escape(<<term>> <> rest, buf, term),
     do: escape(rest, buf <> <<?\\, term>>, term)
 
-  # the list of characters is from `String.printable?` impl
+  # the list of characters is from "String.printable?" impl
   # minus characters treated specially by regex: \s, \d, \b, \e
 
   defp escape(<<?\n>> <> rest, buf, term),

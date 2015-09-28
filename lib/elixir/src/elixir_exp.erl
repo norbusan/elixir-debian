@@ -1,5 +1,5 @@
 -module(elixir_exp).
--export([expand/2, expand_args/2, expand_arg/2]).
+-export([expand/2, expand_args/2, expand_arg/2, format_error/1]).
 -import(elixir_errors, [compile_error/3, compile_error/4]).
 -include("elixir.hrl").
 
@@ -26,16 +26,6 @@ expand({'%', Meta, [Left, Right]}, E) ->
 expand({'<<>>', Meta, Args}, E) ->
   elixir_bitstring:expand(Meta, Args, E);
 
-%% Other operators
-
-expand({'__op__', Meta, [_, _] = Args}, E) ->
-  {EArgs, EA} = expand_args(Args, E),
-  {{'__op__', Meta, EArgs}, EA};
-
-expand({'__op__', Meta, [_, _, _] = Args}, E) ->
-  {EArgs, EA} = expand_args(Args, E),
-  {{'__op__', Meta, EArgs}, EA};
-
 expand({'->', Meta, _Args}, E) ->
   compile_error(Meta, ?m(E, file), "unhandled operator ->");
 
@@ -46,31 +36,13 @@ expand({'__block__', _Meta, []}, E) ->
 expand({'__block__', _Meta, [Arg]}, E) ->
   expand(Arg, E);
 expand({'__block__', Meta, Args}, E) when is_list(Args) ->
-  {EArgs, EA} = expand_many(Args, E),
+  {EArgs, EA} = expand_block(Args, [], Meta, E),
   {{'__block__', Meta, EArgs}, EA};
 
 %% __aliases__
 
-expand({'__aliases__', Meta, _} = Alias, E) ->
-  case elixir_aliases:expand(Alias, ?m(E, aliases),
-                             ?m(E, macro_aliases), ?m(E, lexical_tracker)) of
-    Receiver when is_atom(Receiver) ->
-      elixir_lexical:record_remote(Receiver, ?m(E, lexical_tracker)),
-      {Receiver, E};
-    Aliases ->
-      {EAliases, EA} = expand_args(Aliases, E),
-
-      case lists:all(fun is_atom/1, EAliases) of
-        true ->
-          Receiver = elixir_aliases:concat(EAliases),
-          elixir_lexical:record_remote(Receiver, ?m(E, lexical_tracker)),
-          {Receiver, EA};
-        false ->
-          compile_error(Meta, ?m(E, file), "an alias must expand to an atom "
-            "at compilation time, but did not in \"~ts\". Use Module.concat/2 "
-            "if you want to dynamically generate aliases", ['Elixir.Macro':to_string(Alias)])
-      end
-  end;
+expand({'__aliases__', _, _} = Alias, E) ->
+  expand_aliases(Alias, E, true);
 
 %% alias
 
@@ -78,7 +50,7 @@ expand({alias, Meta, [Ref]}, E) ->
   expand({alias, Meta, [Ref, []]}, E);
 expand({alias, Meta, [Ref, KV]}, E) ->
   assert_no_match_or_guard_scope(Meta, alias, E),
-  {ERef, ER} = expand(Ref, E),
+  {ERef, ER} = expand_without_aliases_report(Ref, E),
   {EKV, ET}  = expand_opts(Meta, alias, [as, warn], no_alias_opts(KV), ER),
 
   if
@@ -96,7 +68,7 @@ expand({require, Meta, [Ref]}, E) ->
 expand({require, Meta, [Ref, KV]}, E) ->
   assert_no_match_or_guard_scope(Meta, require, E),
 
-  {ERef, ER} = expand(Ref, E),
+  {ERef, ER} = expand_without_aliases_report(Ref, E),
   {EKV, ET}  = expand_opts(Meta, require, [as, warn], no_alias_opts(KV), ER),
 
   if
@@ -115,7 +87,7 @@ expand({import, Meta, [Left]}, E) ->
 
 expand({import, Meta, [Ref, KV]}, E) ->
   assert_no_match_or_guard_scope(Meta, import, E),
-  {ERef, ER} = expand(Ref, E),
+  {ERef, ER} = expand_without_aliases_report(Ref, E),
   {EKV, ET}  = expand_opts(Meta, import, [only, except, warn], KV, ER),
 
   if
@@ -399,8 +371,45 @@ expand_list([H|T], Fun, Acc, List) ->
 expand_list([], _Fun, Acc, List) ->
   {lists:reverse(List), Acc}.
 
-expand_many(Args, E) ->
-  lists:mapfoldl(fun expand/2, E, Args).
+expand_block([], Acc, _Meta, E) ->
+  {lists:reverse(Acc), E};
+expand_block([H], Acc, Meta, E) ->
+  {EH, EE} = expand(H, E),
+  expand_block([], [EH|Acc], Meta, EE);
+expand_block([H|T], Acc, Meta, E) ->
+  {EH, EE} = expand(H, E),
+
+  %% Notice checks rely on the code BEFORE expansion
+  %% instead of relying on Erlang checks.
+  %%
+  %% That's because expansion may generate useless
+  %% terms on their own (think compile time removed
+  %% logger calls) and we don't want to catch those.
+  %%
+  %% Or, similarly, the work is all in the expansion
+  %% (for example, to register something) and it is
+  %% simply returning something as replacement.
+  case is_useless_building(H, EH, Meta) of
+    {UselessMeta, UselessTerm} ->
+      elixir_errors:form_warn(UselessMeta, ?m(E, file), ?MODULE, UselessTerm);
+    false ->
+      ok
+  end,
+
+  expand_block(T, [EH|Acc], Meta, EE).
+
+%% Notice we don't handle atoms on purpose. They are common
+%% when unquoting AST and it is unlikely that we would catch
+%% bugs as we don't do binary operations on them like in
+%% strings or numbers.
+is_useless_building(H, _, Meta) when is_binary(H); is_number(H) ->
+  {Meta, {useless_literal, H}};
+is_useless_building({'@', Meta, [{Var, _, Ctx}]}, _, _) when is_atom(Ctx); Ctx == [] ->
+  {Meta, {useless_attr, Var}};
+is_useless_building({Var, Meta, Ctx}, {Var, _, Ctx}, _) when is_atom(Ctx) ->
+  {Meta, {useless_var, Var}};
+is_useless_building(_, _, _) ->
+  false.
 
 %% Variables in arguments are not propagated from one
 %% argument to the other. For instance:
@@ -425,7 +434,7 @@ expand_args([Arg], E) ->
   {EArg, EE} = expand(Arg, E),
   {[EArg], EE};
 expand_args(Args, #{context := match} = E) ->
-  expand_many(Args, E);
+  lists:mapfoldl(fun expand/2, E, Args);
 expand_args(Args, E) ->
   {EArgs, {EC, EV}} = lists:mapfoldl(fun expand_arg/2, {E, E}, Args),
   {EArgs, elixir_env:mergea(EV, EC)}.
@@ -468,8 +477,10 @@ expand_local(Meta, Name, Args, #{module := Module, function := Function} = E) ->
 
 expand_remote(Receiver, DotMeta, Right, Meta, Args, E, EL) ->
   if
-    is_atom(Receiver) -> elixir_lexical:record_remote(Receiver, ?m(E, lexical_tracker));
-    true -> ok
+    is_atom(Receiver) ->
+      elixir_lexical:record_remote(Receiver, ?m(E, function), ?m(E, lexical_tracker));
+    true ->
+      ok
   end,
   {EArgs, EA} = expand_args(Args, E),
   {elixir_rewrite:rewrite(Receiver, DotMeta, Right, Meta, EArgs),
@@ -498,19 +509,22 @@ no_alias_opts(KV) when is_list(KV) ->
   end;
 no_alias_opts(KV) -> KV.
 
-no_alias_expansion({'__aliases__', Meta, [H|T]}) when (H /= 'Elixir') and is_atom(H) ->
-  {'__aliases__', Meta, ['Elixir', H|T]};
+no_alias_expansion({'__aliases__', _, [H|T]}) when is_atom(H) ->
+  elixir_aliases:concat([H|T]);
 no_alias_expansion(Other) ->
   Other.
 
 expand_require(Meta, Ref, KV, E) ->
+  %% We always record requires when they are defined
+  %% as they expect the reference at compile time.
+  elixir_lexical:record_remote(Ref, nil, ?m(E, lexical_tracker)),
   RE = E#{requires := ordsets:add_element(Ref, ?m(E, requires))},
   expand_alias(Meta, false, Ref, KV, RE).
 
 expand_alias(Meta, IncludeByDefault, Ref, KV, #{context_modules := Context} = E) ->
   New = expand_as(lists:keyfind(as, 1, KV), Meta, IncludeByDefault, Ref, E),
 
-  %% Add the alias to context_modules if defined is true.
+  %% Add the alias to context_modules if defined is set.
   %% This is used by defmodule in order to store the defined
   %% module in context modules.
   NewContext =
@@ -524,9 +538,14 @@ expand_alias(Meta, IncludeByDefault, Ref, KV, #{context_modules := Context} = E)
 
   E#{aliases := Aliases, macro_aliases := MacroAliases, context_modules := NewContext}.
 
-expand_as({as, true}, _Meta, _IncludeByDefault, Ref, _E) ->
+%% TODO: Remove this by 1.3
+expand_as({as, true}, Meta, _IncludeByDefault, Ref, E) ->
+  elixir_errors:warn(?line(Meta), ?m(E, file), "as: true given to require/alias is deprecated"),
   elixir_aliases:last(Ref);
-expand_as({as, false}, _Meta, _IncludeByDefault, Ref, _E) ->
+expand_as({as, false}, Meta, _IncludeByDefault, Ref, E) ->
+  elixir_errors:warn(?line(Meta), ?m(E, file), "as: false given to require/alias is deprecated"),
+  Ref;
+expand_as({as, nil}, _Meta, _IncludeByDefault, Ref, _E) ->
   Ref;
 expand_as({as, Atom}, Meta, _IncludeByDefault, _Ref, E) when is_atom(Atom) ->
   case length(string:tokens(atom_to_list(Atom), ".")) of
@@ -544,12 +563,40 @@ expand_as({as, Other}, Meta, _IncludeByDefault, _Ref, E) ->
   compile_error(Meta, ?m(E, file),
     "invalid value for keyword :as, expected an alias, got: ~ts", ['Elixir.Macro':to_string(Other)]).
 
+%% Aliases
+
+expand_without_aliases_report({'__aliases__', _, _} = Alias, E) ->
+  expand_aliases(Alias, E, false);
+expand_without_aliases_report(Other, E) ->
+  expand(Other, E).
+
+expand_aliases({'__aliases__', Meta, _} = Alias, E, Report) ->
+  case elixir_aliases:expand(Alias, ?m(E, aliases), ?m(E, macro_aliases), ?m(E, lexical_tracker)) of
+    Receiver when is_atom(Receiver) ->
+      Report andalso
+        elixir_lexical:record_remote(Receiver, ?m(E, function), ?m(E, lexical_tracker)),
+      {Receiver, E};
+    Aliases ->
+      {EAliases, EA} = expand_args(Aliases, E),
+
+      case lists:all(fun is_atom/1, EAliases) of
+        true ->
+          Receiver = elixir_aliases:concat(EAliases),
+          Report andalso
+            elixir_lexical:record_remote(Receiver, ?m(E, function), ?m(E, lexical_tracker)),
+          {Receiver, EA};
+        false ->
+          compile_error(Meta, ?m(E, file), "an alias must expand to an atom "
+            "at compilation time, but did not in \"~ts\". Use Module.concat/2 "
+            "if you want to dynamically generate aliases", ['Elixir.Macro':to_string(Alias)])
+      end
+  end.
+
 %% Assertions
 
 rewrite_case_clauses([{do, [
   {'->', FalseMeta, [
-    [{'when', _, [Var, {'__op__', _, [
-      'orelse',
+    [{'when', _, [Var, {{'.', _, [erlang, 'or']}, _, [
       {{'.', _, [erlang, '=:=']}, _, [Var, nil]},
       {{'.', _, [erlang, '=:=']}, _, [Var, false]}
     ]}]}],
@@ -576,3 +623,16 @@ assert_no_match_scope(_Meta, _Kind, _E) -> [].
 assert_no_guard_scope(Meta, _Kind, #{context := guard, file := File}) ->
   compile_error(Meta, File, "invalid expression in guard");
 assert_no_guard_scope(_Meta, _Kind, _E) -> [].
+
+format_error({useless_literal, Term}) ->
+  io_lib:format("code block starting at line contains unused literal ~ts "
+                "(remove the literal or assign it to _ to avoid warnings)",
+                ['Elixir.Macro':to_string(Term)]);
+format_error({useless_var, Var}) ->
+  io_lib:format("variable ~ts in code block has no effect as it is never returned "
+                "(remove the variable or assign it to _ to avoid warnings)",
+                [Var]);
+format_error({useless_attr, Attr}) ->
+  io_lib:format("module attribute @~ts in code block has no effect as it is never returned "
+                "(remove the attribute or assign it to _ to avoid warnings)",
+                [Attr]).

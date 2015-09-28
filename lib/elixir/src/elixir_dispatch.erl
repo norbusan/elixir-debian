@@ -62,13 +62,14 @@ import_function(Meta, Name, Arity, E) ->
 require_function(Meta, Receiver, Name, Arity, E) ->
   case is_element({Name, Arity}, get_optional_macros(Receiver)) of
     true  -> false;
-    false -> remote_function(Meta, Receiver, Name, Arity, E)
+    false ->
+      elixir_lexical:record_remote(Receiver, ?m(E, function), ?m(E, lexical_tracker)),
+      remote_function(Meta, Receiver, Name, Arity, E)
   end.
 
 remote_function(Meta, Receiver, Name, Arity, E) ->
   check_deprecation(Meta, Receiver, Name, Arity, E),
 
-  elixir_lexical:record_remote(Receiver, ?m(E, lexical_tracker)),
   case elixir_rewrite:inline(Receiver, Name, Arity) of
     {AR, AN} -> {remote, AR, AN, Arity};
     false    -> {remote, Receiver, Name, Arity}
@@ -167,7 +168,7 @@ expand_require(Meta, Receiver, {Name, Arity} = Tuple, Args, E) ->
       Requires = ?m(E, requires),
       case (Receiver == Module) orelse is_element(Receiver, Requires) orelse skip_require(Meta) of
         true  ->
-          elixir_lexical:record_remote(Receiver, ?m(E, lexical_tracker)),
+          elixir_lexical:record_remote(Receiver, ?m(E, function), ?m(E, lexical_tracker)),
           {ok, Receiver, expand_macro_named(Meta, Receiver, Name, Arity, Args, E)};
         false ->
           Info = {unrequired_module, {Receiver, Name, length(Args), Requires}},
@@ -260,11 +261,9 @@ is_import(Meta) ->
     {import, _} = Import ->
       case lists:keyfind(context, 1, Meta) of
         {context, _} -> Import;
-        false ->
-          false
+        false -> false
       end;
-    false ->
-      false
+    false -> false
   end.
 
 % %% We've reached the macro wrapper fun, skip it with the rest

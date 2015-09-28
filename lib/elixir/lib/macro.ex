@@ -3,6 +3,19 @@ import Kernel, except: [to_string: 1]
 defmodule Macro do
   @moduledoc """
   Conveniences for working with macros.
+
+  ## Custom Sigils
+
+  To create a custom sigil, define a function with the name
+  `sigil_{identifier}` that takes two arguments. The first argument will be
+  the interpolated string, the second will be a char list containing any
+  modifiers.
+
+  Valid modifiers include only lower and upper case letters. Other characters
+  will cause a syntax error.
+
+  The module containing the custom sigil must be imported before the sigil
+  syntax can be used.
   """
 
   @typedoc "Abstract Syntax Tree (AST)"
@@ -41,12 +54,11 @@ defmodule Macro do
       o when o in [:==, :!=, :=~, :===, :!==] -> {:left, 150}
       o when o in [:<, :<=, :>=, :>]          -> {:left, 160}
       o when o in [:|>, :<<<, :>>>, :<~, :~>,
-                   :<<~, :~>>, :<~>, :<|>]    -> {:left, 170}
+                :<<~, :~>>, :<~>, :<|>, :^^^] -> {:left, 170}
       :in                                     -> {:left, 180}
       o when o in [:++, :--, :.., :<>]        -> {:right, 200}
       o when o in [:+, :-]                    -> {:left, 210}
       o when o in [:*, :/]                    -> {:left, 220}
-      :^^^                                    -> {:left, 250}
       :.                                      -> {:left, 310}
     end
   end
@@ -79,6 +91,12 @@ defmodule Macro do
     bad_pipe(expr, call_args)
   end
 
+  def pipe(expr, {call, _, [_, _]} = call_args, _integer)
+      when call in unquote(@binary_ops) do
+    raise ArgumentError, "cannot pipe #{to_string expr} into #{to_string call_args}, " <>
+      "the #{to_string call} operator can only take two arguments"
+  end
+
   def pipe(expr, {call, line, atom}, integer) when is_atom(atom) do
     {call, line, List.insert_at([], integer, expr)}
   end
@@ -99,7 +117,7 @@ defmodule Macro do
   @doc """
   Applies the given function to the node metadata if it contains one.
 
-  This is often useful when used with `Macro.prewalk/1` to remove
+  This is often useful when used with `Macro.prewalk/2` to remove
   information like lines and hygienic counters from the expression
   for either storage or comparison.
 
@@ -344,7 +362,7 @@ defmodule Macro do
   defp find_invalid(other), do: {:error, other}
 
   @doc ~S"""
-  Unescape the given chars.
+  Unescapes the given chars.
 
   This is the unescaping behaviour used by default in Elixir
   single- and double-quoted strings. Check `unescape_string/2`
@@ -546,6 +564,17 @@ defmodule Macro do
     fun.(ast, "(" <> Enum.map_join(left, ", ", &to_string(&1, fun)) <> ") when " <> to_string(right, fun))
   end
 
+  # Capture
+  def to_string({:&, _, [{:/, _, [{name, _, ctx}, arity]}]} = ast, fun)
+      when is_atom(name) and is_atom(ctx) and is_integer(arity) do
+    fun.(ast, "&" <> Atom.to_string(name) <> "/" <> to_string(arity, fun))
+  end
+
+  def to_string({:&, _, [{:/, _, [{{:., _, [mod, name]}, _, []}, arity]}]} = ast, fun)
+      when is_atom(name) and is_integer(arity) do
+    fun.(ast, "&" <> to_string(mod, fun) <> "." <> Atom.to_string(name) <> "/" <> to_string(arity, fun))
+  end
+
   # Unary ops
   def to_string({unary, _, [{binary, _, [_, _]} = arg]} = ast, fun)
       when unary in unquote(@unary_ops) and binary in unquote(@binary_ops) do
@@ -622,8 +651,7 @@ defmodule Macro do
     false
   end
 
-  def interpolate(expr, fun)
-  def interpolate({:<<>>, _, parts}, fun) do
+  defp interpolate({:<<>>, _, parts}, fun) do
     parts = Enum.map_join(parts, "", fn
       {:::, _, [{{:., _, [Kernel, :to_string]}, _, [arg]}, {:binary, _, _}]} ->
         "\#{" <> to_string(arg, fun) <> "}"
@@ -867,7 +895,7 @@ defmodule Macro do
   defp do_expand_once({:__aliases__, _, _} = original, env) do
     case :elixir_aliases.expand(original, env.aliases, env.macro_aliases, env.lexical_tracker) do
       receiver when is_atom(receiver) ->
-        :elixir_lexical.record_remote(receiver, env.lexical_tracker)
+        :elixir_lexical.record_remote(receiver, env.function, env.lexical_tracker)
         {receiver, true}
       aliases ->
         aliases = :lists.map(&elem(do_expand_once(&1, env), 0), aliases)
@@ -875,7 +903,7 @@ defmodule Macro do
         case :lists.all(&is_atom/1, aliases) do
           true ->
             receiver = :elixir_aliases.concat(aliases)
-            :elixir_lexical.record_remote(receiver, env.lexical_tracker)
+            :elixir_lexical.record_remote(receiver, env.function, env.lexical_tracker)
             {receiver, true}
           false ->
             {original, false}
@@ -976,7 +1004,7 @@ defmodule Macro do
   be expanded.
 
   This function uses `expand_once/2` under the hood. Check
-  `expand_once/2` for more information and examples.
+  it out for more information and examples.
   """
   def expand(tree, env) do
     expand_until({tree, true}, env)

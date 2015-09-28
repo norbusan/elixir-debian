@@ -14,13 +14,13 @@ This document simply outlines the release process:
 
 5. Run `make clean test` to ensure all tests pass from scratch and the CI is green
 
-6. Ensure minimum supported Hex works with new release (instructions upcoming)
+6. Recompile an existing project (for example, Ecto) to ensure manifests can be upgraded
 
 7. Push branch and the new tag
 
-8. Release new docs with `make release_docs`, copy docs to `docs/stable` if appropriate, and push
+8. Publish new docs with `make publish_docs`, copy docs to `docs/stable` if appropriate, and push to GitHub Pages
 
-9. Release new zip with `make release_zip`, push `Precompiled.zip` to GitHub Releases
+9. Publish new zips with `make publish_zips`, upload `Precompiled.zip` and `Docs.zip` to GitHub Releases
 
 10. Add the release to `elixir.csv` file in `elixir-lang/elixir-lang.github.com`
 

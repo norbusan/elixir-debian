@@ -276,6 +276,33 @@ defmodule List do
   end
 
   @doc """
+  Receives a `list` of tuples and returns the first tuple
+  where the element at `position` in the tuple matches the
+  given `key`, as well as the `list` without found tuple.
+
+  If such a tuple is not found, `nil` will be returned.
+
+  ## Examples
+
+      iex> List.keytake([a: 1, b: 2], :a, 0)
+      {{:a, 1}, [b: 2]}
+
+      iex> List.keytake([a: 1, b: 2], 2, 1)
+      {{:b, 2}, [a: 1]}
+
+      iex> List.keytake([a: 1, b: 2], :c, 0)
+      nil
+
+  """
+  @spec keytake([tuple], any, non_neg_integer) :: {tuple, [tuple]} | nil
+  def keytake(list, key, position) do
+    case :lists.keytake(key, position + 1, list) do
+      {:value, item, list} -> {item, list}
+      false                -> nil
+    end
+  end
+
+  @doc """
   Wraps the argument in a list.
   If the argument is already a list, returns the list.
   If the argument is `nil`, returns an empty list.
@@ -422,7 +449,7 @@ defmodule List do
       iex> List.delete_at([1, 2, 3], 0)
       [2, 3]
 
-      iex List.delete_at([1, 2, 3], 10)
+      iex> List.delete_at([1, 2, 3], 10)
       [1, 2, 3]
 
       iex> List.delete_at([1, 2, 3], -1)
@@ -468,13 +495,12 @@ defmodule List do
 
   ## Examples
 
-      iex> :barney
-      iex> List.to_existing_atom('barney')
-      :barney
+      iex> _ = :my_atom
+      iex> List.to_existing_atom('my_atom')
+      :my_atom
 
-      iex> List.to_existing_atom('fred')
+      iex> List.to_existing_atom('this_atom_will_never_exist')
       ** (ArgumentError) argument error
-         :erlang.list_to_existing_atom('fred')
 
   """
   @spec to_existing_atom(char_list) :: atom
@@ -552,7 +578,7 @@ defmodule List do
 
   Notice that this function expects a list of integers representing
   UTF-8 codepoints. If you have a list of bytes, you must instead use
-  [the `:binary` module](http://erlang.org/doc/man/binary.html).
+  the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
 
   ## Examples
 
@@ -589,40 +615,40 @@ defmodule List do
     list
   end
 
-  defp do_replace_at([_old|rest], 0, value) do
-    [ value | rest ]
+  defp do_replace_at([_old | rest], 0, value) do
+    [value | rest]
   end
 
-  defp do_replace_at([h|t], index, value) do
-    [ h | do_replace_at(t, index - 1, value) ]
+  defp do_replace_at([h | t], index, value) do
+    [h | do_replace_at(t, index - 1, value)]
   end
 
   # insert_at
 
   defp do_insert_at([], _index, value) do
-    [ value ]
+    [value]
   end
 
   defp do_insert_at(list, index, value) when index <= 0 do
-    [ value | list ]
+    [value | list]
   end
 
-  defp do_insert_at([h|t], index, value) do
-    [ h | do_insert_at(t, index - 1, value) ]
+  defp do_insert_at([h | t], index, value) do
+    [h | do_insert_at(t, index - 1, value)]
   end
 
   # update_at
 
-  defp do_update_at([value|list], 0, fun) do
-    [ fun.(value) | list ]
+  defp do_update_at([value | list], 0, fun) do
+    [fun.(value) | list]
   end
 
   defp do_update_at(list, index, _fun) when index < 0 do
     list
   end
 
-  defp do_update_at([h|t], index, fun) do
-    [ h | do_update_at(t, index - 1, fun) ]
+  defp do_update_at([h | t], index, fun) do
+    [h | do_update_at(t, index - 1, fun)]
   end
 
   defp do_update_at([], _index, _fun) do
@@ -635,7 +661,7 @@ defmodule List do
     []
   end
 
-  defp do_delete_at([_|t], 0) do
+  defp do_delete_at([_ | t], 0) do
     t
   end
 
@@ -643,19 +669,18 @@ defmodule List do
     list
   end
 
-  defp do_delete_at([h|t], index) do
-    [h | do_delete_at(t, index-1)]
+  defp do_delete_at([h | t], index) do
+    [h | do_delete_at(t, index - 1)]
   end
 
   # zip
 
   defp do_zip(list, acc) do
     converter = fn x, acc -> do_zip_each(to_list(x), acc) end
-    {mlist, heads} = :lists.mapfoldl converter, [], list
-
-    case heads do
-      nil -> :lists.reverse acc
-      _   -> do_zip mlist, [:erlang.list_to_tuple(:lists.reverse(heads))|acc]
+    case :lists.mapfoldl(converter, [], list) do
+      {_, nil} -> :lists.reverse(acc)
+      {mlist, heads} ->
+        do_zip(mlist, [to_tuple(:lists.reverse(heads)) | acc])
     end
   end
 
@@ -663,8 +688,8 @@ defmodule List do
     {nil, nil}
   end
 
-  defp do_zip_each([h|t], acc) do
-    {t, [h|acc]}
+  defp do_zip_each([h | t], acc) do
+    {t, [h | acc]}
   end
 
   defp do_zip_each([], _) do

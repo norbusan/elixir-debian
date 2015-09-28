@@ -1,6 +1,8 @@
 defmodule Mix.Compilers.Elixir do
   @moduledoc false
 
+  @manifest_vsn :v1
+
   @doc """
   Compiles stale Elixir files.
 
@@ -16,10 +18,10 @@ defmodule Mix.Compilers.Elixir do
   def compile(manifest, srcs, skip, exts, dest, force, on_start) do
     keep = srcs -- skip
     all  = Mix.Utils.extract_files(keep, exts)
-    {all_entries, skip_entries} = read_manifest(manifest, dest, keep)
+    {all_entries, skip_entries} = parse_manifest(manifest, keep)
 
     removed =
-      for {_b, _m, source, _d, _f, _bin} <- all_entries, not(source in all), do: source
+      for {_b, _m, source, _cd, _rd, _f, _bin} <- all_entries, not(source in all), do: source
 
     changed =
       if force do
@@ -33,10 +35,10 @@ defmodule Mix.Compilers.Elixir do
         # Otherwise let's start with the new ones
         # plus the ones that have changed
         for(source <- all,
-            not Enum.any?(all_entries, fn {_b, _m, s, _d, _f, _bin} -> s == source end),
+            not Enum.any?(all_entries, fn {_b, _m, s, _cd, _rd, _f, _bin} -> s == source end),
             do: source)
           ++
-        for({_b, _m, source, _d, files, _bin} <- all_entries,
+        for({_b, _m, source, _cd, _rd, files, _bin} <- all_entries,
             times = Enum.map([source|files], &HashDict.fetch!(all_mtimes, &1)),
             Mix.Utils.stale?(times, [modified]),
             do: source)
@@ -58,7 +60,7 @@ defmodule Mix.Compilers.Elixir do
   end
 
   defp mtimes(entries) do
-    Enum.reduce(entries, HashDict.new, fn {_b, _m, source, _d, files, _bin}, dict ->
+    Enum.reduce(entries, HashDict.new, fn {_b, _m, source, _cd, _rd, files, _bin}, dict ->
       Enum.reduce([source|files], dict, fn file, dict ->
         if HashDict.has_key?(dict, file) do
           dict
@@ -73,15 +75,10 @@ defmodule Mix.Compilers.Elixir do
   Removes compiled files.
   """
   def clean(manifest) do
-    case File.read(manifest) do
-      {:ok, contents} ->
-        contents
-        |> String.split("\n")
-        |> Enum.each &(&1 |> String.split("\t") |> hd |> File.rm)
-        File.rm(manifest)
-      {:error, _} ->
-        :ok
+    Enum.map read_manifest(manifest), fn {beam, _, _, _, _, _, _} ->
+      File.rm(beam)
     end
+    :ok
   end
 
   defp compile_manifest(manifest, entries, stale, dest, on_start) do
@@ -112,17 +109,22 @@ defmodule Mix.Compilers.Elixir do
   end
 
   defp each_module(pid, dest, cwd, source, module, binary) do
-    source = Path.relative_to(source, cwd)
-    bin    = Atom.to_string(module)
-    beam   = dest
-             |> Path.join(bin <> ".beam")
-             |> Path.relative_to(cwd)
+    beam =
+      dest
+      |> Path.join(Atom.to_string(module) <> ".beam")
+      |> Path.relative_to(cwd)
 
-    deps = Kernel.LexicalTracker.remotes(module)
-           |> List.delete(module)
-           |> :lists.usort
-           |> Enum.map(&Atom.to_string(&1))
-           |> Enum.reject(&match?("elixir_" <> _, &1))
+    {compile, runtime} = Kernel.LexicalTracker.remotes(module)
+
+    compile =
+      compile
+      |> List.delete(module)
+      |> Enum.reject(&match?("elixir_" <> _, Atom.to_string(&1)))
+
+    runtime =
+      runtime
+      |> List.delete(module)
+      |> Enum.reject(&match?("elixir_" <> _, Atom.to_string(&1)))
 
     files = for file <- get_external_resources(module),
                 File.regular?(file),
@@ -130,7 +132,9 @@ defmodule Mix.Compilers.Elixir do
                 Path.type(relative) == :relative,
                 do: relative
 
-    Agent.cast pid, &:lists.keystore(beam, 1, &1, {beam, bin, source, deps, files, binary})
+    source = Path.relative_to(source, cwd)
+    tuple  = {beam, module, source, compile, runtime, files, binary}
+    Agent.cast pid, &:lists.keystore(beam, 1, &1, tuple)
   end
 
   defp get_external_resources(module) do
@@ -148,99 +152,90 @@ defmodule Mix.Compilers.Elixir do
   # This function receives the manifest entries and some source
   # files that have changed. It then, recursively, figures out
   # all the files that changed (via the module dependencies) and
-  # return their sources as the remaining entries.
+  # return the non-changed entries and the removed sources.
   defp remove_stale_entries(all, []) do
     {all, []}
   end
 
   defp remove_stale_entries(all, changed) do
-    remove_stale_entries(all, :lists.usort(changed), [], [])
+    remove_stale_entries(all, HashSet.new, Enum.into(changed, HashSet.new))
   end
 
-  defp remove_stale_entries([{beam, module, source, _d, _f, _bin} = entry|t], changed, removed, acc) do
-    if source in changed do
-      atom = String.to_atom(module)
-      _ = File.rm(beam)
-      _ = :code.purge(atom)
-      _ = :code.delete(atom)
-      remove_stale_entries(t, changed, [module|removed], acc)
+  defp remove_stale_entries(entries, old_stale, old_removed) do
+    {rest, new_stale, new_removed} =
+      Enum.reduce entries, {[], old_stale, old_removed}, &remove_stale_entry/2
+
+    if HashSet.size(new_stale) > HashSet.size(old_stale) or
+       HashSet.size(new_removed) > HashSet.size(old_removed) do
+      remove_stale_entries(rest, new_stale, new_removed)
     else
-      remove_stale_entries(t, changed, removed, [entry|acc])
+      {rest, Enum.to_list(new_removed)}
     end
   end
 
-  defp remove_stale_entries([], changed, removed, acc) do
-    # If any of the dependencies for the remaining entries
-    # were removed, get its source so we can remove them.
-    next_changed = for {_b, _m, source, deps, _f, _bin} <- acc,
-                    Enum.any?(deps, &(&1 in removed)),
-                    do: source
+  defp remove_stale_entry({beam, module, source, compile, runtime, _f, _bin} = entry,
+                          {rest, stale, removed}) do
+    cond do
+      # If I changed in disk or have a compile time dependency
+      # on something stale, I need to be recompiled.
+      source in removed or Enum.any?(compile, &(&1 in stale)) ->
+        _ = File.rm(beam)
+        _ = :code.purge(module)
+        _ = :code.delete(module)
+        {rest, HashSet.put(stale, module), HashSet.put(removed, source)}
 
-    {acc, next} = remove_stale_entries(Enum.reverse(acc), next_changed)
-    {acc, next ++ changed}
+      # If I have a runtime time dependency on something stale,
+      # I am stale too.
+      Enum.any?(runtime, &(&1 in stale)) ->
+        {[entry|rest], HashSet.put(stale, module), removed}
+
+      # Otherwise, we don't store it anywhere
+      true ->
+        {[entry|rest], stale, removed}
+    end
   end
 
   ## Manifest handling
 
-  # Reads the manifest returning the results as tuples.
-  # The beam files are read, removed and stored in memory.
-  defp read_manifest(manifest, dest, keep_paths) do
-    initial = {[], []}
+  defp read_manifest(manifest) do
+    case :file.consult(manifest) do
+      {:ok, [@manifest_vsn|t]} -> t
+      _ -> []
+    end
+  end
 
-    case File.read(manifest) do
-      {:ok, contents} ->
-        keep_paths = Enum.map(keep_paths, &(&1 <> "/"))
-        Enum.reduce String.split(contents, "\n"), initial, fn x, acc ->
-          read_manifest_entry(String.split(x, "\t"), acc, dest, keep_paths)
+  defp parse_manifest(manifest, keep_paths) do
+    Enum.reduce read_manifest(manifest), {[], []}, fn
+      {_, _, source, _, _, _, _} = entry, {keep, skip} ->
+        if String.starts_with?(source, keep_paths) do
+          {[entry|keep], skip}
+        else
+          {keep, [entry|skip]}
         end
-      {:error, _} ->
-        initial
     end
   end
 
-  defp read_manifest_entry([_beam, module, source|deps], {keep, skip}, dest, keep_paths) do
-    {deps, files} =
-      case Enum.split_while(deps, &(&1 != "Elixir")) do
-        {deps, ["Elixir"|files]} -> {deps, files}
-        {deps, _} -> {deps, []}
-      end
-
-    # TODO: Notice we do not use beam from the file.
-    # From Elixir v1.2 onwards, we can start writing "1"
-    # instead of the beam file in write_manifest/2.
-    entry = {Path.join(dest, module <> ".beam"), module, source,
-             deps, files, nil}
-
-    if String.starts_with?(source, keep_paths) do
-      {[entry|keep], skip}
-    else
-      {keep, [entry|skip]}
-    end
-  end
-
-  defp read_manifest_entry(_, acc, _dest, _skip_paths) do
-    acc
-  end
-
-  # Writes the manifest separating entries by tabs.
   defp write_manifest(_manifest, []) do
     :ok
   end
 
   defp write_manifest(manifest, entries) do
-    lines = Enum.map(entries, fn
-      {beam, module, source, deps, files, binary} ->
+    File.mkdir_p!(Path.dirname(manifest))
+
+    File.open!(manifest, [:write], fn device ->
+      :io.format(device, '~p.~n', [@manifest_vsn])
+
+      Enum.map entries, fn {beam, _, _, _, _, _, binary} = entry ->
         if binary, do: File.write!(beam, binary)
-        tail = deps ++ ["Elixir"] ++ files
-        [beam, module, source | tail] |> Enum.join("\t")
+        :io.format(device, '~p.~n', [put_elem(entry, 6, nil)])
+      end
+
+      :ok
     end)
 
     # The Mix.Dep.Lock keeps all the project dependencies. Since Elixir
     # is a dependency itself, we need to touch the lock so the current
     # Elixir version, used to compile the files above, is properly stored.
-    Mix.Dep.Lock.touch
-
-    File.mkdir_p!(Path.dirname(manifest))
-    File.write!(manifest, Enum.join(lines, "\n"))
+    Mix.Dep.Lock.update_manifest
   end
 end

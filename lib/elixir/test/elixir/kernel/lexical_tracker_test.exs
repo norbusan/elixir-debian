@@ -15,18 +15,26 @@ defmodule Kernel.LexicalTrackerTest do
   end
 
   test "can add remote dispatches", config do
-    D.remote_dispatch(config[:pid], String)
-    assert D.remotes(config[:pid]) == [String]
+    D.remote_dispatch(config[:pid], String, :runtime)
+    assert D.remotes(config[:pid]) == {[], [String]}
+
+    D.remote_dispatch(config[:pid], String, :compile)
+    assert D.remotes(config[:pid]) == {[String], []}
+
+    D.remote_dispatch(config[:pid], String, :runtime)
+    assert D.remotes(config[:pid]) == {[String], []}
   end
 
   test "can add imports", config do
     D.add_import(config[:pid], String, 1, true)
-    assert D.remotes(config[:pid]) == [String]
+    D.import_dispatch(config[:pid], String)
+    assert D.remotes(config[:pid]) == {[String], []}
   end
 
   test "can add aliases", config do
     D.add_alias(config[:pid], String, 1, true)
-    assert D.remotes(config[:pid]) == [String]
+    D.alias_dispatch(config[:pid], String)
+    assert D.remotes(config[:pid]) == {[], []}
   end
 
   test "unused imports", config do
@@ -59,5 +67,23 @@ defmodule Kernel.LexicalTrackerTest do
   test "aliases with no warn are not unused", config do
     D.add_alias(config[:pid], String, 1, false)
     assert D.collect_unused_aliases(config[:pid]) == []
+  end
+
+  test "does not tag aliases nor types as compile time" do
+    {{compile, runtime}, _binding} =
+      Code.eval_string("""
+      defmodule Kernel.LexicalTrackerTest.Sample do
+        alias Foo.Bar, as: Bar, warn: false
+        @spec foo :: Foo.Bar.t
+        def foo, do: Bar.t
+        Kernel.LexicalTracker.remotes(__ENV__.module)
+      end |> elem(3)
+      """)
+
+    refute Elixir.Bar in runtime
+    refute Elixir.Bar in compile
+
+    assert Foo.Bar in runtime
+    refute Foo.Bar in compile
   end
 end

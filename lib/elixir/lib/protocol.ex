@@ -425,7 +425,7 @@ defmodule Protocol do
         @fallback_to_any false
 
         # Invoke the user given block
-        unquote(block)
+        _ = unquote(block)
 
         # Finalize expansion
         unquote(after_defprotocol)
@@ -526,7 +526,7 @@ defmodule Protocol do
     # Unquote the implementation just later
     # when all variables will already be injected
     # into the module body.
-    __impl__ =
+    impl =
       quote unquote: false do
         @doc false
         @spec __impl__(:for) :: unquote(for)
@@ -542,14 +542,14 @@ defmodule Protocol do
       for      = unquote(for)
       name     = Module.concat(protocol, for)
 
-      # TODO: Emit warnings once we reimplement Access before 1.1
-      # if protocol == Access do
-      #   :elixir_errors.warn __ENV__.line, __ENV__.file,
-      #     "implementation of the Access protocol is deprecated. For customization of " <>
-      #     "the dict[key] syntax, please implement the Dict behaviour instead"
-      # end
-
-      Protocol.assert_protocol!(protocol)
+      # TODO: Remove this by 1.3
+      if Atom.to_string(protocol) =~ "Elixir.Access" do
+        :elixir_errors.warn __ENV__.line, __ENV__.file,
+          "implementation of the Access protocol is deprecated. For customization of " <>
+          "the dict[key] syntax, please implement the Dict behaviour instead"
+      else
+        Protocol.assert_protocol!(protocol)
+      end
 
       defmodule name do
         @behaviour protocol
@@ -561,7 +561,7 @@ defmodule Protocol do
         Module.register_attribute(__MODULE__, :impl, persist: true)
         @impl [protocol: @protocol, for: @for]
 
-        unquote(__impl__)
+        unquote(impl)
       end
     end
   end
