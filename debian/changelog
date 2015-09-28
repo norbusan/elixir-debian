@@ -1,4 +1,4 @@
-elixir-lang (1.1.0-1) UNRELEASED; urgency=medium
+elixir-lang (1.1.0-1) unstable; urgency=medium
 
   [ Evgeny Golyshev ]
   * Replace dependency on `erlang` with `erlang-base`. This avoids pulling
@@ -16,7 +16,7 @@ elixir-lang (1.1.0-1) UNRELEASED; urgency=medium
       bytecode for the Erlang VM, so it is not architecture dependent.
     - Build-Depends: remove `erlang` (but keep `erlang-dev)
 
- -- Antonio Terceiro <terceiro@debian.org>  Mon, 28 Sep 2015 10:00:36 -0300
+ -- Antonio Terceiro <terceiro@debian.org>  Mon, 28 Sep 2015 11:14:32 -0300
 
 elixir-lang (1.1.0~0.20150708-1) unstable; urgency=medium
 
