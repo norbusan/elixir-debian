@@ -1,9 +1,14 @@
-elixir-lang (1.1.0~0.20150708-2) unstable; urgency=medium
+elixir-lang (1.1.0~0.20150708-2) UNRELEASED; urgency=medium
 
   [ Evgeny Golyshev ]
   * Replace dependency on `erlang` with `erlang-base`. This avoids pulling
     several X11-related packages when installing on a headless system.
   * Improved package description
+
+  [ Antonio Terceiro ]
+  * debian/watch: restrict to final releases
+  * debian/copyright:
+    - add `rebar` to Files-Excluded.
 
  -- Antonio Terceiro <terceiro@debian.org>  Sat, 26 Sep 2015 12:10:06 -0300
 
