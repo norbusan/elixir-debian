@@ -15,7 +15,7 @@ Homepage: http://elixir-lang.org/
 Testsuite: autopkgtest
 
 Package: elixir
-Architecture: any
+Architecture: all
 Depends: erlang-base | erlang-base-hipe,
          ${misc:Depends}
 Description: functional meta-programming aware language

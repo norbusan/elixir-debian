@@ -11,6 +11,9 @@ elixir-lang (1.1.0-1) UNRELEASED; urgency=medium
   * debian/watch: restrict to final releases
   * debian/copyright:
     - add `rebar` to Files-Excluded.
+  * debian/control:
+    - Switch Architecture: from `any` to `all`. Elixir code gets compiled to
+      bytecode for the Erlang VM, so it is not architecture dependent.
 
  -- Antonio Terceiro <terceiro@debian.org>  Mon, 28 Sep 2015 10:00:36 -0300
 
