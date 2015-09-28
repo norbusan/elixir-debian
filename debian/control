@@ -5,6 +5,8 @@ Maintainer: Antonio Terceiro <terceiro@debian.org>
 Uploaders: Evgeny Golyshev <eugulixes@gmail.com>
 Build-Depends: debhelper (>= 9~),
                erlang-dev,
+               erlang-eunit,
+               erlang-parsetools,
                git,
                rebar
 Standards-Version: 3.9.6
