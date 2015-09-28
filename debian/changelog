@@ -14,6 +14,7 @@ elixir-lang (1.1.0-1) UNRELEASED; urgency=medium
   * debian/control:
     - Switch Architecture: from `any` to `all`. Elixir code gets compiled to
       bytecode for the Erlang VM, so it is not architecture dependent.
+    - Build-Depends: remove `erlang` (but keep `erlang-dev)
 
  -- Antonio Terceiro <terceiro@debian.org>  Mon, 28 Sep 2015 10:00:36 -0300
 
