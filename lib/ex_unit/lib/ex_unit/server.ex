@@ -50,11 +50,11 @@ defmodule ExUnit.Server do
 
   def init(:ok) do
     {:ok, %{
-      async_cases: %{},
-      sync_cases: %{},
+      async_cases: HashSet.new,
+      sync_cases: HashSet.new,
       start_load: :os.timestamp,
-      captured_devices: {%{}, %{}},
-      log_captures: %{},
+      captured_devices: {HashSet.new, %{}},
+      log_captures: HashSet.new,
       log_status: nil
     }}
   end
@@ -66,13 +66,13 @@ defmodule ExUnit.Server do
       end
 
     {:reply,
-      {Map.keys(config.async_cases), Map.keys(config.sync_cases), load_us},
-      %{config | async_cases: %{}, sync_cases: %{}, start_load: nil}}
+      {config.async_cases, config.sync_cases, load_us},
+      %{config | async_cases: HashSet.new, sync_cases: HashSet.new, start_load: nil}}
   end
 
   def handle_call({:capture_device, name, pid}, _from, config) do
     {names, refs} = config.captured_devices
-    if Map.has_key?(names, name) do
+    if name in names do
       {:reply, {:error, :already_captured}, config}
     else
       orig_pid = Process.whereis(name)
@@ -80,7 +80,7 @@ defmodule ExUnit.Server do
       Process.register(pid, name)
       ref = Process.monitor(pid)
       refs = Map.put(refs, ref, {name, orig_pid})
-      names = Map.put(names, name, true)
+      names = HashSet.put(names, name)
       {:reply, {:ok, ref}, %{config | captured_devices: {names, refs}}}
     end
   end
@@ -92,9 +92,9 @@ defmodule ExUnit.Server do
 
   def handle_call({:log_capture_on, pid}, _from, config) do
     ref  = Process.monitor(pid)
-    refs = Map.put(config.log_captures, ref, true)
+    refs = HashSet.put(config.log_captures, ref)
 
-    if map_size(refs) == 1 do
+    if HashSet.size(refs) == 1 do
       status = Logger.remove_backend(:console)
       {:reply, ref, %{config | log_captures: refs, log_status: status}}
     else
@@ -115,12 +115,12 @@ defmodule ExUnit.Server do
 
   def handle_cast({:add_async_case, name}, config) do
     {:noreply,
-      %{config | async_cases: Map.put(config.async_cases, name, true)}}
+      %{config | async_cases: Set.put(config.async_cases, name)}}
   end
 
   def handle_cast({:add_sync_case, name}, config) do
     {:noreply,
-      %{config | sync_cases: Map.put(config.sync_cases, name, true)}}
+      %{config | sync_cases: Set.put(config.sync_cases, name)}}
   end
 
   def handle_info({:DOWN, ref, _, _, _}, config) do
@@ -136,7 +136,7 @@ defmodule ExUnit.Server do
   defp release_device(ref, %{captured_devices: {names, refs}} = config) do
     case Map.pop(refs, ref) do
       {{name, pid}, refs} ->
-        names = Map.delete(names, name)
+        names = HashSet.delete(names, name)
         Process.demonitor(ref, [:flush])
         try do
           try do
@@ -153,8 +153,8 @@ defmodule ExUnit.Server do
   end
 
   defp remove_log_capture(ref, %{log_captures: refs} = config) do
-    if Map.has_key?(refs, ref) do
-      refs = Map.delete(refs, ref)
+    if ref in refs do
+      refs = HashSet.delete(refs, ref)
       maybe_add_console(refs, config.log_status)
       %{config | log_captures: refs}
     else
@@ -163,7 +163,7 @@ defmodule ExUnit.Server do
   end
 
   defp maybe_add_console(refs, status) do
-    if status == :ok and map_size(refs) == 0 do
+    if status == :ok and HashSet.size(refs) == 0 do
       Logger.add_backend(:console, flush: true)
     end
   end

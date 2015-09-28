@@ -818,7 +818,11 @@ defmodule Kernel.ErrorsTest do
       end
       '''
 
-    message = "nofile:2: spec for undefined function omg/0"
+    if :erlang.system_info(:otp_release) >= '18' do
+      message = "nofile:2: spec for undefined function omg/0"
+    else
+      message = "nofile:2: spec for undefined function Kernel.ErrorsTest.TypespecErrors2.omg/0"
+    end
 
     assert_compile_fail CompileError, message,
       '''
@@ -836,20 +840,6 @@ defmodule Kernel.ErrorsTest do
         def range(unquote({:foo, 0, 1})), do: :ok
       end
       '''
-  end
-
-  test "bad multi-call" do
-    assert_compile_fail CompileError,
-      "nofile:1: invalid argument for alias, expected a compile time atom or alias, got: 42",
-      'alias IO.{ANSI, 42}'
-
-    assert_compile_fail CompileError,
-      "nofile:1: :as option is not supported by multi-alias call",
-      'alias Elixir.{Map}, as: Dict'
-
-    assert_compile_fail UndefinedFunctionError,
-      "undefined function: List.{}/1",
-      '[List.{Chars}, "one"]'
   end
 
   test "macros error stacktrace" do

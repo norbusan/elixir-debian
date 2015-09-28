@@ -1,8 +1,8 @@
 defmodule Range do
   @moduledoc """
-  Defines a range.
+  Defines a Range.
 
-  A range represents a discrete number of values where
+  A Range represents a discrete number of values where
   the first and last values are integers.
 
   Ranges can be either increasing (first <= last) or
@@ -15,7 +15,7 @@ defmodule Range do
 
       iex> range = 1..3
       1..3
-      iex> first..last = range
+      iex> first .. last = range
       iex> first
       1
       iex> last
@@ -31,21 +31,12 @@ defmodule Range do
   @doc """
   Creates a new range.
   """
-  @spec new(integer, integer) :: t
-  def new(first, last) when is_integer(first) and is_integer(last) do
+  def new(first, last) do
     %Range{first: first, last: last}
   end
 
-  def new(first, last) do
-    raise ArgumentError,
-      "ranges (first..last) expect both sides to be integers, " <>
-      "got: #{inspect first}..#{inspect last}"
-  end
-
   @doc """
-  Returns `true` if the given `term` is a range.
-
-  It does not check if the range is valid.
+  Returns `true` if the given argument is a range.
 
   ## Examples
 
@@ -56,15 +47,13 @@ defmodule Range do
       false
 
   """
-  @spec range?(%Range{}) :: true
-  @spec range?(term) :: false
-  def range?(term)
   def range?(%Range{}), do: true
   def range?(_), do: false
 end
 
 defimpl Enumerable, for: Range do
   def reduce(first .. last, acc, fun) do
+    validate_range!(first, last)
     reduce(first, last, acc, fun, last >= first)
   end
 
@@ -89,6 +78,7 @@ defimpl Enumerable, for: Range do
   end
 
   def member?(first .. last, value) do
+    validate_range!(first, last)
     if first <= last do
       {:ok, first <= value and value <= last}
     else
@@ -97,11 +87,18 @@ defimpl Enumerable, for: Range do
   end
 
   def count(first .. last) do
+    validate_range!(first, last)
     if first <= last do
       {:ok, last - first + 1}
     else
       {:ok, first - last + 1}
     end
+  end
+
+  defp validate_range!(first, last) when is_integer(first) and is_integer(last), do: :ok
+  defp validate_range!(first, last) do
+    raise ArgumentError,
+          "ranges (left .. right) expect both sides to be integers, got: #{inspect first..last}"
   end
 end
 

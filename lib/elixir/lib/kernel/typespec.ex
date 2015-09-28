@@ -508,9 +508,13 @@ defmodule Kernel.Typespec do
   end
 
   defp get_doc_info(table, attr, caller) do
-    case :ets.take(table, attr) do
-      [{^attr, {line, doc}}] -> {line, doc}
-      [] -> {caller.line, nil}
+    # TODO: Use :ets.take/2 with Erlang 18
+    case :ets.lookup(table, attr) do
+      [{^attr, {line, doc}}] ->
+        :ets.delete(table, attr)
+        {line, doc}
+      [] ->
+        {caller.line, nil}
     end
   end
 
@@ -892,9 +896,16 @@ defmodule Kernel.Typespec do
 
   defp typespec({:%{}, meta, fields}, vars, caller) do
     fields =
-      :lists.map(fn {k, v} ->
-        {:type, line(meta), :map_field_assoc, [typespec(k, vars, caller), typespec(v, vars, caller)]}
-      end, fields)
+      # TODO: Remove else once we support only OTP >18
+      if :erlang.system_info(:otp_release) >= '18' do
+        :lists.map(fn {k, v} ->
+          {:type, line(meta), :map_field_assoc, [typespec(k, vars, caller), typespec(v, vars, caller)]}
+        end, fields)
+      else
+        :lists.map(fn {k, v} ->
+          {:type, line(meta), :map_field_assoc, typespec(k, vars, caller), typespec(v, vars, caller)}
+        end, fields)
+      end
 
     {:type, line(meta), :map, fields}
   end
@@ -1057,9 +1068,14 @@ defmodule Kernel.Typespec do
 
   defp typespec({name, meta, arguments}, vars, caller) do
     arguments = for arg <- arguments, do: typespec(arg, vars, caller)
-    arity = length(arguments)
-    type = if :erl_internal.is_type(name, arity), do: :type, else: :user_type
-    {type, line(meta), name, arguments}
+
+    if :erlang.system_info(:otp_release) >= '18' do
+      arity = length(arguments)
+      type = if :erl_internal.is_type(name, arity), do: :type, else: :user_type
+      {type, line(meta), name, arguments}
+    else
+      {:type, line(meta), name, arguments}
+    end
   end
 
   # Handle literals

@@ -203,8 +203,10 @@ defmodule Mix.Tasks.Escript.Build do
     end
   end
 
-  defp prepare_beam_paths(paths, map \\ %{}) do
-    Enum.into paths, map, &{Path.basename(&1), &1}
+  defp prepare_beam_paths(paths, dict \\ HashDict.new) do
+    paths
+    |> Enum.map(&{Path.basename(&1), &1})
+    |> Enum.into(dict)
   end
 
   defp read_beams(items) do
@@ -284,10 +286,10 @@ defmodule Mix.Tasks.Escript.Build do
       erl_version = :erlang.system_info(:otp_release)
 
       case :string.to_integer(erl_version) do
-        {num, _} when num >= 18 -> nil
+        {num, _} when num >= 17 -> nil
         _ ->
           io_error ["Incompatible Erlang/OTP release: ", erl_version,
-                    ".\nThis escript requires at least Erlang/OTP 18.0.\n"]
+                    ".\nThis escript requires at least Erlang/OTP 17.0.\n"]
           :erlang.halt(1)
       end
 

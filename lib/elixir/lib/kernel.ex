@@ -7,12 +7,11 @@ import :elixir_bootstrap
 
 defmodule Kernel do
   @moduledoc """
-  Provides the default macros and functions Elixir imports into your
-  environment.
-
-  These macros and functions can be skipped or cherry- picked via the
-  `import` macro. For instance, if you want to tell Elixir not to
-  import the `if` macro, you can do:
+  `Kernel` provides the default macros and functions
+  Elixir imports into your environment. These macros and functions
+  can be skipped or cherry-picked via the `import` macro. For
+  instance, if you want to tell Elixir not to import the `if`
+  macro, you can do:
 
       import Kernel, except: [if: 2]
 
@@ -1591,41 +1590,27 @@ defmodule Kernel do
 
   """
   @spec struct(module | map, Enum.t) :: map
-  def struct(struct, kv \\ []) do
-    struct(struct, kv, fn({key, val}, acc) ->
-      case :maps.is_key(key, acc) and key != :__struct__ do
-        true  -> :maps.put(key, val, acc)
-        false -> acc
-      end
-    end)
-  end
+  def struct(struct, kv \\ [])
 
-  @doc """
-  Same as `struct/2` but raises if any of provided keys doesn't exist in the struct.
-  """
-  @spec struct!(module | map, Enum.t) :: map | no_return
-  def struct!(struct, kv \\ []) do
-    struct(struct, kv, fn
-      {:__struct__, _}, acc -> acc
-      {key, val}, acc ->
-        :maps.update(key, val, acc)
-    end)
-  end
-
-  defp struct(struct, [], _fun) when is_atom(struct) do
+  def struct(struct, []) when is_atom(struct) do
     apply(struct, :__struct__, [])
   end
 
-  defp struct(struct, kv, fun) when is_atom(struct) do
-    struct(apply(struct, :__struct__, []), kv, fun)
+  def struct(struct, kv) when is_atom(struct) do
+    struct(apply(struct, :__struct__, []), kv)
   end
 
-  defp struct(%{__struct__: _} = struct, [], _fun) do
+  def struct(%{__struct__: _} = struct, []) do
     struct
   end
 
-  defp struct(%{__struct__: _} = struct, kv, fun) do
-    Enum.reduce(kv, struct, fun)
+  def struct(%{__struct__: _} = struct, kv) do
+    Enum.reduce(kv, struct, fn {k, v}, acc ->
+      case :maps.is_key(k, acc) and k != :__struct__ do
+        true  -> :maps.put(k, v, acc)
+        false -> acc
+      end
+    end)
   end
 
   @doc """
@@ -2444,20 +2429,15 @@ defmodule Kernel do
   defmacro first .. last do
     case is_float(first) or is_float(last) or
          is_atom(first) or is_atom(last) or
-         is_binary(first) or is_binary(last) or
-         is_list(first) or is_list(last) do
+         is_binary(first) or is_binary(last) do
       true ->
         raise ArgumentError,
-          "ranges (first..last) expect both sides to be integers, " <>
+          "ranges (left .. right) expect both sides to be integers, " <>
           "got: #{Macro.to_string({:.., [], [first, last]})}"
       false ->
-        case __CALLER__.context do
-          nil -> quote do: Elixir.Range.new(unquote(first), unquote(last))
-          _   -> {:%{}, [], [__struct__: Elixir.Range, first: first, last: last]}
-        end
+        {:%{}, [], [__struct__: Elixir.Range, first: first, last: last]}
     end
   end
-
 
   @doc """
   Provides a short-circuit operator that evaluates and returns
@@ -2682,7 +2662,7 @@ defmodule Kernel do
       {:%{}, [], [__struct__: Elixir.Range, first: first, last: last]} ->
         in_range(left, Macro.expand(first, __CALLER__), Macro.expand(last, __CALLER__))
       _ ->
-        raise ArgumentError, <<"invalid args for operator \"in\", it expects a compile time list ",
+        raise ArgumentError, <<"invalid args for operator in, it expects a compile time list ",
                                "or range on the right side when used in guard expressions, got: ",
                                Macro.to_string(right) :: binary>>
     end
@@ -3375,16 +3355,15 @@ defmodule Kernel do
 
   The real benefit of protocols comes when mixed with structs.
   For instance, Elixir ships with many data types implemented as
-  structs, like `MapSet`. We can implement the `Blank` protocol
-  for those types as well:
+  structs, like `HashDict` and `HashSet`. We can implement the
+  `Blank` protocol for those types as well:
 
-      defimpl Blank, for: MapSet do
+      defimpl Blank, for: [HashDict, HashSet] do
         def blank?(enum_like), do: Enum.empty?(enum_like)
       end
 
-  When implementing a protocol for a struct, the `:for` option can
-  be omitted if the `defimpl` call is inside the module that defines
-  the struct:
+  When implementing a protocol for a struct, the `:for` option can be omitted if
+  the `defimpl` call is inside the module that defines the struct:
 
       defmodule User do
         defstruct [:email, :name]
@@ -3620,31 +3599,17 @@ defmodule Kernel do
   please define it a module which will be imported accordingly.
   """
   defmacro use(module, opts \\ []) do
-    calls = Enum.map(expand_aliases(module, __CALLER__), fn
-      expanded when is_atom(expanded) ->
+    expanded = Macro.expand(module, __CALLER__)
+
+    case is_atom(expanded) do
+      false ->
+        raise ArgumentError, "invalid arguments for use, expected an atom or alias as argument"
+      true ->
         quote do
           require unquote(expanded)
           unquote(expanded).__using__(unquote(opts))
         end
-      _otherwise ->
-        raise ArgumentError, "invalid arguments for use, expected an atom or alias as argument"
-    end)
-    quote(do: (unquote_splicing calls))
-  end
-
-  defp expand_aliases({{:., _, [base, :{}]}, _, refs}, env) do
-    base = Macro.expand(base, env)
-    Enum.map(refs, fn
-      {:__aliases__, _, ref} ->
-        Module.concat([base | ref])
-      ref when is_atom(ref) ->
-        Module.concat(base, ref)
-      other -> other
-    end)
-  end
-
-  defp expand_aliases(module, env) do
-    [Macro.expand(module, env)]
+    end
   end
 
   @doc """

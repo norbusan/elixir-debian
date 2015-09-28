@@ -1,9 +1,8 @@
 defmodule Module do
   @moduledoc ~S'''
-  Provides functions to deal with modules during compilation time.
-
-  It allows a developer to dynamically add, delete and register
-  attributes, attach documentation and so forth.
+  This module provides many functions to deal with modules during
+  compilation time. It allows a developer to dynamically attach
+  documentation, add, delete and register attributes and so forth.
 
   After a module is compiled, using many of the functions in
   this module will raise errors, since it is out of their scope
@@ -1039,9 +1038,13 @@ defmodule Module do
   defp postprocess_attribute(_, value), do: value
 
   defp get_doc_info(table, env) do
-    case :ets.take(table, :doc) do
-      [doc: {_, _} = pair] -> pair
-      [] -> {env.line, nil}
+    # TODO: Use :ets.take/2 with Erlang 18
+    case :ets.lookup(table, :doc) do
+      [doc: {_, _} = pair] ->
+        :ets.delete(table, :doc)
+        pair
+      [] ->
+        {env.line, nil}
     end
   end
 

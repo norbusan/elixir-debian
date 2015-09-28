@@ -266,20 +266,6 @@ defmodule KernelTest do
     assert struct(user, name: "other", __struct__: Post) == %User{name: "other"}
   end
 
-  test "struct!/1 and struct!/2" do
-    assert struct!(User) == %User{name: "john"}
-
-    user = struct!(User, name: "meg")
-    assert user == %User{name: "meg"}
-
-    assert_raise KeyError, fn ->
-      struct!(user, unknown: "key")
-    end
-
-    assert struct!(user, %{name: "john"}) == %User{name: "john"}
-    assert struct!(user, name: "other", __struct__: Post) == %User{name: "other"}
-  end
-
   defdelegate my_flatten(list), to: List, as: :flatten
   defdelegate [map(callback, list)], to: :lists, append_first: true
 
@@ -640,58 +626,5 @@ defmodule KernelTest do
 
     defp a_list, do: [1, 2, 3]
     defp a_nil, do: nil
-  end
-
-  defmodule UseMacro do
-    use ExUnit.Case, async: true
-
-    import ExUnit.CaptureIO
-
-    defmodule SampleA do
-      defmacro __using__(opts) do
-        prefix = Keyword.get(opts, :prefix, "")
-        IO.puts(prefix <> "A")
-      end
-    end
-
-    defmodule SampleB do
-      defmacro __using__(_) do
-        IO.puts("B")
-      end
-    end
-
-    test "invalid argument" do
-      message = "invalid arguments for use, expected an atom or alias as argument"
-      assert_raise ArgumentError, message, fn ->
-        Code.eval_string("use 42")
-      end
-    end
-
-    test "multi-call" do
-      assert capture_io(fn ->
-        Code.eval_string("use UseMacro.{SampleA, SampleB,}", [], __ENV__)
-      end) == "A\nB\n"
-    end
-
-    test "multi-call with options" do
-      assert capture_io(fn ->
-        Code.eval_string(~S|use UseMacro.{SampleA}, prefix: "-"|, [], __ENV__)
-      end) == "-A\n"
-    end
-
-    test "multi-call with unquote" do
-      assert capture_io(fn ->
-        Code.eval_string("""
-          defmodule TestMod do
-            def main() do
-              use UseMacro.{SampleB, unquote(:SampleA)}
-            end
-          end
-          """, [], __ENV__)
-      end) == "B\nA\n"
-    after
-      :code.purge(UseMacro.TestMod)
-      :code.delete(UseMacro.TestMod)
-    end
   end
 end

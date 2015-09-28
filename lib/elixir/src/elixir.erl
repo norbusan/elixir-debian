@@ -29,16 +29,13 @@ start(_Type, _Args) ->
       error   -> [binary]
     end,
 
-  case string:to_integer(erlang:system_info(otp_release)) of
-    {Num, _} when Num >= 18 ->
-      ok;
-    _ ->
-      io:format(standard_error, "unsupported Erlang version, expected Erlang 18+~n", []),
-      erlang:halt(1)
-  end,
-
   ok = io:setopts(standard_io, Opts),
-  ok = io:setopts(standard_error, [{encoding, utf8}]),
+
+  %% TODO: Remove this once we support only OTP >18
+  ok = case io:setopts(standard_error, [{encoding, utf8}]) of
+    ok         -> ok;
+    {error, _} -> io:setopts(standard_error, [{unicode, true}]) %% OTP 17.3 and earlier
+  end,
 
   Encoding = file:native_name_encoding(),
   case Encoding of
@@ -75,6 +72,7 @@ start(_Type, _Args) ->
 
 stop(Tab) ->
   elixir_config:delete(Tab).
+
 
 config_change(_Changed, _New, _Remove) ->
   ok.

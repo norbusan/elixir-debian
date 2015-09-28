@@ -602,7 +602,7 @@ defmodule Code do
       "Converts an atom to a char list."
 
       # Module doesn't exist
-      iex> Code.get_docs(ModuleNotGood, :all)
+      iex> docs = Code.get_docs(ModuleNotGood, :all)
       nil
 
   """

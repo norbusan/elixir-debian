@@ -247,9 +247,7 @@ defmodule IO do
   end
 
   @doc """
-  Reads a line from the IO device.
-
-  It returns:
+  Reads a line from the IO device. It returns:
 
     * `data` - the characters in the line terminated
       by a line-feed (LF) or end of file (EOF)

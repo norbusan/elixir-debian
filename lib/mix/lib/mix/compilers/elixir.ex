@@ -39,7 +39,7 @@ defmodule Mix.Compilers.Elixir do
             do: source)
           ++
         for({_b, _m, source, _cd, _rd, files, _bin} <- all_entries,
-            times = Enum.map([source|files], &Map.fetch!(all_mtimes, &1)),
+            times = Enum.map([source|files], &HashDict.fetch!(all_mtimes, &1)),
             Mix.Utils.stale?(times, [modified]),
             do: source)
       end
@@ -60,12 +60,12 @@ defmodule Mix.Compilers.Elixir do
   end
 
   defp mtimes(entries) do
-    Enum.reduce(entries, %{}, fn {_b, _m, source, _cd, _rd, files, _bin}, dict ->
+    Enum.reduce(entries, HashDict.new, fn {_b, _m, source, _cd, _rd, files, _bin}, dict ->
       Enum.reduce([source|files], dict, fn file, dict ->
-        if Map.has_key?(dict, file) do
+        if HashDict.has_key?(dict, file) do
           dict
         else
-          Map.put(dict, file, Mix.Utils.last_modified(file))
+          HashDict.put(dict, file, Mix.Utils.last_modified(file))
         end
       end)
     end)
@@ -158,18 +158,18 @@ defmodule Mix.Compilers.Elixir do
   end
 
   defp remove_stale_entries(all, changed) do
-    remove_stale_entries(all, %{}, Enum.into(changed, %{}, &{&1, true}))
+    remove_stale_entries(all, HashSet.new, Enum.into(changed, HashSet.new))
   end
 
   defp remove_stale_entries(entries, old_stale, old_removed) do
     {rest, new_stale, new_removed} =
       Enum.reduce entries, {[], old_stale, old_removed}, &remove_stale_entry/2
 
-    if map_size(new_stale) > map_size(old_stale) or
-       map_size(new_removed) > map_size(old_removed) do
+    if HashSet.size(new_stale) > HashSet.size(old_stale) or
+       HashSet.size(new_removed) > HashSet.size(old_removed) do
       remove_stale_entries(rest, new_stale, new_removed)
     else
-      {rest, Map.keys(new_removed)}
+      {rest, Enum.to_list(new_removed)}
     end
   end
 
@@ -178,16 +178,16 @@ defmodule Mix.Compilers.Elixir do
     cond do
       # If I changed in disk or have a compile time dependency
       # on something stale, I need to be recompiled.
-      Map.has_key?(removed, source) or Enum.any?(compile, &Map.has_key?(stale, &1)) ->
+      source in removed or Enum.any?(compile, &(&1 in stale)) ->
         _ = File.rm(beam)
         _ = :code.purge(module)
         _ = :code.delete(module)
-        {rest, Map.put(stale, module, true), Map.put(removed, source, true)}
+        {rest, HashSet.put(stale, module), HashSet.put(removed, source)}
 
       # If I have a runtime time dependency on something stale,
       # I am stale too.
-      Enum.any?(runtime, &Map.has_key?(stale, &1)) ->
-        {[entry|rest], Map.put(stale, module, true), removed}
+      Enum.any?(runtime, &(&1 in stale)) ->
+        {[entry|rest], HashSet.put(stale, module), removed}
 
       # Otherwise, we don't store it anywhere
       true ->

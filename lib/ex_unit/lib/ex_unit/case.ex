@@ -195,7 +195,7 @@ defmodule ExUnit.Case do
         end
 
         @before_compile ExUnit.Case
-        @ex_unit_test_names %{}
+        @ex_unit_test_names HashSet.new
         use ExUnit.Callbacks
       end
 
@@ -228,12 +228,12 @@ defmodule ExUnit.Case do
       case contents do
         [do: block] ->
           quote do
-            unquote(block)
+            _ = unquote(block)
             :ok
           end
         _ ->
           quote do
-            try(unquote(contents))
+            _ = try(unquote(contents))
             :ok
           end
       end
@@ -295,9 +295,9 @@ defmodule ExUnit.Case do
     test = %ExUnit.Test{name: name, case: mod, tags: tags}
     test_names = Module.get_attribute(mod, :ex_unit_test_names)
 
-    unless Map.has_key?(test_names, name) do
+    unless name in test_names do
       Module.put_attribute(mod, :ex_unit_tests, test)
-      Module.put_attribute(mod, :ex_unit_test_names, Map.put(test_names, name, true))
+      Module.put_attribute(mod, :ex_unit_test_names, HashSet.put(test_names, name))
     end
 
     Module.delete_attribute(mod, :tag)

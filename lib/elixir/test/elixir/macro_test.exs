@@ -354,11 +354,6 @@ defmodule MacroTest do
     """
   end
 
-  test "range to string" do
-    assert Macro.to_string(quote do: unquote(-1 .. +2)) == "-1..2"
-    assert Macro.to_string(quote do: Foo.integer..3) == "Foo.integer()..3"
-  end
-
   test "when" do
     assert Macro.to_string(quote do: (() -> x)) == "(() -> x)"
     assert Macro.to_string(quote do: (x when y -> z)) == "(x when y -> z)"

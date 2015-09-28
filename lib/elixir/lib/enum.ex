@@ -145,7 +145,7 @@ defmodule Enum do
 
   @moduledoc """
   Provides a set of algorithms that enumerate over collections according to the
-  `Enumerable` protocol.
+  `Enumerable` protocol:
 
       iex> Enum.map([1, 2, 3], fn(x) -> x * 2 end)
       [2, 4, 6]
@@ -2033,22 +2033,24 @@ defmodule Enum do
   @spec take_random(t, integer) :: list
   def take_random(_collection, 0), do: []
 
-  def take_random(collection, count) when count > 128 do
-    reducer = fn(elem, {idx, sample}) ->
-      jdx = random_index(idx)
-      cond do
-        idx < count ->
-          value = Map.get(sample, jdx)
-          {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
-        jdx < count ->
-          {idx + 1, Map.put(sample, jdx, elem)}
-        true ->
-          {idx + 1, sample}
+  if :erlang.system_info(:otp_release) >= '18' do
+    def take_random(collection, count) when count > 128 do
+      reducer = fn(elem, {idx, sample}) ->
+        jdx = random_index(idx)
+        cond do
+          idx < count ->
+            value = Map.get(sample, jdx)
+            {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
+          jdx < count ->
+            {idx + 1, Map.put(sample, jdx, elem)}
+          true ->
+            {idx + 1, sample}
+        end
       end
-    end
 
-    {size, sample} = reduce(collection, {0, %{}}, reducer)
-    take_random(sample, Kernel.min(count, size), [])
+      {size, sample} = reduce(collection, {0, %{}}, reducer)
+      take_random(sample, Kernel.min(count, size), [])
+    end
   end
 
   def take_random(collection, count) when count > 0 do
@@ -2071,12 +2073,14 @@ defmodule Enum do
     sample |> Tuple.to_list |> take(Kernel.min(count, size))
   end
 
-  defp take_random(_sample, 0, acc), do: acc
+  if :erlang.system_info(:otp_release) >= '18' do
+    defp take_random(_sample, 0, acc), do: acc
 
-  defp take_random(sample, position, acc) do
-    position = position - 1
-    acc = [Map.get(sample, position) | acc]
-    take_random(sample, position, acc)
+    defp take_random(sample, position, acc) do
+      position = position - 1
+      acc = [Map.get(sample, position) | acc]
+      take_random(sample, position, acc)
+    end
   end
 
   @doc """
@@ -2111,7 +2115,7 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.to_list(1..3)
+      iex> Enum.to_list(1 .. 3)
       [1, 2, 3]
 
   """
@@ -2157,11 +2161,11 @@ defmodule Enum do
   @spec uniq_by(t, (element -> term)) :: list
 
   def uniq_by(collection, fun) when is_list(collection) do
-    do_uniq(collection, %{}, fun)
+    do_uniq(collection, HashSet.new, fun)
   end
 
   def uniq_by(collection, fun) do
-    {list, _} = reduce(collection, {[], %{}}, R.uniq(fun))
+    {list, _} = reduce(collection, {[], HashSet.new}, R.uniq(fun))
     :lists.reverse(list)
   end
 
@@ -2557,10 +2561,10 @@ defmodule Enum do
 
   defp do_uniq([h|t], acc, fun) do
     fun_h = fun.(h)
-    if Map.has_key?(acc, fun_h) do
+    if HashSet.member?(acc, fun_h) do
       do_uniq(t, acc, fun)
     else
-      [h|do_uniq(t, Map.put(acc, fun_h, true), fun)]
+      [h|do_uniq(t, HashSet.put(acc, fun_h), fun)]
     end
   end
 

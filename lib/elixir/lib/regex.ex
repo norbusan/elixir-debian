@@ -1,7 +1,6 @@
 defmodule Regex do
   @moduledoc ~S"""
-  Provides regular expressions for Elixir. Built on top of Erlang's `:re`
-  module.
+  Regular expressions for Elixir built on top of Erlang's `:re` module.
 
   As the `:re` module, Regex is based on PCRE
   (Perl Compatible Regular Expressions). More information can be

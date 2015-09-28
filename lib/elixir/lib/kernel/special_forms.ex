@@ -1,11 +1,12 @@
 defmodule Kernel.SpecialForms do
   @moduledoc """
-  Special forms are the basic building blocks of Elixir, and therefore
-  they cannot be overridden by the developer.
+  In this module we define Elixir special forms. Special forms
+  cannot be overridden by the developer and are the basic
+  building blocks of Elixir code.
 
-  We define them in this module. Some of these forms are lexical (like
-  `alias`, `case`, etc). The macros `{}` and `<<>>` are also special
-  forms used to define tuple and binary data structures respectively.
+  Some of those forms are lexical (like `alias`, `case`, etc).
+  The macros `{}` and `<<>>` are also special forms used to define
+  tuple and binary data structures respectively.
 
   This module also documents Elixir's pseudo variables (`__ENV__`,
   `__MODULE__`, `__DIR__` and `__CALLER__`). Pseudo variables return
@@ -87,7 +88,7 @@ defmodule Kernel.SpecialForms do
       %{:a => :c}
 
   Notice the update syntax requires the given keys to exist.
-  Trying to update a key that does not exist will raise an `KeyError`.
+  Trying to update a key that does not exist will raise an `ArgumentError`.
 
   ## AST representation
 
@@ -968,34 +969,34 @@ defmodule Kernel.SpecialForms do
   Consider the following example:
 
       defmodule Hygiene do
-        alias Map, as: M
+        alias HashDict, as: D
 
         defmacro no_interference do
-          quote do: M.new
+          quote do: D.new
         end
       end
 
       require Hygiene
-      Hygiene.no_interference #=> %{}
+      Hygiene.no_interference #=> #HashDict<[]>
 
-  Notice that, even though the alias `M` is not available
+  Notice that, even though the alias `D` is not available
   in the context the macro is expanded, the code above works
-  because `M` still expands to `Map`.
+  because `D` still expands to `HashDict`.
 
   Similarly, even if we defined an alias with the same name
   before invoking a macro, it won't affect the macro's result:
 
       defmodule Hygiene do
-        alias Map, as: M
+        alias HashDict, as: D
 
         defmacro no_interference do
-          quote do: M.new
+          quote do: D.new
         end
       end
 
       require Hygiene
-      alias SomethingElse, as: M
-      Hygiene.no_interference #=> %{}
+      alias SomethingElse, as: D
+      Hygiene.no_interference #=> #HashDict<[]>
 
   In some cases, you want to access an alias or a module defined
   in the caller. For such, you can use the `alias!` macro:

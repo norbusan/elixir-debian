@@ -17,11 +17,13 @@ INSTALL_PROGRAM = $(INSTALL) -m755
 
 #==> Functions
 
+# This check should work for older versions like R16B
+# as well as new verions like 17.1 and 18
 define CHECK_ERLANG_RELEASE
-	$(Q) erl -noshell -eval 'io:fwrite("~s", [erlang:system_info(otp_release) >= "18"])' -s erlang halt | grep -q '^true'; \
-		if [ $$? != 0 ]; then                                                                                                \
-		   echo "At least Erlang 18.0 is required to build Elixir";                                                          \
-		   exit 1;                                                                                                           \
+	$(Q) erl -noshell -eval 'io:fwrite("~s", [erlang:system_info(otp_release)])' -s erlang halt | grep -q '^1[789]'; \
+		if [ $$? != 0 ]; then                                                                                        \
+		   echo "At least Erlang 17.0 is required to build Elixir";                                                  \
+		   exit 1;                                                                                                   \
 		fi;
 endef
 
@@ -170,12 +172,12 @@ docs_logger: compile ../ex_doc/bin/ex_doc
 
 Docs.zip: docs
 	rm -rf Docs-v$(VERSION).zip
-	zip -9 -r Docs-v$(VERSION).zip CHANGELOG.md doc NOTICE LICENSE README.md
+	zip -9 -r Docs-v$(VERSION).zip doc
 	@ echo "Docs file created $(CURDIR)/Docs-v$(VERSION).zip"
 
 Precompiled.zip: build_man compile
 	rm -rf Precompiled-v$(VERSION).zip
-	zip -9 -r Precompiled-v$(VERSION).zip bin CHANGELOG.md lib/*/ebin LICENSE man NOTICE README.md VERSION
+	zip -9 -r Precompiled-v$(VERSION).zip bin CHANGELOG.md LEGAL lib/*/ebin LICENSE man README.md VERSION
 	@ echo "Precompiled file created $(CURDIR)/Precompiled-v$(VERSION).zip"
 
 #==> Publish

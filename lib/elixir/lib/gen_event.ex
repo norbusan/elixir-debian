@@ -290,7 +290,7 @@ defmodule GenEvent do
   @type manager :: pid | name | {atom, node}
 
   @typedoc "Supported values for new handlers"
-  @type handler :: atom | {atom, term}
+  @type handler :: atom | {atom, term} | {pid, reference}
 
   @doc false
   defmacro __using__(_) do
@@ -618,6 +618,7 @@ defmodule GenEvent do
   end
 
   defp rpc(module, cmd) do
+    # TODO: Change the tag on OTP 18
     {:ok, reply} = :gen.call(module, self(), cmd, :infinity)
     reply
   end

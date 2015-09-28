@@ -113,10 +113,7 @@ defmodule Access do
   end
 end
 
-# Code compiled with Elixir v1.0 will need Access.Map at
-# runtime when using *_in function with the map syntax.
-# We can remove this later on, but we need to articulate
-# with Hex and other archives.
+# Callbacks invoked when inlining code for *_in in Kernel.
 # TODO: Remove me on 1.2
 defmodule Access.Map do
   @moduledoc false
