@@ -374,7 +374,8 @@ defmodule Code do
   ## Examples
 
       Code.compiler_options
-      #=> [debug_info: true, docs: true, warnings_as_errors: false]
+      #=> %{debug_info: true, docs: true,
+            warnings_as_errors: false, ignore_module_conflict: false}
 
   """
   def compiler_options do
@@ -421,17 +422,18 @@ defmodule Code do
   ## Examples
 
       Code.compiler_options(debug_info: true)
-      #=> [debug_info: true, docs: true, warnings_as_errors: false]
+      #=> %{debug_info: true, docs: true,
+            warnings_as_errors: false, ignore_module_conflict: false}
 
   """
   def compiler_options(opts) do
-    {opts, bad} = Keyword.split(opts, available_compiler_options)
-    if bad != [] do
-      bad = bad |> Keyword.keys |> Enum.join(", ")
-      raise ArgumentError, message: "unknown compiler options: #{bad}"
-    end
-    update = &:orddict.merge(fn(_, _, value) -> value end, &1, opts)
-    :elixir_config.update :compiler_options, update
+    available = available_compiler_options()
+
+    for {k, _} <- opts,
+        not k in available,
+        do: raise "unknown compiler options: #{k}"
+
+    :elixir_config.update :compiler_options, &Enum.into(opts, &1)
   end
 
   @doc """
@@ -602,7 +604,7 @@ defmodule Code do
       "Converts an atom to a char list."
 
       # Module doesn't exist
-      iex> docs = Code.get_docs(ModuleNotGood, :all)
+      iex> Code.get_docs(ModuleNotGood, :all)
       nil
 
   """

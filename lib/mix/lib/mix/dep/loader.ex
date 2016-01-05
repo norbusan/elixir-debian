@@ -4,6 +4,8 @@
 defmodule Mix.Dep.Loader do
   @moduledoc false
 
+  import Mix.Dep, only: [ok?: 1, mix?: 1, rebar?: 1, make?: 1]
+
   @doc """
   Gets all direct children of the current `Mix.Project`
   as a `Mix.Dep` struct. Umbrella project dependencies
@@ -37,25 +39,27 @@ defmodule Mix.Dep.Loader do
   Loads the given dependency information, including its
   latest status and children.
   """
-  def load(dep, children) do
-    %Mix.Dep{manager: manager, scm: scm, opts: opts} = dep
-    dep  = %{dep | status: scm_status(scm, opts)}
-    dest = opts[:dest]
+  def load(%Mix.Dep{manager: manager, scm: scm, opts: opts} = dep, children) do
+    manager = manager ||
+              scm_manager(scm, opts) ||
+              infer_manager(opts[:dest])
+
+    dep = %{dep | manager: manager, status: scm_status(scm, opts)}
 
     {dep, children} =
       cond do
-        not ok?(dep.status) ->
+        not ok?(dep) ->
           {dep, []}
 
-        mix?(dest) ->
+        mix?(dep) ->
           mix_dep(dep, children)
 
         # If not an explicit rebar or Mix dependency
         # but came from rebar, assume to be a rebar dep.
-        rebar?(dest) or manager == :rebar ->
-          rebar_dep(dep, children)
+        rebar?(dep) ->
+          rebar_dep(dep, children, manager)
 
-        make?(dest) ->
+        make?(dep) ->
           make_dep(dep)
 
         true ->
@@ -69,25 +73,22 @@ defmodule Mix.Dep.Loader do
   Checks if a requirement from a dependency matches
   the given version.
   """
-  def vsn_match?(nil, _actual, _app),
-    do: true
-  def vsn_match?(req, actual, app) do
+  def vsn_match(nil, _actual, _app),
+    do: {:ok, true}
+  def vsn_match(req, actual, app) do
     if Regex.regex?(req) do
-      actual =~ req
+      {:ok, actual =~ req}
     else
       case Version.parse(actual) do
         {:ok, version} ->
           case Version.parse_requirement(req) do
             {:ok, req} ->
-              Version.match?(version, req)
+              {:ok, Version.match?(version, req)}
             :error ->
               Mix.raise "Invalid requirement #{req} for app #{app}"
           end
-
         :error ->
-          Mix.raise "The application #{app} specified a non Semantic Version #{actual}. " <>
-            "Mix can only match the requirement #{req} against Semantic Versions, to match against any " <>
-            "version, please use a regex as requirement"
+          {:error, :nosemver}
       end
     end
   end
@@ -95,7 +96,8 @@ defmodule Mix.Dep.Loader do
   ## Helpers
 
   def to_dep(tuple, from, manager \\ nil) do
-    %{with_scm_and_app(tuple) | from: from, manager: manager}
+    %{opts: opts} = dep = with_scm_and_app(tuple)
+    %{dep | from: from, manager: opts[:manager] || manager}
   end
 
   defp with_scm_and_app({app, opts} = original) when is_atom(app) and is_list(opts) do
@@ -155,9 +157,19 @@ defmodule Mix.Dep.Loader do
   end
 
   defp get_scm(app, opts) do
-    Enum.find_value Mix.SCM.available, {nil, opts}, fn(scm) ->
+    Enum.find_value Mix.SCM.available, {nil, opts}, fn scm ->
       (new = scm.accepts_options(app, opts)) && {scm, new}
     end
+  end
+
+  # Notice we ignore make dependencies because the
+  # file based heuristic will always figure it out.
+  # TODO: In the future add rebar3 to the list.
+  @scm_managers ~w(mix rebar)a
+
+  defp scm_manager(scm, opts) do
+    managers = scm.managers(opts)
+    Enum.find(@scm_managers, &(&1 in managers))
   end
 
   defp scm_status(scm, opts) do
@@ -168,19 +180,17 @@ defmodule Mix.Dep.Loader do
     end
   end
 
-  defp ok?({:ok, _}), do: true
-  defp ok?(_), do: false
-
-  defp mix?(dest) do
-    any_of?(dest, ["mix.exs"])
-  end
-
-  defp rebar?(dest) do
-    any_of?(dest, ["rebar", "rebar.config", "rebar.config.script"])
-  end
-
-  defp make?(dest) do
-    any_of?(dest, ["Makefile", "Makefile.win"])
+  defp infer_manager(dest) do
+    cond do
+      any_of?(dest, ["mix.exs"]) ->
+        :mix
+      any_of?(dest, ["rebar", "rebar.config", "rebar.config.script"]) ->
+        :rebar
+      any_of?(dest, ["Makefile", "Makefile.win"]) ->
+        :make
+      true ->
+        nil
+    end
   end
 
   defp any_of?(dest, files) do
@@ -209,20 +219,14 @@ defmodule Mix.Dep.Loader do
   ## Fetching
 
   # We need to override the dependencies so they mirror
-  # the :only requirement in the parent. Furthermore, if
-  # a dependency has :only, we must remove it as deps
-  # always run in a given environment (which does not
-  # necessarily mirror the application one unless
-  # configured otherwise).
+  # the :only requirement in the parent.
   defp attach_only(deps, opts) do
     if only = opts[:only] do
       Enum.map(deps, fn %{opts: opts} = dep ->
         %{dep | opts: Keyword.put(opts, :only, only)}
       end)
     else
-      Enum.map(deps, fn %{opts: opts} = dep ->
-        %{dep | opts: Keyword.delete(opts, :only)}
-      end)
+      deps
     end
   end
 
@@ -232,8 +236,18 @@ defmodule Mix.Dep.Loader do
         opts = Keyword.put_new(opts, :app, false)
       end
 
-      deps = mix_children(env: opts[:env] || :prod) ++ Mix.Dep.Umbrella.unloaded
-      {%{dep | manager: :mix, opts: opts}, deps}
+      child_opts =
+        cond do
+          opts[:from_umbrella] ->
+            []
+          env = opts[:env] ->
+            [env: env]
+          true ->
+            [env: :prod]
+        end
+
+      deps = mix_children(child_opts) ++ Mix.Dep.Umbrella.unloaded
+      {%{dep | opts: opts}, deps}
     end)
   end
 
@@ -244,25 +258,28 @@ defmodule Mix.Dep.Loader do
   defp mix_dep(%Mix.Dep{opts: opts} = dep, children) do
     from = Path.join(opts[:dest], "mix.exs")
     deps = Enum.map(children, &to_dep(&1, from))
-    {%{dep | manager: :mix}, deps}
+    {dep, deps}
   end
 
-  defp rebar_dep(%Mix.Dep{} = dep, children) do
+  defp rebar_dep(%Mix.Dep{app: app} = dep, children, manager) do
     Mix.Dep.in_dependency(dep, fn _ ->
-      rebar = Mix.Rebar.load_config(".")
-      extra = Dict.take(rebar, [:sub_dirs])
-      deps  = if children do
+      config = Mix.Rebar.load_config(".")
+      extra = Mix.Rebar.merge_config(dep.extra, config)
+      deps   = if children do
         from = Path.absname("rebar.config")
-        Enum.map(children, &to_dep(&1, from, :rebar))
+        # Pass the manager because deps of a rebar project need
+        # to default to rebar if we cannot chose a manager from
+        # files in the dependency
+        Enum.map(children, &to_dep(&1, from, manager))
       else
-        rebar_children(rebar)
+        rebar_children(app, config, extra, manager)
       end
-      {%{dep | manager: :rebar, extra: extra}, deps}
+      {%{dep | extra: extra}, deps}
     end)
   end
 
   defp make_dep(dep) do
-    {%{dep | manager: :make}, []}
+    {dep, []}
   end
 
   defp validate_only!(only) do
@@ -280,18 +297,21 @@ defmodule Mix.Dep.Loader do
     |> elem(0)
   end
 
-  defp rebar_children(root_config) do
+  defp rebar_children(app, root_config, extra, manager) do
     from = Path.absname("rebar.config")
     Mix.Rebar.recur(root_config, fn config ->
-      Mix.Rebar.deps(config) |> Enum.map(&to_dep(&1, from, :rebar))
+      deps = Mix.Rebar.deps(app, config, extra[:overrides] || [])
+      Enum.map(deps, fn dep ->
+        %{to_dep(dep, from, manager) | extra: extra}
+      end)
     end) |> Enum.concat
   end
 
-  defp validate_app(%Mix.Dep{opts: opts, requirement: req, app: app, status: status} = dep) do
+  defp validate_app(%Mix.Dep{opts: opts, requirement: req, app: app} = dep) do
     opts_app = opts[:app]
 
     cond do
-      not ok?(status) ->
+      not ok?(dep) ->
         dep
       recently_fetched?(dep) ->
         %{dep | status: :compile}
@@ -316,10 +336,10 @@ defmodule Mix.Dep.Loader do
         case List.keyfind(config, :vsn, 0) do
           {:vsn, actual} when is_list(actual) ->
             actual = IO.iodata_to_binary(actual)
-            if vsn_match?(req, actual, app) do
-              {:ok, actual}
-            else
-              {:nomatchvsn, actual}
+            case vsn_match(req, actual, app) do
+              {:ok, true} -> {:ok, actual}
+              {:ok, false} -> {:nomatchvsn, actual}
+              {:error, error} -> {error, actual}
             end
           {:vsn, actual} ->
             {:invalidvsn, actual}

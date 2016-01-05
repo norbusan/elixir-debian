@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Deps do
   use Mix.Task
 
-  import Mix.Dep, only: [loaded: 1, format_dep: 1, format_status: 1, check_lock: 2]
+  import Mix.Dep, only: [loaded: 1, format_dep: 1, format_status: 1, check_lock: 1]
 
   @shortdoc "Lists dependencies and their status"
 
@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Deps do
 
   Below we provide a more detailed look into the available options.
 
-  ## Mix options
+  ## Dependency definition options
 
     * `:app` - when set to `false`, does not read the app file for this
       dependency
@@ -66,6 +66,11 @@ defmodule Mix.Tasks.Deps do
 
     * `:override` - if set to `true` the dependency will override any other
       definitions of itself by other dependencies
+
+    * `:manager` - Mix can also compile rebar, rebar3 and makefile projects
+      and can fetch sub dependencies of rebar and rebar3 projects. Mix will
+      try to infer the type of project but it can be overridden with this
+      option by setting it to `:mix`, `:rebar`, `:rebar3` or `:make`
 
   ## Git options (`:git`)
 
@@ -99,22 +104,19 @@ defmodule Mix.Tasks.Deps do
   def run(args) do
     Mix.Project.get!
     {opts, _, _} = OptionParser.parse(args)
-
-    if opts[:all] do
-      loaded_opts = []
-    else
-      loaded_opts = [env: Mix.env]
-    end
+    loaded_opts  = if opts[:all], do: [], else: [env: Mix.env]
 
     shell = Mix.shell
-    lock  = Mix.Dep.Lock.read
 
-    Enum.each loaded(loaded_opts), fn %Mix.Dep{scm: scm} = dep ->
-      dep = check_lock(dep, lock)
-      shell.info "* #{format_dep(dep)}"
+    Enum.each loaded(loaded_opts), fn %Mix.Dep{scm: scm, manager: manager} = dep ->
+      dep   = check_lock(dep)
+      extra = if manager, do: " (#{manager})", else: ""
+
+      shell.info "* #{format_dep(dep)}#{extra}"
       if formatted = scm.format_lock(dep.opts) do
         shell.info "  locked at #{formatted}"
       end
+
       shell.info "  #{format_status dep}"
     end
   end

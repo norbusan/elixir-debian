@@ -26,8 +26,19 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "try to deps.loadpaths if task is missing" do
-    in_fixture "no_mixfile", fn ->
+  test "output task debug info if Mix.debug? is true" do
+    Mix.shell Mix.Shell.IO
+    Mix.debug(true)
+
+    assert ExUnit.CaptureIO.capture_io(fn -> Mix.Task.run("hello") end) =~
+      "** Running mix hello"
+  after
+    Mix.shell(Mix.Shell.Process)
+    Mix.debug(false)
+  end
+
+  test "try to deps.loadpaths if task is missing", context do
+    in_tmp context.test, fn ->
       Mix.Project.push(SampleProject, "sample")
 
       {:module, _, bin, _} =
@@ -55,8 +66,8 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "try to compile if task is missing" do
-    in_fixture "no_mixfile", fn ->
+  test "try to compile if task is missing", context do
+    in_tmp context.test, fn ->
       Mix.Project.push(SampleProject, "sample")
 
       assert_raise Mix.NoTaskError, fn ->
@@ -68,8 +79,8 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "does not try to compile if task is missing in build embedded" do
-    in_fixture "no_mixfile", fn ->
+  test "does not try to compile if task is missing in build embedded", context do
+    in_tmp context.test, fn ->
       Mix.ProjectStack.post_config(build_embedded: true)
       Mix.Project.push(SampleProject, "sample")
 

@@ -53,11 +53,16 @@ defmodule Access do
     :maps.find(key, map)
   end
 
-  def fetch(list, key) when is_list(list) do
+  def fetch(list, key) when is_list(list) and is_atom(key) do
     case :lists.keyfind(key, 1, list) do
       {^key, value} -> {:ok, value}
       false -> :error
     end
+  end
+
+  def fetch(list, key) when is_list(list) do
+    raise ArgumentError,
+      "the Access calls for keywords expect the key to be an atom, got: " <> inspect(key)
   end
 
   def fetch(nil, _key) do
@@ -110,40 +115,5 @@ defmodule Access do
   def get_and_update(nil, key, _fun) do
     raise ArgumentError,
       "could not put/update key #{inspect key} on a nil value"
-  end
-end
-
-# Callbacks invoked when inlining code for *_in in Kernel.
-# TODO: Remove me on 1.2
-defmodule Access.Map do
-  @moduledoc false
-
-  def update!(%{} = map, key, fun) do
-    case :maps.find(key, map) do
-      {:ok, value} ->
-        :maps.put(key, fun.(value), map)
-      :error ->
-        raise KeyError, key: key, term: map
-    end
-  end
-
-  def update!(other, key, _fun) do
-    raise ArgumentError,
-      "could not put/update key #{inspect key}. Expected map/struct, got: #{inspect other}"
-  end
-
-  def get_and_update!(%{} = map, key, fun) do
-    case :maps.find(key, map) do
-      {:ok, value} ->
-        {get, update} = fun.(value)
-        {get, :maps.put(key, update, map)}
-      :error ->
-        raise KeyError, key: key, term: map
-    end
-  end
-
-  def get_and_update!(other, key, _fun) do
-    raise ArgumentError,
-      "could not put/update key #{inspect key}. Expected map/struct, got: #{inspect other}"
   end
 end

@@ -1,8 +1,9 @@
 defmodule Module do
   @moduledoc ~S'''
-  This module provides many functions to deal with modules during
-  compilation time. It allows a developer to dynamically attach
-  documentation, add, delete and register attributes and so forth.
+  Provides functions to deal with modules during compilation time.
+
+  It allows a developer to dynamically add, delete and register
+  attributes, attach documentation and so forth.
 
   After a module is compiled, using many of the functions in
   this module will raise errors, since it is out of their scope
@@ -65,6 +66,30 @@ defmodule Module do
 
     * `@behaviour`   (notice the British spelling)
 
+      Behaviours can be referenced by modules to ensure they implement
+      required specific function signatures defined by `@callback`.
+
+      For example, you can specify the URI.Parser behaviour as follows:
+
+          defmodule URI.Parser do
+            @doc "Parses the given URL"
+            @callback parse(uri_info :: URI.t) :: URI.t
+
+            @doc "Defines a default port"
+            @callback default_port() :: integer
+          end
+
+          And then a module may use it as:
+
+          defmodule URI.HTTP do
+            @behaviour URI.Parser
+            def default_port(), do: 80
+            def parse(info), do: info
+          end
+
+      If the behaviour changes or URI.HTTP does not implement one of the
+      callbacks, a warning will be raised.
+
       Specifies an OTP or user-defined behaviour.
 
       ### Example
@@ -85,18 +110,18 @@ defmodule Module do
       For the list of supported options, see Erlang's
       [`:compile` module](http://www.erlang.org/doc/man/compile.html).
 
-      Several uses of `@compile` will accumulate instead of overriding
+      Multiple uses of `@compile` will accumulate instead of overriding
       previous ones.
 
       ### Example
 
-            defmodule M do
-              @compile {:inline, myfun: 1}
+          defmodule M do
+            @compile {:inline, myfun: 1}
 
-              def myfun(arg) do
-                to_string(arg)
-              end
+            def myfun(arg) do
+              to_string(arg)
             end
+          end
 
     * `@doc`
 
@@ -111,19 +136,19 @@ defmodule Module do
 
       ### Example
 
-            defmodule M do
-              @doc "Hello world"
-              def hello do
-                "world"
-              end
-
-              @doc """
-              Sums `a` to `b`.
-              """
-              def sum(a, b) do
-                a + b
-              end
+          defmodule M do
+            @doc "Hello world"
+            def hello do
+              "world"
             end
+
+            @doc """
+            Sums `a` to `b`.
+            """
+            def sum(a, b) do
+              a + b
+            end
+          end
 
     * `@file`
 
@@ -134,13 +159,13 @@ defmodule Module do
 
       ### Example
 
-            defmodule M do
-              @doc "Hello world"
-              @file "hello.ex"
-              def hello do
-                "world"
-              end
+          defmodule M do
+            @doc "Hello world"
+            @file "hello.ex"
+            def hello do
+              "world"
             end
+          end
 
     * `@moduledoc`
 
@@ -152,11 +177,11 @@ defmodule Module do
 
       ### Example
 
-            defmodule M do
-              @moduledoc """
-              A very useful module
-              """
-            end
+          defmodule M do
+            @moduledoc """
+            A very useful module
+            """
+          end
 
 
     * `@on_definition`
@@ -191,28 +216,28 @@ defmodule Module do
 
       ### Example
 
-            defmodule H do
-              def on_def(_env, kind, name, args, guards, body) do
-                IO.puts "Defining #{kind} named #{name} with args:"
-                IO.inspect args
-                IO.puts "and guards"
-                IO.inspect guards
-                IO.puts "and body"
-                IO.puts Macro.to_string(body)
-              end
+          defmodule H do
+            def on_def(_env, kind, name, args, guards, body) do
+              IO.puts "Defining #{kind} named #{name} with args:"
+              IO.inspect args
+              IO.puts "and guards"
+              IO.inspect guards
+              IO.puts "and body"
+              IO.puts Macro.to_string(body)
+            end
+          end
+
+          defmodule M do
+            @on_definition {H, :on_def}
+
+            def hello(arg) when is_binary(arg) or is_list(arg) do
+              "Hello" <> to_string(arg)
             end
 
-            defmodule M do
-              @on_definition {H, :on_def}
-
-              def hello(arg) when is_binary(arg) or is_list(arg) do
-                "Hello" <> to_string(arg)
-              end
-
-              def hello(_) do
-                :ok
-              end
+            def hello(_) do
+              :ok
             end
+          end
 
     * `@on_load`
 
@@ -224,21 +249,21 @@ defmodule Module do
 
       ### Example
 
-            defmodule M do
-              @on_load :load_check
+          defmodule M do
+            @on_load :load_check
 
-              def load_check do
-                if some_condition() do
-                  :ok
-                else
-                  nil
-                end
-              end
-
-              def some_condition do
-                false
+            def load_check do
+              if some_condition() do
+                :ok
+              else
+                nil
               end
             end
+
+            def some_condition do
+              false
+            end
+          end
 
     * `@vsn`
 
@@ -246,9 +271,9 @@ defmodule Module do
 
       ### Example
 
-            defmodule M do
-              @vsn "1.0"
-            end
+          defmodule M do
+            @vsn "1.0"
+          end
 
     * `@external_resource`
 
@@ -271,18 +296,18 @@ defmodule Module do
       For the list of supported warnings, see
       [`:dialyzer` module](http://www.erlang.org/doc/man/dialyzer.html).
 
-      Several uses of `@dialyzer` will accumulate instead of overriding
+      Multiple uses of `@dialyzer` will accumulate instead of overriding
       previous ones.
 
       ### Example
 
-            defmodule M do
-              @dialyzer {:nowarn_function, myfun: 1}
+          defmodule M do
+            @dialyzer {:nowarn_function, myfun: 1}
 
-              def myfun(arg) do
-                M.not_a_function(arg)
-              end
+            def myfun(arg) do
+              M.not_a_function(arg)
             end
+          end
 
   The following attributes are part of typespecs and are also reserved by
   Elixir (see `Kernel.Typespec` for more information about typespecs):
@@ -298,9 +323,9 @@ defmodule Module do
   also be added. A custom attribute is any valid identifier prefixed with an
   `@` and followed by a valid Elixir value:
 
-        defmodule M do
-          @custom_attr [some: "stuff"]
-        end
+      defmodule M do
+        @custom_attr [some: "stuff"]
+      end
 
   For more advanced options available when defining custom attributes, see
   `register_attribute/3`.
@@ -464,14 +489,15 @@ defmodule Module do
   end
 
   @doc """
-  Concatenates a list of aliases and returns a new alias only
-  if the alias was already referenced. If the alias was not
-  referenced yet, fails with `ArgumentError`.
+  Concatenates a list of aliases and returns a new alias only if the alias
+  was already referenced.
+
+  If the alias was not referenced yet, fails with `ArgumentError`.
   It handles char lists, binaries and atoms.
 
   ## Examples
 
-      iex> Module.safe_concat([Unknown, Module])
+      iex> Module.safe_concat([Module, Unknown])
       ** (ArgumentError) argument error
 
       iex> Module.safe_concat([List, Chars])
@@ -484,14 +510,15 @@ defmodule Module do
   end
 
   @doc """
-  Concatenates two aliases and returns a new alias only
-  if the alias was already referenced. If the alias was not
-  referenced yet, fails with `ArgumentError`.
+  Concatenates two aliases and returns a new alias only if the alias was
+  already referenced.
+
+  If the alias was not referenced yet, fails with `ArgumentError`.
   It handles char lists, binaries and atoms.
 
   ## Examples
 
-      iex> Module.safe_concat(Unknown, Module)
+      iex> Module.safe_concat(Module, Unknown)
       ** (ArgumentError) argument error
 
       iex> Module.safe_concat(List, Chars)
@@ -504,9 +531,10 @@ defmodule Module do
   end
 
   @doc """
-  Attaches documentation to a given function or type. It expects
-  the module the function/type belongs to, the line (a non negative
-  integer), the kind (`def` or `defmacro`), a tuple representing
+  Attaches documentation to a given function or type.
+
+  It expects the module the function/type belongs to, the line (a non
+  negative integer), the kind (`def` or `defmacro`), a tuple representing
   the function and its arity, the function signature (the signature
   should be omitted for types) and the documentation, which should
   be either a binary or a boolean.
@@ -619,12 +647,12 @@ defmodule Module do
     length(:lists.filter(fn(el) -> el == key end, list))
   end
 
-  defp camelcase_to_underscore(<<c :: utf8, rest :: binary>>) when c >= ?A and c <= ?Z,
-    do: do_camelcase_to_underscore(rest, <<c + 32 :: utf8>>)
-  defp do_camelcase_to_underscore(<<c :: utf8, rest :: binary>>, acc) when c >= ?A and c <= ?Z,
-    do: do_camelcase_to_underscore(rest, <<acc :: binary, ?_, c + 32 :: utf8>>)
-  defp do_camelcase_to_underscore(<<c :: utf8, rest :: binary>>, acc),
-    do: do_camelcase_to_underscore(rest, <<acc :: binary, c>>)
+  defp camelcase_to_underscore(<<c::utf8, rest::binary>>) when c >= ?A and c <= ?Z,
+    do: do_camelcase_to_underscore(rest, <<c + 32::utf8>>)
+  defp do_camelcase_to_underscore(<<c::utf8, rest::binary>>, acc) when c >= ?A and c <= ?Z,
+    do: do_camelcase_to_underscore(rest, <<acc::binary, ?_, c + 32::utf8>>)
+  defp do_camelcase_to_underscore(<<c::utf8, rest::binary>>, acc),
+    do: do_camelcase_to_underscore(rest, <<acc::binary, c>>)
   defp do_camelcase_to_underscore(<<>>, acc),
     do: acc
 
@@ -658,6 +686,7 @@ defmodule Module do
 
   @doc """
   Checks if the module defines the given function or macro.
+
   Use `defines?/3` to assert for a specific type.
 
   ## Examples
@@ -677,8 +706,9 @@ defmodule Module do
 
   @doc """
   Checks if the module defines a function or macro of the
-  given `kind`. `kind` can be any of `:def`, `:defp`,
-  `:defmacro` or `:defmacrop`.
+  given `kind`.
+
+  `kind` can be any of `:def`, `:defp`, `:defmacro` or `:defmacrop`.
 
   ## Examples
 
@@ -736,6 +766,7 @@ defmodule Module do
 
   @doc """
   Makes the given functions in `module` overridable.
+
   An overridable function is lazily defined, allowing a
   developer to customize it. See `Kernel.defoverridable/1` for
   more information and documentation.
@@ -757,11 +788,13 @@ defmodule Module do
             Module.LocalsTracker.yank(module, tuple)
           end
 
-          old    = :elixir_def_overridable.overridable(module)
-          merged = :orddict.update(tuple, fn({count, _, _, _}) ->
-            {count + 1, clause, neighbours, false}
-          end, {1, clause, neighbours, false}, old)
-          :elixir_def_overridable.overridable(module, merged)
+          old   = :elixir_def_overridable.overridable(module)
+          count = case :maps.find(tuple, old) do
+            {:ok, {count, _, _, _}} -> count + 1
+            :error -> 1
+          end
+          new = :maps.put(tuple, {count, clause, neighbours, false}, old)
+          :elixir_def_overridable.overridable(module, new)
       end
     end, tuples)
   end
@@ -770,12 +803,14 @@ defmodule Module do
   Returns `true` if `tuple` in `module` is marked as overridable.
   """
   def overridable?(module, tuple) do
-    !!List.keyfind(:elixir_def_overridable.overridable(module), tuple, 0)
+    :maps.is_key(tuple, :elixir_def_overridable.overridable(module))
   end
 
   @doc """
   Puts an Erlang attribute to the given module with the given
-  key and value. The semantics of putting the attribute depends
+  key and value.
+  
+  The semantics of putting the attribute depends
   if the attribute was registered or not via `register_attribute/3`.
 
   ## Examples
@@ -785,11 +820,17 @@ defmodule Module do
       end
 
   """
-  def put_attribute(module, key, value) when is_atom(key) do
+  def put_attribute(module, key, value) do
+    put_attribute(module, key, value, nil)
+  end
+
+  @doc false
+  def put_attribute(module, key, value, stack) when is_atom(key) do
     assert_not_compiled!(:put_attribute, module)
     table = data_table_for(module)
     value = preprocess_attribute(key, value)
     acc   = :ets.lookup_element(table, {:elixir, :acc_attributes}, 2)
+    warn_if_redefining_doc_attribute(stack, table, key)
 
     new =
       if :lists.member(key, acc) do
@@ -805,9 +846,12 @@ defmodule Module do
   end
 
   @doc """
-  Gets the given attribute from a module. If the attribute
-  was marked with `accumulate` with `Module.register_attribute/3`,
-  a list is always returned.
+  Gets the given attribute from a module.
+
+  If the attribute was marked with `accumulate` with
+  `Module.register_attribute/3`, a list is always returned. `nil` is returned
+  if the attribute has not been marked with `accumulate` and has not been set
+  to any value.
 
   The `@` macro compiles to a call to this function. For example,
   the following code:
@@ -968,7 +1012,7 @@ defmodule Module do
   end
 
   @doc false
-  def get_attribute(module, key, warn) when is_atom(key) and (is_list(warn) or is_nil(warn)) do
+  def get_attribute(module, key, stack) when is_atom(key) and (is_list(stack) or is_nil(stack)) do
     assert_not_compiled!(:get_attribute, module)
     table = data_table_for(module)
 
@@ -981,8 +1025,8 @@ defmodule Module do
         cond do
           :lists.member(key, acc) ->
             []
-          is_list(warn) ->
-            :elixir_errors.warn warn_info(warn), "undefined module attribute @#{key}, " <>
+          is_list(stack) ->
+            :elixir_errors.warn warn_info(stack), "undefined module attribute @#{key}, " <>
               "please remove access to @#{key} or explicitly set it before access"
             nil
           true ->
@@ -1038,13 +1082,9 @@ defmodule Module do
   defp postprocess_attribute(_, value), do: value
 
   defp get_doc_info(table, env) do
-    # TODO: Use :ets.take/2 with Erlang 18
-    case :ets.lookup(table, :doc) do
-      [doc: {_, _} = pair] ->
-        :ets.delete(table, :doc)
-        pair
-      [] ->
-        {env.line, nil}
+    case :ets.take(table, :doc) do
+      [doc: {_, _} = pair] -> pair
+      [] -> {env.line, nil}
     end
   end
 
@@ -1061,4 +1101,17 @@ defmodule Module do
       raise ArgumentError,
         "could not call #{fun} on module #{inspect module} because it was already compiled"
   end
+
+  defp warn_if_redefining_doc_attribute(stack, table, key)
+      when is_list(stack) and key in [:doc, :typedoc, :moduledoc] do
+    case :ets.lookup(table, key) do
+      [{_, {line, val}}] when val != false ->
+        :elixir_errors.warn warn_info(stack),
+                            "redefining @#{key} attribute previously set at line #{line}"
+      _ ->
+        false
+    end
+  end
+
+  defp warn_if_redefining_doc_attribute(nil, _table, _key), do: false
 end

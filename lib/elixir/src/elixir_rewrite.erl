@@ -1,11 +1,13 @@
 -module(elixir_rewrite).
--export([rewrite/5, inline/3]).
+-export([rewrite/6, inline/3]).
+-include("elixir.hrl").
+
+-define(is_literal(Arg), (is_binary(Arg) orelse is_number(Arg) orelse is_atom(Arg))).
 
 %% Convenience variables
 
--define(hidden, [{line, -1}]).
-
 -define(atom, 'Elixir.Atom').
+-define(access, 'Elixir.Access').
 -define(enum, 'Elixir.Enum').
 -define(float, 'Elixir.Float').
 -define(io, 'Elixir.IO').
@@ -118,14 +120,20 @@ inline(?node, spawn, 5) -> {erlang, spawn_opt};
 inline(?node, spawn_link, 2) -> {erlang, spawn_link};
 inline(?node, spawn_link, 4) -> {erlang, spawn_link};
 
+inline(?process, 'alive?', 1) -> {erlang, is_process_alive};
+inline(?process, cancel_timer, 1) -> {erlang, cancel_timer};
 inline(?process, exit, 2) -> {erlang, exit};
-inline(?process, spawn, 2) -> {erlang, spawn_opt};
-inline(?process, spawn, 4) -> {erlang, spawn_opt};
+inline(?process, get, 0) -> {erlang, get};
+inline(?process, get_keys, 0) -> {erlang, get_keys};
+inline(?process, get_keys, 1) -> {erlang, get_keys};
+inline(?process, hibernate, 3) -> {erlang, hibernate};
 inline(?process, demonitor, 1) -> {erlang, demonitor};
 inline(?process, demonitor, 2) -> {erlang, demonitor};
 inline(?process, link, 1) -> {erlang, link};
+inline(?process, read_timer, 1) -> {erlang, read_timer};
+inline(?process, spawn, 2) -> {erlang, spawn_opt};
+inline(?process, spawn, 4) -> {erlang, spawn_opt};
 inline(?process, unlink, 1) -> {erlang, unlink};
-inline(?process, hibernate, 3) -> {erlang, hibernate};
 
 inline(?port, open, 2) -> {erlang, open_port};
 inline(?port, call, 3) -> {erlang, port_call};
@@ -139,7 +147,18 @@ inline(?port, list, 0) -> {erlang, ports};
 inline(?string, to_float, 1) -> {erlang, binary_to_float};
 inline(?string, to_integer, 1) -> {erlang, binary_to_integer};
 inline(?string, to_integer, 2) -> {erlang, binary_to_integer};
+
 inline(?system, stacktrace, 0) -> {erlang, get_stacktrace};
+inline(?system, convert_time_unit, 3) -> {erlang, convert_time_unit};
+inline(?system, monotonic_time, 0) -> {erlang, monotonic_time};
+inline(?system, monotonic_time, 1) -> {erlang, monotonic_time};
+inline(?system, system_time, 0) -> {erlang, system_time};
+inline(?system, system_time, 1) -> {erlang, system_time};
+inline(?system, time_offset, 0) -> {erlang, time_offset};
+inline(?system, time_offset, 1) -> {erlang, time_offset};
+inline(?system, unique_integer, 0) -> {erlang, unique_integer};
+inline(?system, unique_integer, 1) -> {erlang, unique_integer};
+
 inline(?tuple, to_list, 1) -> {erlang, tuple_to_list};
 inline(?tuple, append, 2) -> {erlang, append_element};
 
@@ -157,33 +176,41 @@ inline(_, _, _) -> false.
 
 %% Complex rewrite rules
 
-rewrite(?string_chars, _DotMeta, 'to_string', _Meta, [String]) when is_binary(String) ->
+rewrite(?access, _DotMeta, 'get', _Meta, [nil, Arg], _Env)
+    when ?is_literal(Arg) orelse (is_atom(element(1, Arg)) andalso element(3, Arg) == nil) ->
+  nil;
+rewrite(?access, _DotMeta, 'get', Meta, [Arg, _], Env)
+    when ?is_literal(Arg) orelse element(1, Arg) == '{}' orelse element(1, Arg) == '<<>>' ->
+  elixir_errors:compile_error(Meta, ?m(Env, file),
+    "the Access syntax and calls to Access.get/2 are not available for the value: ~ts",
+    ['Elixir.Macro':to_string(Arg)]);
+rewrite(?string_chars, _DotMeta, 'to_string', _Meta, [String], _File) when is_binary(String) ->
   String;
-rewrite(?string_chars, DotMeta, 'to_string', Meta, [String]) ->
+rewrite(?string_chars, DotMeta, 'to_string', Meta, [String], _Env) ->
   Var   = {'rewrite', Meta, 'Elixir'},
-  Guard = {{'.', Meta, [erlang, is_binary]}, Meta, [Var]},
+  Guard = {{'.', ?generated, [erlang, is_binary]}, ?generated, [Var]},
   Slow  = remote(?string_chars, DotMeta, 'to_string', Meta, [Var]),
   Fast  = Var,
 
-  {'case', ?hidden, [String, [{do,
-    [{'->', ?hidden, [[{'when', Meta, [Var, Guard]}], Fast]},
-     {'->', ?hidden, [[Var], Slow]}]
+  {'case', ?generated, [String, [{do,
+    [{'->', ?generated, [[{'when', Meta, [Var, Guard]}], Fast]},
+     {'->', ?generated, [[Var], Slow]}]
   }]]};
 
-rewrite(?enum, DotMeta, 'reverse', Meta, [List]) when is_list(List) ->
+rewrite(?enum, DotMeta, 'reverse', Meta, [List], _Env) when is_list(List) ->
   remote(lists, DotMeta, 'reverse', Meta, [List]);
-rewrite(?enum, DotMeta, 'reverse', Meta, [List]) ->
+rewrite(?enum, DotMeta, 'reverse', Meta, [List], _Env) ->
   Var   = {'rewrite', Meta, 'Elixir'},
-  Guard = {{'.', Meta, [erlang, is_list]}, Meta, [Var]},
+  Guard = {{'.', ?generated, [erlang, is_list]}, ?generated, [Var]},
   Slow  = remote(?enum, DotMeta, 'reverse', Meta, [Var]),
-  Fast  = remote(lists, Meta, 'reverse', Meta, [Var]),
+  Fast  = remote(lists, DotMeta, 'reverse', Meta, [Var]),
 
-  {'case', ?hidden, [List, [{do,
-    [{'->', ?hidden, [[{'when', Meta, [Var, Guard]}], Fast]},
-     {'->', ?hidden, [[Var], Slow]}]
+  {'case', ?generated, [List, [{do,
+    [{'->', ?generated, [[{'when', Meta, [Var, Guard]}], Fast]},
+     {'->', ?generated, [[Var], Slow]}]
   }]]};
 
-rewrite(Receiver, DotMeta, Right, Meta, Args) ->
+rewrite(Receiver, DotMeta, Right, Meta, Args, _Env) ->
   {EReceiver, ERight, EArgs} = rewrite(Receiver, Right, Args),
   remote(EReceiver, DotMeta, ERight, Meta, EArgs).
 
@@ -205,6 +232,8 @@ rewrite(?map, delete, [Map, Key]) ->
   {maps, remove, [Key, Map]};
 rewrite(?process, monitor, [Arg]) ->
   {erlang, monitor, [process, Arg]};
+rewrite(?process, send_after, [Dest, Msg, Time]) ->
+  {erlang, send_after, [Time, Dest, Msg]};
 rewrite(?string, to_atom, [Arg]) ->
   {erlang, binary_to_atom, [Arg, utf8]};
 rewrite(?string, to_existing_atom, [Arg]) ->

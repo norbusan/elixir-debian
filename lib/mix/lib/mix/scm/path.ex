@@ -17,7 +17,7 @@ defmodule Mix.SCM.Path do
   def accepts_options(app, opts) do
     cond do
       raw = opts[:path] ->
-        Keyword.put opts, :dest, Path.expand(raw)
+        Keyword.put(opts, :dest, Path.expand(raw))
       opts[:in_umbrella] ->
         path = "../#{app}"
 
@@ -40,6 +40,10 @@ defmodule Mix.SCM.Path do
 
   def equal?(opts1, opts2) do
     opts1[:dest] == opts2[:dest]
+  end
+
+  def managers(_opts) do
+    []
   end
 
   def checkout(opts) do

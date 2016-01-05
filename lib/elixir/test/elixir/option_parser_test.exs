@@ -3,6 +3,8 @@ Code.require_file "test_helper.exs", __DIR__
 defmodule OptionParserTest do
   use ExUnit.Case, async: true
 
+  doctest OptionParser
+
   test "parses boolean option" do
     assert OptionParser.parse(["--docs"]) == {[docs: true], [], []}
   end
@@ -194,6 +196,12 @@ defmodule OptionParserTest do
     assert OptionParser.parse(["--source", "from_docs/", "--doc=show"],
                               strict: [source: :string, docs: :string])
            == {[source: "from_docs/"], [], [{"--doc", nil}]}
+  end
+
+  test ":switches with :strict raises" do
+    assert_raise ArgumentError, ":switches and :strict cannot be given together", fn ->
+      OptionParser.parse([], strict: [], switches: [])
+    end
   end
 
   test "parses - as argument" do
