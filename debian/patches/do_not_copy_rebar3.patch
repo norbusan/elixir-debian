@@ -1,0 +1,17 @@
+Author: Evgeny Golyshev <eugulixes@gmail.com>
+Description: do not copy rebar3
+ Stretch and Sid don't have rebar3 so far.
+
+--- elixir-lang-1.2.4.orig/lib/mix/test/test_helper.exs
++++ elixir-lang-1.2.4/lib/mix/test/test_helper.exs
+@@ -145,8 +145,8 @@ System.put_env("MIX_HOME", home)
+ 
+ rebar = System.get_env("REBAR") || Path.expand("../../../rebar", __DIR__)
+ File.cp!(rebar, Path.join(home, "rebar"))
+-rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
+-File.cp!(rebar, Path.join(home, "rebar3"))
++# rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
++# File.cp!(rebar, Path.join(home, "rebar3"))
+ 
+ ## Copy fixtures to tmp
+ 
