@@ -98,48 +98,54 @@ defmodule Base do
   b32_alphabet    = Enum.with_index 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
   b32hex_alphabet = Enum.with_index '0123456789ABCDEFGHIJKLMNOPQRSTUV'
 
-  Enum.each [ {:enc16,    :dec16,    b16_alphabet},
-              {:enc64,    :dec64,    b64_alphabet},
-              {:enc32,    :dec32,    b32_alphabet},
-              {:enc64url, :dec64url, b64url_alphabet},
-              {:enc32hex, :dec32hex, b32hex_alphabet} ], fn({enc, dec, alphabet}) ->
+  Enum.each [{:enc16,    :dec16,    b16_alphabet},
+             {:enc32,    :dec32,    b32_alphabet},
+             {:enc64,    :dec64,    b64_alphabet},
+             {:enc64url, :dec64url, b64url_alphabet},
+             {:enc32hex, :dec32hex, b32hex_alphabet}], fn({enc, dec, alphabet}) ->
     for {encoding, value} <- alphabet do
       defp unquote(enc)(unquote(value)), do: unquote(encoding)
       defp unquote(dec)(unquote(encoding)), do: unquote(value)
     end
     defp unquote(dec)(c) do
-      raise ArgumentError, "non-alphabet digit found: #{<<c>>}"
+      raise ArgumentError, "non-alphabet digit found: #{inspect <<c>>, binaries: :as_strings} (byte #{c})"
     end
   end
 
-  defp encode_case(:upper, func),
-    do: func
-  defp encode_case(:lower, func),
-    do: &to_lower(func.(&1))
-
-  defp decode_case(:upper, func),
-    do: func
-  defp decode_case(:lower, func),
-    do: &func.(from_lower(&1))
-  defp decode_case(:mixed, func),
-    do: &func.(from_mixed(&1))
+  @compile {:inline, from_upper: 1, from_lower: 1, from_mixed: 1,
+                     to_lower: 1, to_upper: 1, enc16: 1, dec16: 1,
+                     enc32: 1, dec32: 1, enc32hex: 1, dec32hex: 1,
+                     enc64: 1, dec64: 1, enc64url: 1, dec64url: 1}
 
   defp to_lower(char) when char in ?A..?Z,
     do: char + (?a - ?A)
   defp to_lower(char),
     do: char
 
+  defp to_upper(char), do: char
+
+  defp from_upper(char), do: char
+
   defp from_lower(char) when char in ?a..?z,
     do: char - (?a - ?A)
   defp from_lower(char) when not char in ?A..?Z,
     do: char
   defp from_lower(char),
-    do: raise(ArgumentError, "non-alphabet digit found: #{<<char>>}")
+    do: raise(ArgumentError, "non-alphabet digit found: \"#{<<char>>}\" (byte #{char})")
 
   defp from_mixed(char) when char in ?a..?z,
     do: char - (?a - ?A)
   defp from_mixed(char),
     do: char
+
+  defp maybe_pad(subject, false, _, _),
+    do: subject
+  defp maybe_pad(subject, _, group_size, pad) do
+    case rem(byte_size(subject), group_size) do
+      0 -> subject
+      x -> subject <> String.duplicate(pad, group_size - x)
+    end
+  end
 
   @doc """
   Encodes a binary string into a base 16 encoded string.
@@ -160,9 +166,8 @@ defmodule Base do
   @spec encode16(binary, Keyword.t) :: binary
   def encode16(data, opts \\ []) when is_binary(data) do
     case = Keyword.get(opts, :case, :upper)
-    do_encode16(data, encode_case(case, &enc16/1))
+    do_encode16(case, data)
   end
-
 
   @doc """
   Decodes a base 16 encoded string into a binary string.
@@ -185,9 +190,8 @@ defmodule Base do
   """
   @spec decode16(binary) :: {:ok, binary} | :error
   @spec decode16(binary, Keyword.t) :: {:ok, binary} | :error
-  def decode16(string, opts \\ []) when is_binary(string) do
-    case = Keyword.get(opts, :case, :upper)
-    {:ok, do_decode16(string, decode_case(case, &dec16/1))}
+  def decode16(string, opts \\ []) do
+    {:ok, decode16!(string, opts)}
   rescue
     ArgumentError -> :error
   end
@@ -216,37 +220,70 @@ defmodule Base do
   """
   @spec decode16!(binary) :: binary
   @spec decode16!(binary, Keyword.t) :: binary
-  def decode16!(string, opts \\ []) when is_binary(string) do
+  def decode16!(string, opts \\ [])
+
+  def decode16!(string, opts) when is_binary(string) and rem(byte_size(string), 2) == 0 do
     case = Keyword.get(opts, :case, :upper)
-    do_decode16(string, decode_case(case, &dec16/1))
+    do_decode16(case, string)
+  end
+
+  def decode16!(string, _opts) when is_binary(string) do
+    raise ArgumentError, "odd-length string"
   end
 
   @doc """
   Encodes a binary string into a base 64 encoded string.
+
+  Accepts `padding: false` option which will omit padding from
+  the output string.
 
   ## Examples
 
       iex> Base.encode64("foobar")
       "Zm9vYmFy"
 
+      iex> Base.encode64("foob")
+      "Zm9vYg=="
+
+      iex> Base.encode64("foob", padding: false)
+      "Zm9vYg"
+
   """
   @spec encode64(binary) :: binary
-  def encode64(data) when is_binary(data) do
-    do_encode64(data, &enc64/1)
+  @spec encode64(binary, Keyword.t) :: binary
+  def encode64(data, opts \\ []) when is_binary(data) do
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_encode64(data, pad_flag)
   end
 
   @doc """
   Decodes a base 64 encoded string into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   ## Examples
 
       iex> Base.decode64("Zm9vYmFy")
       {:ok, "foobar"}
 
+      iex> Base.decode64("Zm9vYmFy\\n", ignore: :whitespace)
+      {:ok, "foobar"}
+
+      iex> Base.decode64("Zm9vYg==")
+      {:ok, "foob"}
+
+      iex> Base.decode64("Zm9vYg", padding: false)
+      {:ok, "foob"}
+
   """
   @spec decode64(binary) :: {:ok, binary} | :error
-  def decode64(string) when is_binary(string) do
-    {:ok, do_decode64(string, &dec64/1)}
+  @spec decode64(binary, Keyword.t) :: {:ok, binary} | :error
+  def decode64(string, opts \\ []) when is_binary(string) do
+    {:ok, decode64!(string, opts)}
   rescue
     ArgumentError -> :error
   end
@@ -254,7 +291,11 @@ defmodule Base do
   @doc """
   Decodes a base 64 encoded string into a binary string.
 
-  The following alphabet is used both for encoding and decoding:
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
@@ -264,40 +305,72 @@ defmodule Base do
       iex> Base.decode64!("Zm9vYmFy")
       "foobar"
 
+      iex> Base.decode64!("Zm9vYmFy\\n", ignore: :whitespace)
+      "foobar"
+
+      iex> Base.decode64!("Zm9vYg==")
+      "foob"
+
+      iex> Base.decode64!("Zm9vYg", padding: false)
+      "foob"
+
   """
   @spec decode64!(binary) :: binary
-  def decode64!(string) when is_binary(string) do
-    do_decode64(string, &dec64/1)
+  @spec decode64!(binary, Keyword.t) :: binary
+  def decode64!(string, opts \\ []) when is_binary(string) do
+    pad_flag = Keyword.get(opts, :padding, true)
+    string |> filter_ignored(opts[:ignore]) |> do_decode64(pad_flag)
   end
 
   @doc """
   Encodes a binary string into a base 64 encoded string with URL and filename
   safe alphabet.
 
+  Accepts `padding: false` option which will omit padding from
+  the output string.
+
   ## Examples
 
       iex> Base.url_encode64(<<255, 127, 254, 252>>)
       "_3_-_A=="
 
+      iex> Base.url_encode64(<<255, 127, 254, 252>>, padding: false)
+      "_3_-_A"
+
   """
   @spec url_encode64(binary) :: binary
-  def url_encode64(data) when is_binary(data) do
-    do_encode64(data, &enc64url/1)
+  @spec url_encode64(binary, Keyword.t) :: binary
+  def url_encode64(data, opts \\ []) when is_binary(data) do
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_encode64url(data, pad_flag)
   end
 
   @doc """
   Decodes a base 64 encoded string with URL and filename safe alphabet
   into a binary string.
 
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
+
   ## Examples
 
       iex> Base.url_decode64("_3_-_A==")
       {:ok, <<255, 127, 254, 252>>}
 
+      iex> Base.url_decode64("_3_-_A==\\n", ignore: :whitespace)
+      {:ok, <<255, 127, 254, 252>>}
+
+      iex> Base.url_decode64("_3_-_A", padding: false)
+      {:ok, <<255, 127, 254, 252>>}
+
   """
   @spec url_decode64(binary) :: {:ok, binary} | :error
-  def url_decode64(string) when is_binary(string) do
-    {:ok, do_decode64(string, &dec64url/1)}
+  @spec url_decode64(binary, Keyword.t) :: {:ok, binary} | :error
+  def url_decode64(string, opts \\ []) when is_binary(string) do
+    {:ok, url_decode64!(string, opts)}
   rescue
     ArgumentError -> :error
   end
@@ -305,6 +378,12 @@ defmodule Base do
   @doc """
   Decodes a base 64 encoded string with URL and filename safe alphabet
   into a binary string.
+
+  Accepts `ignore: :whitespace` option which will ignore all the
+  whitespace characters in the input string.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
@@ -314,10 +393,18 @@ defmodule Base do
       iex> Base.url_decode64!("_3_-_A==")
       <<255, 127, 254, 252>>
 
+      iex> Base.url_decode64!("_3_-_A==\\n", ignore: :whitespace)
+      <<255, 127, 254, 252>>
+
+      iex> Base.url_decode64!("_3_-_A", padding: false)
+      <<255, 127, 254, 252>>
+
   """
   @spec url_decode64!(binary) :: binary
-  def url_decode64!(string) when is_binary(string) do
-    do_decode64(string, &dec64url/1)
+  @spec url_decode64!(binary, Keyword.t) :: binary
+  def url_decode64!(string, opts \\ []) when is_binary(string)  do
+    pad_flag = Keyword.get(opts, :padding, true)
+    string |> filter_ignored(opts[:ignore]) |> do_decode64url(pad_flag)
   end
 
   @doc """
@@ -325,6 +412,9 @@ defmodule Base do
 
   Accepts an atom `:upper` (default) for encoding to upper case characters or
   `:lower` for lower case characters.
+
+  Accepts `padding: false` option which will omit padding from
+  the output string.
 
   ## Examples
 
@@ -334,12 +424,16 @@ defmodule Base do
       iex> Base.encode32("foobar", case: :lower)
       "mzxw6ytboi======"
 
+      iex> Base.encode32("foobar", padding: false)
+      "MZXW6YTBOI"
+
   """
   @spec encode32(binary) :: binary
   @spec encode32(binary, Keyword.t) :: binary
   def encode32(data, opts \\ []) when is_binary(data) do
     case = Keyword.get(opts, :case, :upper)
-    do_encode32(data, encode_case(case, &enc32/1))
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_encode32(case, data, pad_flag)
   end
 
   @doc """
@@ -348,6 +442,9 @@ defmodule Base do
   Accepts an atom `:upper` (default) for decoding from upper case characters or
   `:lower` for lower case characters. `:mixed` can be given for mixed case
   characters.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   ## Examples
 
@@ -360,12 +457,14 @@ defmodule Base do
       iex> Base.decode32("mzXW6ytBOi======", case: :mixed)
       {:ok, "foobar"}
 
+      iex> Base.decode32("MZXW6YTBOI", padding: false)
+      {:ok, "foobar"}
+
   """
   @spec decode32(binary) :: {:ok, binary} | :error
   @spec decode32(binary, Keyword.t) :: {:ok, binary} | :error
   def decode32(string, opts \\ []) do
-    case = Keyword.get(opts, :case, :upper)
-    {:ok, do_decode32(string, decode_case(case, &dec32/1))}
+    {:ok, decode32!(string, opts)}
   rescue
     ArgumentError -> :error
   end
@@ -376,6 +475,9 @@ defmodule Base do
   Accepts an atom `:upper` (default) for decoding from upper case characters or
   `:lower` for lower case characters. `:mixed` can be given for mixed case
   characters.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
@@ -391,12 +493,16 @@ defmodule Base do
       iex> Base.decode32!("mzXW6ytBOi======", case: :mixed)
       "foobar"
 
+      iex> Base.decode32!("MZXW6YTBOI", padding: false)
+      "foobar"
+
   """
   @spec decode32!(binary) :: binary
   @spec decode32!(binary, Keyword.t) :: binary
-  def decode32!(string, opts \\ []) do
+  def decode32!(string, opts \\ []) when is_binary(string) do
     case = Keyword.get(opts, :case, :upper)
-    do_decode32(string, decode_case(case, &dec32/1))
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_decode32(case, string, pad_flag)
   end
 
   @doc """
@@ -406,6 +512,9 @@ defmodule Base do
   Accepts an atom `:upper` (default) for encoding to upper case characters or
   `:lower` for lower case characters.
 
+  Accepts `padding: false` option which will omit padding from
+  the output string.
+
   ## Examples
 
       iex> Base.hex_encode32("foobar")
@@ -414,12 +523,16 @@ defmodule Base do
       iex> Base.hex_encode32("foobar", case: :lower)
       "cpnmuoj1e8======"
 
+      iex> Base.hex_encode32("foobar", padding: false)
+      "CPNMUOJ1E8"
+
   """
   @spec hex_encode32(binary) :: binary
   @spec hex_encode32(binary, Keyword.t) :: binary
   def hex_encode32(data, opts \\ []) when is_binary(data) do
     case = Keyword.get(opts, :case, :upper)
-    do_encode32(data, encode_case(case, &enc32hex/1))
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_hex_encode32(case, data, pad_flag)
   end
 
   @doc """
@@ -429,6 +542,9 @@ defmodule Base do
   Accepts an atom `:upper` (default) for decoding from upper case characters or
   `:lower` for lower case characters. `:mixed` can be given for mixed case
   characters.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   ## Examples
 
@@ -441,12 +557,14 @@ defmodule Base do
       iex> Base.hex_decode32("cpnMuOJ1E8======", case: :mixed)
       {:ok, "foobar"}
 
+      iex> Base.hex_decode32("CPNMUOJ1E8", padding: false)
+      {:ok, "foobar"}
+
   """
   @spec hex_decode32(binary) :: {:ok, binary} | :error
   @spec hex_decode32(binary, Keyword.t) :: {:ok, binary} | :error
-  def hex_decode32(string, opts \\ []) when is_binary(string) do
-    case = Keyword.get(opts, :case, :upper)
-    {:ok, do_decode32(string, decode_case(case, &dec32hex/1))}
+  def hex_decode32(string, opts \\ []) do
+    {:ok, hex_decode32!(string, opts)}
   rescue
     ArgumentError -> :error
   end
@@ -458,6 +576,9 @@ defmodule Base do
   Accepts an atom `:upper` (default) for decoding from upper case characters or
   `:lower` for lower case characters. `:mixed` can be given for mixed case
   characters.
+
+  Accepts `padding: false` option which will ignore padding from
+  the input string.
 
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
@@ -473,120 +594,261 @@ defmodule Base do
       iex> Base.hex_decode32!("cpnMuOJ1E8======", case: :mixed)
       "foobar"
 
+      iex> Base.hex_decode32!("CPNMUOJ1E8", padding: false)
+      "foobar"
+
   """
   @spec hex_decode32!(binary) :: binary
   @spec hex_decode32!(binary, Keyword.t) :: binary
   def hex_decode32!(string, opts \\ []) when is_binary(string) do
     case = Keyword.get(opts, :case, :upper)
-    do_decode32(string, decode_case(case, &dec32hex/1))
+    pad_flag = Keyword.get(opts, :padding, true)
+    do_hex_decode32(case, string, pad_flag)
   end
 
-  defp do_encode16(<<>>, _), do: <<>>
-  defp do_encode16(data, enc) do
-    for <<c::4 <- data>>, into: <<>>, do: <<enc.(c)::8>>
+  defp filter_ignored(string, nil), do: string
+  defp filter_ignored(string, :whitespace) do
+    for <<c::8 <- string>>, not c in '\s\t\r\n', into: <<>>, do: <<c::8>>
   end
 
-  defp do_decode16(<<>>, _), do: <<>>
-  defp do_decode16(string, dec) when rem(byte_size(string), 2) == 0 do
-    for <<c1::8, c2::8 <- string>>, into: <<>>  do
-      <<dec.(c1)::4, dec.(c2)::4>>
+  defp do_encode16(_, <<>>), do: <<>>
+  defp do_encode16(:upper, data) do
+    for <<c::4 <- data>>, into: <<>>, do: <<enc16(c)::8>>
+  end
+  defp do_encode16(:lower, data) do
+    for <<c::4 <- data>>, into: <<>>, do: <<to_lower(enc16(c))::8>>
+  end
+
+  defp do_decode16(_, <<>>), do: <<>>
+  defp do_decode16(:upper, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(c1)::4, dec16(c2)::4>>
     end
   end
-  defp do_decode16(_, _) do
-    raise ArgumentError, "odd-length string"
+  defp do_decode16(:lower, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(from_lower(c1))::4, dec16(from_lower(c2))::4>>
+    end
+  end
+  defp do_decode16(:mixed, string) when rem(byte_size(string), 2) == 0 do
+    for <<c1::8, c2::8 <- string>>, into: <<>> do
+      <<dec16(from_mixed(c1))::4, dec16(from_mixed(c2))::4>>
+    end
   end
 
   defp do_encode64(<<>>, _), do: <<>>
-  defp do_encode64(data, enc) do
+  defp do_encode64(data, pad_flag) do
     split =  3 * div(byte_size(data), 3)
     <<main::size(split)-binary, rest::binary>> = data
-    main = for <<c::6 <- main>>, into: <<>>, do: <<enc.(c)::8>>
-    case rest do
+    main = for <<c::6 <- main>>, into: <<>>, do: <<enc64(c)::8>>
+    tail = case rest do
       <<c1::6, c2::6, c3::4>> ->
-        <<main::binary, enc.(c1)::8, enc.(c2)::8, enc.(bsl(c3, 2))::8, ?=>>
+        <<enc64(c1)::8, enc64(c2)::8, enc64(bsl(c3, 2))::8>>
       <<c1::6, c2::2>> ->
-        <<main::binary, enc.(c1)::8, enc.(bsl(c2, 4))::8, ?=, ?=>>
+        <<enc64(c1)::8, enc64(bsl(c2, 4))::8>>
       <<>> ->
-        main
+        <<>>
     end
+    main <> maybe_pad(tail, pad_flag, 4, "=")
   end
 
   defp do_decode64(<<>>, _), do: <<>>
-  defp do_decode64(string, dec) when rem(byte_size(string), 4) == 0 do
+  defp do_decode64(string, false) do
+    maybe_pad(string, true, 4, "=") |> do_decode64(true)
+  end
+  defp do_decode64(string, _pad_flag) when rem(byte_size(string), 4) == 0 do
     split = byte_size(string) - 4
     <<main::size(split)-binary, rest::binary>> = string
-    main = for <<c::8 <- main>>, into: <<>>, do: <<dec.(c)::6>>
-    case rest do
+    main = for <<c::8 <- main>>, into: <<>>, do: <<dec64(c)::6>>
+    tail = case rest do
       <<c1::8, c2::8, ?=, ?=>> ->
-        <<main::binary, dec.(c1)::6, bsr(dec.(c2), 4)::2>>
+        <<dec64(c1)::6, bsr(dec64(c2), 4)::2>>
       <<c1::8, c2::8, c3::8, ?=>> ->
-        <<main::binary, dec.(c1)::6, dec.(c2)::6, bsr(dec.(c3), 2)::4>>
+        <<dec64(c1)::6, dec64(c2)::6, bsr(dec64(c3), 2)::4>>
       <<c1::8, c2::8, c3::8, c4::8>> ->
-        <<main::binary, dec.(c1)::6, dec.(c2)::6, dec.(c3)::6, dec.(c4)::6>>
+        <<dec64(c1)::6, dec64(c2)::6, dec64(c3)::6, dec64(c4)::6>>
       <<>> ->
-        main
+        <<>>
     end
+    main <> tail
   end
   defp do_decode64(_, _) do
     raise ArgumentError, "incorrect padding"
   end
 
-  defp do_encode32(<<>>, _), do: <<>>
-  defp do_encode32(data, enc) do
-    split =  5 * div(byte_size(data), 5)
+  defp do_encode64url(<<>>, _), do: <<>>
+  defp do_encode64url(data, pad_flag) do
+    split =  3 * div(byte_size(data), 3)
     <<main::size(split)-binary, rest::binary>> = data
-    main = for <<c::5 <- main>>, into: <<>>, do: <<enc.(c)::8>>
-    case rest do
-      <<c1::5, c2::5, c3::5, c4::5, c5::5, c6::5, c7::2>> ->
-        <<main::binary,
-          enc.(c1)::8, enc.(c2)::8, enc.(c3)::8, enc.(c4)::8,
-          enc.(c5)::8, enc.(c6)::8, enc.(bsl(c7, 3))::8, ?=>>
-      <<c1::5, c2::5, c3::5, c4::5, c5::4>> ->
-        <<main::binary,
-          enc.(c1)::8, enc.(c2)::8, enc.(c3)::8, enc.(c4)::8,
-          enc.(bsl(c5, 1))::8, ?=,  ?=, ?=>>
-      <<c1::5, c2::5, c3::5, c4::1>> ->
-        <<main::binary,
-          enc.(c1)::8, enc.(c2)::8,  enc.(c3)::8, enc.(bsl(c4, 4))::8,
-          ?=, ?=,  ?=, ?=>>
-      <<c1::5, c2::3>> ->
-        <<main::binary,
-          enc.(c1)::8, enc.(bsl(c2, 2))::8, ?=, ?=,
-          ?=, ?=, ?=, ?=>>
+    main = for <<c::6 <- main>>, into: <<>>, do: <<enc64url(c)::8>>
+    tail = case rest do
+      <<c1::6, c2::6, c3::4>> ->
+        <<enc64url(c1)::8, enc64url(c2)::8, enc64url(bsl(c3, 2))::8>>
+      <<c1::6, c2::2>> ->
+        <<enc64url(c1)::8, enc64url(bsl(c2, 4))::8>>
       <<>> ->
-        main
+        <<>>
     end
+    main <> maybe_pad(tail, pad_flag, 4, "=")
   end
 
-  defp do_decode32(<<>>, _), do: <<>>
-  defp do_decode32(string, dec) when rem(byte_size(string), 8) == 0 do
-    split = byte_size(string) - 8
-    <<main::size(split)-binary, rest::binary>> = string
-    main = for <<c::8 <- main>>, into: <<>>, do: <<dec.(c)::5>>
-    case rest do
-      <<c1::8, c2::8, ?=, ?=, ?=, ?=, ?=, ?=>> ->
-        <<main::binary, dec.(c1)::5, bsr(dec.(c2), 2)::3>>
-      <<c1::8, c2::8, c3::8, c4::8, ?=, ?=, ?=, ?=>> ->
-        <<main::binary,
-          dec.(c1)::5, dec.(c2)::5, dec.(c3)::5, bsr(dec.(c4), 4)::1>>
-      <<c1::8, c2::8, c3::8, c4::8, c5::8, ?=, ?=, ?=>> ->
-        <<main::binary,
-          dec.(c1)::5, dec.(c2)::5, dec.(c3)::5, dec.(c4)::5,
-          bsr(dec.(c5), 1)::4>>
-      <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, ?=>> ->
-        <<main::binary,
-          dec.(c1)::5, dec.(c2)::5, dec.(c3)::5, dec.(c4)::5,
-          dec.(c5)::5, dec.(c6)::5,  bsr(dec.(c7), 3)::2>>
-      <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8>> ->
-        <<main::binary,
-          dec.(c1)::5, dec.(c2)::5, dec.(c3)::5, dec.(c4)::5,
-          dec.(c5)::5, dec.(c6)::5, dec.(c7)::5, dec.(c8)::5>>
-      <<>> ->
-        main
-    end
+  defp do_decode64url(<<>>, _), do: <<>>
+  defp do_decode64url(string, false) do
+    maybe_pad(string, true, 4, "=") |> do_decode64url(true)
   end
-  defp do_decode32(_, _) do
+  defp do_decode64url(string, _pad_flag) when rem(byte_size(string), 4) == 0 do
+    split = byte_size(string) - 4
+    <<main::size(split)-binary, rest::binary>> = string
+    main = for <<c::8 <- main>>, into: <<>>, do: <<dec64url(c)::6>>
+    tail = case rest do
+      <<c1::8, c2::8, ?=, ?=>> ->
+        <<dec64url(c1)::6, bsr(dec64url(c2), 4)::2>>
+      <<c1::8, c2::8, c3::8, ?=>> ->
+        <<dec64url(c1)::6, dec64url(c2)::6, bsr(dec64url(c3), 2)::4>>
+      <<c1::8, c2::8, c3::8, c4::8>> ->
+        <<dec64url(c1)::6, dec64url(c2)::6, dec64url(c3)::6, dec64url(c4)::6>>
+      <<>> ->
+        <<>>
+    end
+    main <> tail
+  end
+  defp do_decode64url(_, _) do
     raise ArgumentError, "incorrect padding"
   end
 
+  defp do_encode32(_, <<>>, _), do: <<>>
+
+  for {case, fun} <- [upper: :to_upper, lower: :to_lower] do
+    defp do_encode32(unquote(case), data, pad_flag) do
+      split =  5 * div(byte_size(data), 5)
+      <<main::size(split)-binary, rest::binary>> = data
+      main = for <<c::5 <- main>>, into: <<>>, do: <<unquote(fun)(enc32(c))::8>>
+      tail = case rest do
+        <<c1::5, c2::5, c3::5, c4::5, c5::5, c6::5, c7::2>> ->
+          <<unquote(fun)(enc32(c1))::8, unquote(fun)(enc32(c2))::8,
+            unquote(fun)(enc32(c3))::8, unquote(fun)(enc32(c4))::8,
+            unquote(fun)(enc32(c5))::8, unquote(fun)(enc32(c6))::8,
+            unquote(fun)(enc32(bsl(c7, 3)))::8>>
+        <<c1::5, c2::5, c3::5, c4::5, c5::4>> ->
+          <<unquote(fun)(enc32(c1))::8, unquote(fun)(enc32(c2))::8,
+            unquote(fun)(enc32(c3))::8, unquote(fun)(enc32(c4))::8,
+            unquote(fun)(enc32(bsl(c5, 1)))::8>>
+        <<c1::5, c2::5, c3::5, c4::1>> ->
+          <<unquote(fun)(enc32(c1))::8, unquote(fun)(enc32(c2))::8,
+            unquote(fun)(enc32(c3))::8, unquote(fun)(enc32(bsl(c4, 4)))::8>>
+        <<c1::5, c2::3>> ->
+          <<unquote(fun)(enc32(c1))::8, unquote(fun)(enc32(bsl(c2, 2)))::8>>
+        <<>> ->
+          <<>>
+      end
+      main <> maybe_pad(tail, pad_flag, 8, "=")
+    end
+  end
+
+  defp do_decode32(_, <<>>, _), do: <<>>
+  defp do_decode32(case, string, false),
+    do: do_decode32(case, maybe_pad(string, true, 8, "="), true)
+
+  for {case, fun} <- [upper: :from_upper, lower: :from_lower, mixed: :from_mixed] do
+    defp do_decode32(unquote(case), string, _pad_flag) when rem(byte_size(string), 8) == 0 do
+      split = byte_size(string) - 8
+      <<main::size(split)-binary, rest::binary>> = string
+      main = for <<c::8 <- main>>, into: <<>>, do: <<dec32(unquote(fun)(c))::5>>
+      tail = case rest do
+        <<c1::8, c2::8, ?=, ?=, ?=, ?=, ?=, ?=>> ->
+          <<dec32(unquote(fun)(c1))::5, bsr(dec32(unquote(fun)(c2)), 2)::3>>
+        <<c1::8, c2::8, c3::8, c4::8, ?=, ?=, ?=, ?=>> ->
+          <<dec32(unquote(fun)(c1))::5, dec32(unquote(fun)(c2))::5,
+            dec32(unquote(fun)(c3))::5, bsr(dec32(unquote(fun)(c4)), 4)::1>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, ?=, ?=, ?=>> ->
+          <<dec32(unquote(fun)(c1))::5, dec32(unquote(fun)(c2))::5,
+            dec32(unquote(fun)(c3))::5, dec32(unquote(fun)(c4))::5,
+            bsr(dec32(unquote(fun)(c5)), 1)::4>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, ?=>> ->
+          <<dec32(unquote(fun)(c1))::5, dec32(unquote(fun)(c2))::5,
+            dec32(unquote(fun)(c3))::5, dec32(unquote(fun)(c4))::5,
+            dec32(unquote(fun)(c5))::5, dec32(unquote(fun)(c6))::5,
+            bsr(dec32(unquote(fun)(c7)), 3)::2>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8>> ->
+          <<dec32(unquote(fun)(c1))::5, dec32(unquote(fun)(c2))::5,
+            dec32(unquote(fun)(c3))::5, dec32(unquote(fun)(c4))::5,
+            dec32(unquote(fun)(c5))::5, dec32(unquote(fun)(c6))::5,
+            dec32(unquote(fun)(c7))::5, dec32(unquote(fun)(c8))::5>>
+        <<>> ->
+          <<>>
+      end
+      main <> tail
+    end
+  end
+
+  defp do_decode32(_, _, _),
+    do: raise ArgumentError, "incorrect padding"
+
+  defp do_hex_encode32(_, <<>>, _), do: <<>>
+
+  for {case, fun} <- [upper: :to_upper, lower: :to_lower] do
+    defp do_hex_encode32(unquote(case), data, pad_flag) do
+      split =  5 * div(byte_size(data), 5)
+      <<main::size(split)-binary, rest::binary>> = data
+      main = for <<c::5 <- main>>, into: <<>>, do: <<unquote(fun)(enc32hex(c))::8>>
+      tail = case rest do
+        <<c1::5, c2::5, c3::5, c4::5, c5::5, c6::5, c7::2>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(c4))::8,
+            unquote(fun)(enc32hex(c5))::8, unquote(fun)(enc32hex(c6))::8,
+            unquote(fun)(enc32hex(bsl(c7, 3)))::8>>
+        <<c1::5, c2::5, c3::5, c4::5, c5::4>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(c4))::8,
+            unquote(fun)(enc32hex(bsl(c5, 1)))::8>>
+        <<c1::5, c2::5, c3::5, c4::1>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(c2))::8,
+            unquote(fun)(enc32hex(c3))::8, unquote(fun)(enc32hex(bsl(c4, 4)))::8>>
+        <<c1::5, c2::3>> ->
+          <<unquote(fun)(enc32hex(c1))::8, unquote(fun)(enc32hex(bsl(c2, 2)))::8>>
+        <<>> ->
+          <<>>
+      end
+      main <> maybe_pad(tail, pad_flag, 8, "=")
+    end
+  end
+
+  defp do_hex_decode32(_, <<>>, _), do: <<>>
+  defp do_hex_decode32(case, string, false),
+    do: do_hex_decode32(case, maybe_pad(string, true, 8, "="), true)
+
+  for {case, fun} <- [upper: :from_upper, lower: :from_lower, mixed: :from_mixed] do
+    defp do_hex_decode32(unquote(case), string, _pad_flag) when rem(byte_size(string), 8) == 0 do
+      split = byte_size(string) - 8
+      <<main::size(split)-binary, rest::binary>> = string
+      main = for <<c::8 <- main>>, into: <<>>, do: <<dec32hex(unquote(fun)(c))::5>>
+      tail = case rest do
+        <<c1::8, c2::8, ?=, ?=, ?=, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, bsr(dec32hex(unquote(fun)(c2)), 2)::3>>
+        <<c1::8, c2::8, c3::8, c4::8, ?=, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, bsr(dec32hex(unquote(fun)(c4)), 4)::1>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, ?=, ?=, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            bsr(dec32hex(unquote(fun)(c5)), 1)::4>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, ?=>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
+            bsr(dec32hex(unquote(fun)(c7)), 3)::2>>
+        <<c1::8, c2::8, c3::8, c4::8, c5::8, c6::8, c7::8, c8::8>> ->
+          <<dec32hex(unquote(fun)(c1))::5, dec32hex(unquote(fun)(c2))::5,
+            dec32hex(unquote(fun)(c3))::5, dec32hex(unquote(fun)(c4))::5,
+            dec32hex(unquote(fun)(c5))::5, dec32hex(unquote(fun)(c6))::5,
+            dec32hex(unquote(fun)(c7))::5, dec32hex(unquote(fun)(c8))::5>>
+        <<>> ->
+          <<>>
+      end
+      main <> tail
+    end
+  end
+
+  defp do_hex_decode32(_, _, _),
+    do: raise ArgumentError, "incorrect padding"
 end

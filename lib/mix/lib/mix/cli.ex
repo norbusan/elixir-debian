@@ -8,6 +8,9 @@ defmodule Mix.CLI do
     Mix.Local.append_archives
     Mix.Local.append_paths
 
+    if env_variable_activated?("MIX_QUIET"), do: Mix.shell(Mix.Shell.Quiet)
+    if env_variable_activated?("MIX_DEBUG"), do: Mix.debug(true)
+
     case check_for_shortcuts(args) do
       :help ->
         proceed(["help"])
@@ -67,6 +70,10 @@ defmodule Mix.CLI do
           reraise exception, stacktrace
         end
     end
+  end
+
+  defp env_variable_activated?(name) do
+    System.get_env(name) in ~w(1 true)
   end
 
   defp ensure_hex("local.hex"),

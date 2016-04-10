@@ -2,7 +2,7 @@ defmodule GenServer do
   @moduledoc """
   A behaviour module for implementing the server of a client-server relation.
 
-  A GenServer is a process as any other Elixir process and it can be used
+  A GenServer is a process like any other Elixir process and it can be used
   to keep state, execute code asynchronously and so on. The advantage of using
   a generic server process (GenServer) implemented using this module is that it
   will have a standard set of interface functions and include functionality for
@@ -76,8 +76,11 @@ defmodule GenServer do
       term using the functions in the `:global` module.
 
     * `{:via, module, term}` - the GenServer is registered with the given
-      mechanism and name. The `:via` option expects a module name to control
-      the registration mechanism alongside a name which can be any term.
+      mechanism and name. The `:via` option expects a module that exports
+      `register_name/2`, `unregister_name/1`, `whereis_name/1` and `send/2`.
+      One such example is the `:global` module which uses these functions
+      for keeping the list of names of processes and their  associated pid's
+      that are available globally for a network of Erlang nodes.
 
   For example, we could start and register our Stack server locally as follows:
 
@@ -222,7 +225,7 @@ defmodule GenServer do
 
   Returning `{:reply, reply, new_state, timeout}` is similar to
   `{:reply, reply, new_state}` except `handle_info(:timeout, new_state)` will be
-  called after `timeout` milliseconds if no messages are receved.
+  called after `timeout` milliseconds if no messages are received.
 
   Returning `{:reply, reply, new_state, :hibernate}` is similar to
   `{:reply, reply, new_state}` except the process is hibernated and will
@@ -515,6 +518,23 @@ defmodule GenServer do
   end
 
   @doc """
+  Stops the server with the given `reason`.
+
+  The `terminate/2` callback will be invoked before exiting.
+  It returns `:ok` if the server terminates with the given
+  reason, if it terminates with another reason, the call will
+  exit.
+
+  This function keeps OTP semantics regarding error reporting.
+  If the reason is any other than `:normal`, `:shutdown` or
+  `{:shutdown, _}`, an error report will be logged.
+  """
+  @spec stop(server, reason :: term, timeout) :: :ok
+  def stop(server, reason \\ :normal, timeout \\ :infinity) do
+    :gen.stop(server, reason, timeout)
+  end
+
+  @doc """
   Makes a synchronous call to the `server` and waits for its reply.
 
   The client sends the given `request` to the server and waits until a reply
@@ -533,7 +553,7 @@ defmodule GenServer do
   failure and continues running, and the server is just late with the reply,
   it may arrive at any time later into the caller's message queue. The caller
   must in this case be prepared for this and discard any such garbage messages
-  that are two element tuples with a reference as the first element.
+  that are two-element tuples with a reference as the first element.
   """
   @spec call(server, term, timeout) :: term
   def call(server, request, timeout \\ 5000) do

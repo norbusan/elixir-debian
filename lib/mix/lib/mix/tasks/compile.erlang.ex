@@ -41,6 +41,12 @@ defmodule Mix.Tasks.Compile.Erlang do
 
       For a list of the many more available options,
       see [`:compile.file/2`](http://www.erlang.org/doc/man/compile.html#file-2).
+
+  For example, to configure the `erlc_options` for your Erlang project you
+  may run:
+
+      erlc_options: [:debug_info, {:i, 'path/to/include'}]
+
   """
 
   @doc """
@@ -74,6 +80,12 @@ defmodule Mix.Tasks.Compile.Erlang do
 
     Mix.Compilers.Erlang.compile(manifest(), tuples, fn
       input, _output ->
+        # We're purging the module because a previous compiler (e.g. Phoenix)
+        # might have already loaded the previous version of it.
+        module = Path.basename(input, ".erl") |> String.to_atom
+        :code.purge(module)
+        :code.delete(module)
+
         file = to_erl_file(Path.rootname(input, ".erl"))
         :compile.file(file, erlc_options)
     end)

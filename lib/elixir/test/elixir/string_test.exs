@@ -3,6 +3,8 @@ Code.require_file "test_helper.exs", __DIR__
 defmodule StringTest do
   use ExUnit.Case, async: true
 
+  doctest String
+
   test "next codepoint" do
     assert String.next_codepoint("ésoj") == {"é", "soj"}
     assert String.next_codepoint(<<255>>) == {<<255>>, ""}
@@ -20,6 +22,8 @@ defmodule StringTest do
     assert String.reverse("") == ""
 
     assert String.upcase("baﬄe") == "BAFFLE"
+
+    assert String.equivalent?("noël", "noël")
   end
 
   test "split" do
@@ -29,8 +33,12 @@ defmodule StringTest do
     assert String.split("foo bar ") == ["foo", "bar"]
     assert String.split(" foo bar ") == ["foo", "bar"]
     assert String.split("foo\t\n\v\f\r\sbar\n") == ["foo", "bar"]
-    assert String.split("foo" <> <<31>> <> "bar") == ["foo", "bar"]
     assert String.split("foo" <> <<194, 133>> <> "bar") == ["foo", "bar"]
+    # information separators are not considered whitespace
+    assert String.split("foo\u001Fbar") == ["foo\u001Fbar"]
+    # no-break space is excluded
+    assert String.split("foo\00A0bar") == ["foo\00A0bar"]
+    assert String.split("foo\u202Fbar") == ["foo\u202Fbar"]
 
     assert String.split("a,b,c", ",") == ["a", "b", "c"]
     assert String.split("a,b", ".") == ["a,b"]
@@ -156,6 +164,17 @@ defmodule StringTest do
     assert String.capitalize("ﬁn") == "Fin"
   end
 
+  test "replace_trailing" do
+    assert String.replace_trailing("   abc aa", "a", "") == "   abc "
+    assert String.replace_trailing("   abc __", "_", "") == "   abc "
+    assert String.replace_trailing(" aaaaaaaaa", "a", "") == " "
+    assert String.replace_trailing("aaaaaaaaaa", "a", "") == ""
+    assert String.replace_trailing("]]]]]]]]]]", "]", "") == ""
+    assert String.replace_trailing("   cat 猫猫", "猫", "") == "   cat "
+    assert String.replace_trailing("test", "t", "") == "tes"
+    assert String.replace_trailing("t", "t", "") == ""
+  end
+
   test "rstrip" do
     assert String.rstrip("") == ""
     assert String.rstrip("1\n") == "1"
@@ -164,11 +183,17 @@ defmodule StringTest do
     assert String.rstrip("   abc a") == "   abc a"
     assert String.rstrip("a  abc  a\n\n") == "a  abc  a"
     assert String.rstrip("a  abc  a\t\n\v\f\r\s") == "a  abc  a"
-    assert String.rstrip("a  abc  a " <> <<31>>) == "a  abc  a"
     assert String.rstrip("a  abc  a" <> <<194, 133>>) == "a  abc  a"
     assert String.rstrip("   abc aa", ?a) == "   abc "
     assert String.rstrip("   abc __", ?_) == "   abc "
+    assert String.rstrip(" aaaaaaaaa", ?a) == " "
+    assert String.rstrip("aaaaaaaaaa", ?a) == ""
+    assert String.rstrip("]]]]]]]]]]", ?]) == ""
     assert String.rstrip("   cat 猫猫", ?猫) == "   cat "
+    # information separators are not whitespace
+    assert String.rstrip("a  abc  a \u001F") == "a  abc  a \u001F"
+    # no-break space
+    assert String.rstrip("a  abc  a \u00A0") == "a  abc  a"
   end
 
   test "lstrip" do
@@ -177,10 +202,13 @@ defmodule StringTest do
     assert String.lstrip("a  abc  a") == "a  abc  a"
     assert String.lstrip("\n\na  abc  a") == "a  abc  a"
     assert String.lstrip("\t\n\v\f\r\sa  abc  a") == "a  abc  a"
-    assert String.lstrip(<<31>> <> " a  abc  a") == "a  abc  a"
     assert String.lstrip(<<194, 133>> <> "a  abc  a") == "a  abc  a"
     assert String.lstrip("__  abc  _", ?_) == "  abc  _"
     assert String.lstrip("猫猫 cat   ", ?猫) == " cat   "
+    # information separators are not whitespace
+    assert String.lstrip("\u001F a  abc  a") == <<31>> <> " a  abc  a"
+    # no-break space
+    assert String.lstrip("\u00A0 a  abc  a") == "a  abc  a"
   end
 
   test "strip" do
@@ -190,6 +218,10 @@ defmodule StringTest do
     assert String.strip("a  abc  a\t\n\v\f\r\s") == "a  abc  a"
     assert String.strip("___  abc  ___", ?_) == "  abc  "
     assert String.strip("猫猫猫  cat  猫猫猫", ?猫) == "  cat  "
+    # no-break space
+    assert String.strip("\u00A0a  abc  a\u00A0") == "a  abc  a"
+    # whitespace defined as a range
+    assert String.strip("\u2008a  abc  a\u2005") == "a  abc  a"
   end
 
   test "rjust" do
@@ -269,6 +301,55 @@ defmodule StringTest do
     assert String.codepoints("") == []
     assert String.codepoints("ϖͲϥЫݎߟΈټϘለДШव׆ש؇؊صلټܗݎޥޘ߉ऌ૫ሏᶆ℆ℙℱ ⅚Ⅷ↠∈⌘①ﬃ") ==
            ["ϖ", "Ͳ", "ϥ", "Ы", "ݎ", "ߟ", "Έ", "ټ", "Ϙ", "ለ", "Д", "Ш", "व", "׆", "ש", "؇", "؊", "ص", "ل", "ټ", "ܗ", "ݎ", "ޥ", "ޘ", "߉", "ऌ", "૫", "ሏ", "ᶆ", "℆", "ℙ", "ℱ", " ", "⅚", "Ⅷ", "↠", "∈", "⌘", "①", "ﬃ"]
+  end
+
+  test "equivalent?" do
+    assert String.equivalent?("", "")
+    assert String.equivalent?("elixir", "elixir")
+    assert String.equivalent?("뢴", "뢴")
+    assert String.equivalent?("ṩ", "ṩ")
+    refute String.equivalent?("ELIXIR", "elixir")
+    refute String.equivalent?("døge", "dóge")
+  end
+
+  test "normalize" do
+    assert String.normalize("ŝ", :nfd) == "ŝ"
+    assert String.normalize("ḇravô", :nfd) == "ḇravô"
+    assert String.normalize("ṩierra", :nfd) == "ṩierra"
+    assert String.normalize("뢴", :nfd) == "뢴"
+    assert String.normalize("êchǭ", :nfc) == "êchǭ"
+    assert String.normalize("거̄", :nfc) == "거̄"
+    assert String.normalize("뢴", :nfc) == "뢴"
+
+    ## Cases from NormalizationTest.txt
+
+    # 05B8 05B9 05B1 0591 05C3 05B0 05AC 059F
+    # 05B1 05B8 05B9 0591 05C3 05B0 05AC 059F
+    # HEBREW POINT QAMATS, HEBREW POINT HOLAM, HEBREW POINT HATAF SEGOL,
+    # HEBREW ACCENT ETNAHTA, HEBREW PUNCTUATION SOF PASUQ, HEBREW POINT SHEVA,
+    # HEBREW ACCENT ILUY, HEBREW ACCENT QARNEY PARA
+    assert String.normalize("ֱָֹ֑׃ְ֬֟", :nfc) == "ֱָֹ֑׃ְ֬֟"
+
+    # 095D (exclusion list)
+    # 0922 093C
+    # DEVANAGARI LETTER RHA
+    assert String.normalize("ढ़", :nfc) == "ढ़"
+
+    # 0061 0315 0300 05AE 0340 0062
+    # 00E0 05AE 0300 0315 0062
+    # LATIN SMALL LETTER A, COMBINING COMMA ABOVE RIGHT, COMBINING GRAVE ACCENT,
+    # HEBREW ACCENT ZINOR, COMBINING GRAVE TONE MARK, LATIN SMALL LETTER B
+    assert String.normalize("à֮̀̕b", :nfc) == "à֮̀̕b"
+
+    # 0344
+    # 0308 0301
+    # COMBINING GREEK DIALYTIKA TONOS
+    assert String.normalize("\u0344", :nfc) == "\u0308\u0301"
+
+    # 115B9 0334 115AF
+    # 115B9 0334 115AF
+    # SIDDHAM VOWEL SIGN AI, COMBINING TILDE OVERLAY, SIDDHAM VOWEL SIGN AA
+    assert String.normalize("𑖹̴𑖯", :nfc) == "𑖹̴𑖯"
   end
 
   test "graphemes" do

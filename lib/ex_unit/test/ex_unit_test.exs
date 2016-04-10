@@ -7,7 +7,7 @@ defmodule ExUnitTest do
 
   test "it supports many runs" do
     defmodule SampleTest do
-      use ExUnit.Case, async: false
+      use ExUnit.Case
 
       test "true" do
         assert false
@@ -25,7 +25,7 @@ defmodule ExUnitTest do
 
   test "it doesn't hang on exists" do
     defmodule EventServerTest do
-      use ExUnit.Case, async: false
+      use ExUnit.Case
 
       test "spawn and crash" do
         spawn_link(fn ->
@@ -67,7 +67,6 @@ defmodule ExUnitTest do
     ExUnit.configure(timeout: 5)
     output = capture_io(fn -> ExUnit.run end)
     assert output =~ "** (ExUnit.TimeoutError) test timed out after 5ms"
-
   after
     ExUnit.configure(timeout: 60_000)
   end
@@ -153,10 +152,45 @@ defmodule ExUnitTest do
     refute output =~ "[debug] four"
   end
 
-  test "it registers only the first test with any given name" do
+  test "supports multi errors" do
+    capture_io :stderr, fn ->
+      defmodule MultiTest do
+        use ExUnit.Case
+
+        test "multi" do
+          error1 =
+            try do
+              assert 1 = 2
+            rescue e in ExUnit.AssertionError ->
+              {:error, e, System.stacktrace}
+            end
+
+          error2 =
+            try do
+              assert 3 > 4
+            rescue e in ExUnit.AssertionError ->
+              {:error, e, System.stacktrace}
+            end
+
+          raise ExUnit.MultiError, errors: [error1, error2]
+        end
+      end
+    end
+
+    output = capture_io(fn ->
+      assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
+    end)
+
+    assert output =~ "1 test, 1 failure"
+    assert output =~ "1) test multi (ExUnitTest.MultiTest)"
+    assert output =~ "Failure #1"
+    assert output =~ "Failure #2"
+  end
+
+  test "registers only the first test with any given name" do
     capture_io :stderr, fn ->
       defmodule TestWithSameNames do
-        use ExUnit.Case, async: false
+        use ExUnit.Case
 
         test "same name, different outcome" do
           assert 1 == 1
@@ -173,9 +207,9 @@ defmodule ExUnitTest do
     end) =~ "1 test, 0 failure"
   end
 
-  test "it produces error on not implemented tests" do
+  test "produces error on not implemented tests" do
     defmodule TestNotImplemented do
-      use ExUnit.Case, async: false
+      use ExUnit.Case
 
       setup context do
         assert context[:not_implemented]
@@ -193,9 +227,9 @@ defmodule ExUnitTest do
     assert output =~ "1 test, 1 failure"
   end
 
-  test "it skips tagged test with skip" do
+  test "skips tagged test with skip" do
     defmodule TestSkipped do
-      use ExUnit.Case, async: false
+      use ExUnit.Case
 
       setup context do
         assert context[:not_implemented]
@@ -214,6 +248,55 @@ defmodule ExUnitTest do
     end)
 
     assert output =~ "2 tests, 0 failures, 2 skipped"
+  end
+
+  test "raises on reserved tag in module" do
+    assert_raise RuntimeError, "cannot set tag :file because it is reserved by ExUnit", fn ->
+      defmodule ReservedTag do
+        use ExUnit.Case
+
+        setup do
+          {:ok, file: :foo}
+        end
+
+        @tag file: "oops"
+        test "sample", do: :ok
+      end
+    end
+  end
+
+  test "raises on reserved tag in setup" do
+    defmodule ReservedSetupTag do
+      use ExUnit.Case
+
+      setup do
+        {:ok, file: :foo}
+      end
+
+      test "sample", do: :ok
+    end
+
+    output = capture_io(fn ->
+      assert ExUnit.run == %{failures: 1, skipped: 0, total: 1}
+    end)
+
+    assert output =~ "trying to set reserved field :file"
+  end
+
+  test "does not raise on reserved tag in setup_all (lower priority)" do
+    defmodule ReservedSetupAllTag do
+      use ExUnit.Case
+
+      setup_all do
+        {:ok, file: :foo}
+      end
+
+      test "sample", do: :ok
+    end
+
+    capture_io(fn ->
+      assert ExUnit.run == %{failures: 0, skipped: 0, total: 1}
+    end)
   end
 
   defp run_with_filter(filters, {async, sync, load_us}) do

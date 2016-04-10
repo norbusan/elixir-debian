@@ -25,15 +25,15 @@ defmodule System do
     end
   end
 
-  # Tries to run "git describe --always --tags". In the case of success returns
-  # the most recent tag. If that is not available, tries to read the commit hash
+  # Tries to run "git rev-parse --short HEAD". In the case of success returns
+  # the short revision hash. If that is not available, tries to read the commit hash
   # from .git/HEAD. If that fails, returns an empty string.
-  defmacrop get_describe do
+  defmacrop get_revision do
     dirpath = :filename.join(__DIR__, "../../../.git")
     case :file.read_file_info(dirpath) do
       {:ok, _} ->
         if :os.find_executable('git') do
-          data = :os.cmd('git describe --always --tags')
+          data = :os.cmd('git rev-parse --short HEAD')
           strip_re(data, "\n")
         else
           read_stripped(:filename.join(".git", "HEAD"))
@@ -48,6 +48,21 @@ defmodule System do
   end
 
   @doc """
+  Returns the endianness.
+  """
+  def endianness do
+    :erlang.system_info(:endian)
+  end
+
+  @doc """
+  Returns the endianness the system was compiled with.
+  """
+  @endianness :erlang.system_info(:endian)
+  def compiled_endianness do
+    @endianness
+  end
+
+  @doc """
   Elixir version information.
 
   Returns Elixir's version as binary.
@@ -58,11 +73,11 @@ defmodule System do
   @doc """
   Elixir build information.
 
-  Returns a keyword list with Elixir version, git tag info and compilation date.
+  Returns a keyword list with Elixir version, git short revision hash and compilation date.
   """
   @spec build_info() :: map
   def build_info do
-    %{version: version, tag: get_describe, date: get_date}
+    %{version: version, date: get_date, revision: get_revision}
   end
 
   @doc """
@@ -284,9 +299,9 @@ defmodule System do
   Sets a new value for each environment variable corresponding
   to each key in `dict`.
   """
-  @spec put_env(Dict.t) :: :ok
-  def put_env(dict) do
-    Enum.each dict, fn {key, val} -> put_env key, val end
+  @spec put_env(Enumerable.t) :: :ok
+  def put_env(enum) do
+    Enum.each enum, fn {key, val} -> put_env key, val end
   end
 
   @doc """
@@ -367,13 +382,13 @@ defmodule System do
   and the command exit status.
 
   ## Examples
-  
+
       iex> System.cmd "echo", ["hello"]
       {"hello\n", 0}
 
       iex> System.cmd "echo", ["hello"], env: [{"MIX_ENV", "test"}]
       {"hello\n", 0}
-      
+
       iex> System.cmd "echo", ["hello"], into: IO.stream(:stdio, :line)
       hello
       {%IO.Stream{}, 0}
@@ -437,7 +452,16 @@ defmodule System do
 
     {into, opts} = cmd_opts(opts, [:use_stdio, :exit_status, :binary, :hide, args: args], "")
     {initial, fun} = Collectable.into(into)
-    do_cmd Port.open({:spawn_executable, cmd}, opts), initial, fun
+    try do
+      do_cmd Port.open({:spawn_executable, cmd}, opts), initial, fun
+    catch
+      kind, reason ->
+        stacktrace = System.stacktrace
+        fun.(initial, :halt)
+        :erlang.raise(kind, reason, stacktrace)
+    else
+      {acc, status} -> {fun.(acc, :done), status}
+    end
   end
 
   defp do_cmd(port, acc, fun) do
@@ -445,7 +469,7 @@ defmodule System do
       {^port, {:data, data}} ->
         do_cmd(port, fun.(acc, {:cont, data}), fun)
       {^port, {:exit_status, status}} ->
-        {fun.(acc, :done), status}
+        {acc, status}
     end
   end
 
@@ -478,10 +502,144 @@ defmodule System do
 
   defp validate_env(enum) do
     Enum.map enum, fn
+      {k, nil} ->
+        {String.to_char_list(k), false}
       {k, v} ->
         {String.to_char_list(k), String.to_char_list(v)}
       other ->
         raise ArgumentError, "invalid environment key-value #{inspect other}"
     end
+  end
+
+  @doc """
+  Returns the current monotonic time in the `:native` time unit.
+
+  This time is monotonically increasing and starts in an unspecified point in
+  time.
+
+  For more information, see the [chapter on time and time
+  correction](http://www.erlang.org/doc/apps/erts/time_correction.html) in the
+  Erlang docs.
+
+  Inlined by the compiler into `:erlang.monotonic_time/0`.
+  """
+  @spec monotonic_time() :: integer
+  def monotonic_time do
+    :erlang.monotonic_time()
+  end
+
+  @doc """
+  Returns the current monotonic time in the given time unit.
+
+  For more information, see the [chapter on time and time
+  correction](http://www.erlang.org/doc/apps/erts/time_correction.html) in the
+  Erlang docs.
+
+  Inlined by the compiler into `:erlang.monotonic_time/1`.
+  """
+  @spec monotonic_time(:erlang.time_unit) :: integer
+  def monotonic_time(unit) do
+    :erlang.monotonic_time(unit)
+  end
+
+  @doc """
+  Returns the current system time in the `:native` time unit.
+
+  For more information, see the [chapter on time and time
+  correction](http://www.erlang.org/doc/apps/erts/time_correction.html) in the
+  Erlang docs.
+
+  Inlined by the compiler into `:erlang.system_time/0`.
+  """
+  @spec system_time() :: integer
+  def system_time do
+    :erlang.system_time()
+  end
+
+  @doc """
+  Returns the current system time in the given time unit.
+
+  For more information, see the [chapter on time and time
+  correction](http://www.erlang.org/doc/apps/erts/time_correction.html) in the
+  Erlang docs.
+
+  Inlined by the compiler into `:erlang.system_time/1`.
+  """
+  @spec system_time(:erlang.time_unit) :: integer
+  def system_time(unit) do
+    :erlang.system_time(unit)
+  end
+
+  @doc """
+  Converts `time` from time unit `from_unit` to time unit `to_unit`. The result
+  is rounded via the floor function.
+
+  Inlined by the compiler into `:erlang.convert_time_unit/3`.
+  """
+  @spec convert_time_unit(integer, :erlang.time_unit, :erlang.time_unit) :: integer
+  def convert_time_unit(time, from_unit, to_unit) do
+    :erlang.convert_time_unit(time, from_unit, to_unit)
+  end
+
+  @doc """
+  Returns the current time offset between the Erlang monotonic time and the
+  Erlang system time.
+
+  The result is returned in the `:native` time unit.
+
+  See `time_offset/1` for more information.
+
+  Inlined by the compiler into `:erlang.time_offset/0`.
+  """
+  @spec time_offset() :: integer
+  def time_offset do
+    :erlang.time_offset()
+  end
+
+  @doc """
+  Returns the current time offset between the Erlang monotonic time and the
+  Erlang system time.
+
+  The result is returned in the given time unit `unit`. The returned offset,
+  added to an Erlang monotonic time (e.g., obtained with `monotonic_time/1`),
+  gives the Erlang system time that corresponds to that monotonic time.
+
+  For more information, see the [chapter on time and time
+  correction](http://www.erlang.org/doc/apps/erts/time_correction.html) in the
+  Erlang docs.
+
+  Inlined by the compiler into `:erlang.time_offset/1`.
+  """
+  @spec time_offset(:erlang.time_unit) :: integer
+  def time_offset(unit) do
+    :erlang.time_offset(unit)
+  end
+
+  @doc """
+  Generates and returns an integer that is unique in the current runtime
+  instance.
+
+  "Unique" means that this function, called with the same list of `modifiers`,
+  will never return the same integer more than once on the current runtime
+  instance.
+
+  If `modifiers` is `[]`, then an unique integer (that can be positive or negative) is returned.
+  Other modifiers can be passed to change the properties of the returned integer:
+
+    * `:positive` - the returned integer is guaranteed to be positive.
+    * `:monotonic` - the returned integer is monotonically increasing. This
+      means that, on the same runtime instance (but even on different
+      processes), integers returned using the `:monotonic` modifier will always
+      be strictly less than integers returned by successive calls with the
+      `:monotonic` modifier.
+
+  All modifiers listed above can be combined; repeated modifiers in `modifiers`
+  will be ignored.
+
+  Inlined by the compiler into `:erlang.unique_integer/1`.
+  """
+  @spec unique_integer([:positive | :monotonic]) :: integer
+  def unique_integer(modifiers \\ []) do
+    :erlang.unique_integer(modifiers)
   end
 end

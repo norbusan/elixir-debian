@@ -5,9 +5,20 @@ defmodule IEx.Helpers do
   which provides many helpers to make Elixir's shell
   more joyful to work with.
 
-  This message was triggered by invoking the helper
-  `h()`, usually referred to as `h/0` (since it expects 0
-  arguments).
+  This message was triggered by invoking the helper `h()`,
+  usually referred to as `h/0` (since it expects 0 arguments).
+
+  You can use the `h` function to invoke the documentation
+  for any Elixir module or function:
+
+      h Enum
+      h Enum.map
+      h Enum.reverse/1
+
+  You can also use the `i` function to introspect any value
+  you have in the shell:
+
+      i "hello"
 
   There are many other helpers available:
 
@@ -18,35 +29,24 @@ defmodule IEx.Helpers do
     * `flush/0`       - flushes all messages sent to the shell
     * `h/0`           - prints this help message
     * `h/1`           - prints help for the given module, function or macro
+    * `i/1`           - prints information about the given data type
     * `import_file/1` - evaluates the given file in the shell's context
     * `l/1`           - loads the given module's beam code
     * `ls/0`          - lists the contents of the current directory
     * `ls/1`          - lists the contents of the specified directory
-    * `pid/3`         - creates a PID with the 3 integer arguments passed
-    * `pwd/0`         - prints the current working directory
-    * `r/1`           - recompiles and reloads the given module
-    * `recompile/0`   - recompiles the current Mix project (requires iex -S mix)
-    * `respawn/0`     - respawns a new IEx shell
-    * `s/1`           - prints spec information
-    * `t/1`           - prints type information
-    * `v/0`           - retrieves the last value from the history
-    * `v/1`           - retrieves the nth value from the history
+    * `pid/3`         — creates a PID with the 3 integer arguments passed
+    * `pwd/0`         — prints the current working directory
+    * `r/1`           — recompiles and reloads the given module's source file
+    * `respawn/0`     — respawns the current shell
+    * `s/1`           — prints spec information
+    * `t/1`           — prints type information
+    * `v/0`           — retrieves the last value from the history
+    * `v/1`           — retrieves the nth value from the history
 
-  Help for functions in this module can be consulted
-  directly from the command line, as an example, try:
+  Help for all of those functions can be consulted directly from
+  the command line using the `h` helper itself. Try:
 
-      h(c/2)
-
-  You can also retrieve the documentation for any module
-  or function. Try these:
-
-      h(Enum)
-      h(Enum.reverse/1)
-
-  To discover all available functions for a module, type the module name
-  followed by a dot, then press tab to trigger autocomplete. For example:
-
-      Enum.
+      h(v/0)
 
   To learn more about IEx as a whole, just type `h(IEx)`.
   """
@@ -78,9 +78,14 @@ defmodule IEx.Helpers do
     if mix_started? do
       config = Mix.Project.config
       reenable_tasks(config)
-      apps = stop_apps(config)
-      Mix.Task.run("app.start")
-      {:restarted, apps}
+      case stop_apps(config) do
+        {true, apps} ->
+          Mix.Task.run("app.start")
+          {:restarted, apps}
+        {false, apps} ->
+          Mix.Task.run("app.start", ["--no-start"])
+          {:recompiled, apps}
+      end
     else
       IO.puts IEx.color(:eval_error, "Mix is not running. Please start IEx with: iex -S mix")
       :error
@@ -109,8 +114,11 @@ defmodule IEx.Helpers do
         true ->
           []
       end
-    apps |> Enum.reverse |> Enum.each(&Application.stop/1)
-    apps
+    stopped? =
+      Enum.reverse(apps)
+      |> Enum.all?(&match?({:error, {:not_started, &1}}, Application.stop(&1)))
+      |> Kernel.not
+    {stopped?, apps}
   end
 
   @doc """
@@ -405,6 +413,21 @@ defmodule IEx.Helpers do
   end
 
   @doc """
+  Prints information about the given data type.
+  """
+  def i(term) do
+    info = ["Term": inspect(term)] ++ IEx.Info.info(term)
+
+    for {subject, info} <- info do
+      info = info |> to_string() |> String.strip() |> String.replace("\n", "\n  ")
+      IO.puts IEx.color(:eval_result, to_string(subject))
+      IO.puts IEx.color(:eval_info, "  #{info}")
+    end
+
+    dont_display_result
+  end
+
+  @doc """
   Flushes all messages sent to the shell and prints them out.
   """
   def flush do
@@ -435,6 +458,7 @@ defmodule IEx.Helpers do
   """
   def pwd do
     IO.puts IEx.color(:eval_info, System.cwd!)
+    dont_display_result
   end
 
   @doc """
@@ -446,6 +470,7 @@ defmodule IEx.Helpers do
       {:error, :enoent} ->
         IO.puts IEx.color(:eval_error, "No directory #{directory}")
     end
+    dont_display_result()
   end
 
   @doc """
@@ -466,9 +491,10 @@ defmodule IEx.Helpers do
       {:error, :enotdir} ->
         IO.puts IEx.color(:eval_info, Path.absname(path))
     end
+    dont_display_result()
   end
 
-  defp expand_home(<<?~, rest :: binary>>) do
+  defp expand_home(<<?~, rest::binary>>) do
     System.user_home! <> rest
   end
 
@@ -597,14 +623,20 @@ defmodule IEx.Helpers do
   to the function.
 
   ## Examples
+
       iex> pid(0, 21, 32)
       #PID<0.21.32>
       iex> pid(0, 64, 2048)
       #PID<0.64.2048>
+
   """
   def pid(x, y, z) when is_integer(x) and x >= 0 and
                         is_integer(y) and y >= 0 and
                         is_integer(z) and z >= 0 do
-    :c.pid(x, y, z)
+    :erlang.list_to_pid(
+      '<' ++ Integer.to_char_list(x) ++ '.' ++
+             Integer.to_char_list(y) ++ '.' ++
+             Integer.to_char_list(z) ++ '>'
+    )
   end
 end

@@ -1,7 +1,7 @@
 defmodule Mix.SCM do
   @moduledoc """
   This module provides helper functions and defines the
-  behaviour required by any SCM used by mix.
+  behaviour required by any SCM used by Mix.
   """
 
   @type opts :: Keyword.t
@@ -82,7 +82,9 @@ defmodule Mix.SCM do
   @doc """
   This behaviour function checks the status of the lock. In
   particular, it checks if the revision stored in the lock
-  is the same as the repository it is currently in. It may return:
+  is the same as the repository it is currently in.
+
+  It may return:
 
     * `:mismatch` - if the lock doesn't match and we need to
       simply move to the latest lock
@@ -100,7 +102,7 @@ defmodule Mix.SCM do
   structural check is required. A structural mismatch should always
   return `:outdated`.
   """
-  @callback lock_status(opts) :: :mismatch | :outdated | :ok
+  @callback lock_status(opts) :: :mismatch | :outdated | :nolock | :ok
 
   @doc """
   Receives two options and must return `true` if they refer to the
@@ -108,6 +110,13 @@ defmodule Mix.SCM do
   same SCM.
   """
   @callback equal?(opts1 :: opts, opts2 :: opts) :: boolean
+
+  @doc """
+  Returns the usable managers for the dependency. This can be used
+  if the SCM has extra knowledge of the dependency, otherwise it
+  should return an empty list.
+  """
+  @callback managers(opts) :: [atom]
 
   @doc """
   Returns all available SCMs. Each SCM is tried in order
