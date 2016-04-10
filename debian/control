@@ -5,6 +5,7 @@ Maintainer: Antonio Terceiro <terceiro@debian.org>
 Uploaders: Evgeny Golyshev <eugulixes@gmail.com>
 Build-Depends: debhelper (>= 9~),
                erlang-dev (>= 1:18),
+               erlang-dialyzer (>= 1:18),
                erlang-eunit (>= 1:18),
                erlang-parsetools (>= 1:18),
                git,
