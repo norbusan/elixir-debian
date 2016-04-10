@@ -114,16 +114,26 @@ defmodule ExUnit.Case do
   The following tags are set automatically by ExUnit and are
   therefore reserved:
 
-    * `:case` - the test case module
-    * `:test` - the test name
-    * `:line` - the line on which the test was defined
-    * `:file` - the file on which the test was defined
+    * `:case`  - the test case module
+    * `:test`  - the test name
+    * `:line`  - the line on which the test was defined
+    * `:file`  - the file on which the test was defined
+    * `:async` - if the test case is in async mode
 
   The following tags customize how tests behaves:
 
-    * `:capture_log` - see Log Capture below.
+    * `:capture_log` - see the "Log Capture" section below
     * `:skip` - skips the test with the given reason
     * `:timeout` - customizes the test timeout in milliseconds (defaults to 30000)
+    * `:report` - include the given tags on error reports, see the "Reporting tags" section
+
+  ### Reporting tags
+
+  ExUnit also allows tags to be included in error reports, making
+  it easy for developers to see under which circunstances a test
+  was evaluated. To do so, you use the `:report` tag:
+
+      @moduletag report: [:user_id]
 
   ## Filters
 
@@ -154,7 +164,7 @@ defmodule ExUnit.Case do
 
   ## Log Capture
 
-  ExUnit can optionally supress printing of log messages that are generated during a test. Log
+  ExUnit can optionally suppress printing of log messages that are generated during a test. Log
   messages generated while running a test are captured and only if the test fails are they printed
   to aid with debugging.
 
@@ -165,12 +175,14 @@ defmodule ExUnit.Case do
 
   This default can be overriden by `@tag capture_log: false` or `@moduletag capture_log: false`.
 
-  Since `setup_all` blocks don't belong to a specific test, log messages generated in them (or 
-  between tests) are never captured. If you want to supress these messages as well, remove the
+  Since `setup_all` blocks don't belong to a specific test, log messages generated in them (or
+  between tests) are never captured. If you want to suppress these messages as well, remove the
   console backend globally:
 
       config :logger, backends: []
   """
+
+  @reserved [:case, :test, :file, :line]
 
   @doc false
   defmacro __using__(opts) do
@@ -182,20 +194,16 @@ defmodule ExUnit.Case do
     end
 
     quote do
+      async = !!unquote(async)
+
       unless Module.get_attribute(__MODULE__, :ex_unit_tests) do
         Enum.each [:ex_unit_tests, :tag, :moduletag],
           &Module.register_attribute(__MODULE__, &1, accumulate: true)
 
-        if unquote(async) do
-          @moduletag async: true
-          ExUnit.Server.add_async_case(__MODULE__)
-        else
-          @moduletag async: false
-          ExUnit.Server.add_sync_case(__MODULE__)
-        end
-
+        @moduletag async: async
         @before_compile ExUnit.Case
-        @ex_unit_test_names HashSet.new
+        @ex_unit_test_names %{}
+        @ex_unit_async async
         use ExUnit.Callbacks
       end
 
@@ -228,12 +236,12 @@ defmodule ExUnit.Case do
       case contents do
         [do: block] ->
           quote do
-            _ = unquote(block)
+            unquote(block)
             :ok
           end
         _ ->
           quote do
-            _ = try(unquote(contents))
+            try(unquote(contents))
             :ok
           end
       end
@@ -243,7 +251,7 @@ defmodule ExUnit.Case do
 
     quote bind_quoted: binding do
       test = :"test #{message}"
-      ExUnit.Case.__on_definition__(__ENV__, test)
+      ExUnit.Case.__on_definition__(__ENV__, test, [])
       def unquote(test)(unquote(var)), do: unquote(contents)
     end
   end
@@ -273,6 +281,12 @@ defmodule ExUnit.Case do
   @doc false
   defmacro __before_compile__(_) do
     quote do
+      if @ex_unit_async do
+        ExUnit.Server.add_async_case(__MODULE__)
+      else
+        ExUnit.Server.add_sync_case(__MODULE__)
+      end
+
       def __ex_unit__(:case) do
         %ExUnit.TestCase{name: __MODULE__, tests: @ex_unit_tests}
       end
@@ -280,8 +294,7 @@ defmodule ExUnit.Case do
   end
 
   @doc false
-  def __on_definition__(env, name, tags \\ []) do
-    mod = env.module
+  def __on_definition__(%{module: mod, file: file, line: line}, name, tags) do
     moduletag = Module.get_attribute(mod, :moduletag)
 
     unless moduletag do
@@ -289,24 +302,35 @@ defmodule ExUnit.Case do
             "\"use ExUnit.Case\" in the current module"
     end
 
-    tags = tags ++ Module.get_attribute(mod, :tag) ++ moduletag
-    tags = tags |> normalize_tags |> Map.merge(%{line: env.line, file: env.file})
+    tags =
+      (tags ++ Module.get_attribute(mod, :tag) ++ moduletag)
+      |> normalize_tags
+      |> validate_tags
+      |> Map.merge(%{line: line, file: file})
 
     test = %ExUnit.Test{name: name, case: mod, tags: tags}
     test_names = Module.get_attribute(mod, :ex_unit_test_names)
 
-    unless name in test_names do
+    unless Map.has_key?(test_names, name) do
       Module.put_attribute(mod, :ex_unit_tests, test)
-      Module.put_attribute(mod, :ex_unit_test_names, HashSet.put(test_names, name))
+      Module.put_attribute(mod, :ex_unit_test_names, Map.put(test_names, name, true))
     end
 
     Module.delete_attribute(mod, :tag)
   end
 
+  defp validate_tags(tags) do
+    for tag <- @reserved,
+        Map.has_key?(tags, tag) do
+      raise "cannot set tag #{inspect tag} because it is reserved by ExUnit"
+    end
+    tags
+  end
+
   defp normalize_tags(tags) do
     Enum.reduce Enum.reverse(tags), %{}, fn
       tag, acc when is_atom(tag) -> Map.put(acc, tag, true)
-      tag, acc when is_list(tag) -> Dict.merge(acc, tag)
+      tag, acc when is_list(tag) -> tag |> Enum.into(acc)
     end
   end
 end

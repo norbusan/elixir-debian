@@ -59,7 +59,7 @@ defmodule MixTest.Case do
   end
 
   def tmp_path(extension) do
-    Path.join tmp_path, extension
+    Path.join tmp_path, to_string(extension)
   end
 
   def purge(modules) do
@@ -141,16 +141,23 @@ end
 
 home = MixTest.Case.tmp_path(".mix")
 File.mkdir_p!(home)
+System.put_env("MIX_HOME", home)
+
 rebar = System.get_env("REBAR") || Path.expand("../../../rebar", __DIR__)
 File.cp!(rebar, Path.join(home, "rebar"))
-System.put_env("MIX_HOME", home)
+rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
+File.cp!(rebar, Path.join(home, "rebar3"))
 
 ## Copy fixtures to tmp
 
-source = MixTest.Case.fixture_path("rebar_dep")
-dest = MixTest.Case.tmp_path("rebar_dep")
-File.mkdir_p!(dest)
-File.cp_r!(source, dest)
+fixtures = ~w(rebar_dep rebar_override)
+
+Enum.each(fixtures, fn fixture ->
+  source = MixTest.Case.fixture_path(fixture)
+  dest = MixTest.Case.tmp_path(fixture)
+  File.mkdir_p!(dest)
+  File.cp_r!(source, dest)
+end)
 
 ## Generate Git repo fixtures
 
@@ -175,7 +182,7 @@ unless File.dir?(target) do
 
   File.write! Path.join(target, "mix.exs"), """
   ## Auto-generated fixture
-  defmodule GitRepo.Mix do
+  defmodule GitRepo.Mixfile do
     use Mix.Project
 
     def project do
@@ -212,13 +219,13 @@ unless File.dir?(target) do
 
   File.write! Path.join(target, "mix.exs"), """
   ## Auto-generated fixture
-  defmodule DepsOnGitRepo.Mix do
+  defmodule DepsOnGitRepo.Mixfile do
     use Mix.Project
 
     def project do
-      [ app: :deps_on_git_repo,
-        version: "0.2.0",
-        deps: [{:git_repo, git: MixTest.Case.fixture_path("git_repo")}] ]
+      [app: :deps_on_git_repo,
+       version: "0.2.0",
+       deps: [{:git_repo, git: MixTest.Case.fixture_path("git_repo")}]]
     end
   end
   """
@@ -268,7 +275,7 @@ unless File.dir?(target) do
   end
 end
 
-Enum.each [:invalidapp, :invalidvsn, :noappfile, :ok], fn(dep) ->
+Enum.each [:invalidapp, :invalidvsn, :noappfile, :nosemver, :ok], fn(dep) ->
   File.mkdir_p! Path.expand("fixtures/deps_status/deps/#{dep}/.git", __DIR__)
 end
 

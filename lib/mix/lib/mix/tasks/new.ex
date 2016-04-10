@@ -117,7 +117,7 @@ defmodule Mix.Tasks.New do
   end
 
   defp do_generate_umbrella(_app, mod, path, _opts) do
-    assigns = [mod: mod]
+    assigns = [app: nil, mod: mod]
 
     create_file ".gitignore", gitignore_text
     create_file "README.md", readme_template(assigns)
@@ -126,8 +126,7 @@ defmodule Mix.Tasks.New do
     create_directory "apps"
 
     create_directory "config"
-    create_file "config/config.exs",
-      config_umbrella_template(assigns)
+    create_file "config/config.exs", config_umbrella_template(assigns)
 
     Mix.shell.info """
 
@@ -197,7 +196,7 @@ defmodule Mix.Tasks.New do
   # <%= @mod %>
 
   **TODO: Add description**
-
+  <%= if @app do %>
   ## Installation
 
   If [available in Hex](https://hex.pm/docs/publish), the package can be installed as:
@@ -213,6 +212,7 @@ defmodule Mix.Tasks.New do
           def application do
             [applications: [:<%= @app %>]]
           end
+  <% end %>
   """
 
   embed_text :gitignore, """
@@ -265,6 +265,8 @@ defmodule Mix.Tasks.New do
     def project do
       [app: :<%= @app %>,
        version: "0.0.1",
+       build_path: "../../_build",
+       config_path: "../../config/config.exs",
        deps_path: "../../deps",
        lockfile: "../../mix.lock",
        elixir: "~> <%= @version %>",
@@ -366,10 +368,11 @@ defmodule Mix.Tasks.New do
   # and its dependencies with the aid of the Mix.Config module.
   use Mix.Config
 
-  # The configuration defined here will only affect the dependencies
-  # in the apps directory when commands are executed from the umbrella
-  # project. For this reason, it is preferred to configure each child
-  # application directly and import its configuration, as done below.
+  # By default, the umbrella project as well as each child
+  # application will require this configuration file, ensuring
+  # they all use the same configuration. While one could
+  # configure all applications here, we prefer to delegate
+  # back to each application for organization purposes.
   import_config "../apps/*/config/config.exs"
 
   # Sample configuration (overrides the imported configuration above):

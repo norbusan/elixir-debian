@@ -11,6 +11,16 @@ alias ExUnit.AssertionsTest.Value
 defmodule ExUnit.AssertionsTest do
   use ExUnit.Case, async: true
 
+  defmacrop assert_ok(arg) do
+    quote do
+      assert {:ok, val} = ok(unquote(arg))
+    end
+  end
+
+  test "assert inside macro" do
+    assert_ok 42
+  end
+
   test "assert with true value" do
     true = assert Value.truthy
   end
@@ -112,6 +122,13 @@ defmodule ExUnit.AssertionsTest do
     :hello = assert_received :hello
   end
 
+  @received :hello
+
+  test "assert received with module attribute" do
+    send self, :hello
+    :hello = assert_received @received
+  end
+
   test "assert received with pinned variable" do
     status = :valid
     send self(), {:status, :invalid}
@@ -124,6 +141,46 @@ defmodule ExUnit.AssertionsTest do
         "  status = :valid\n" <>
         "Process mailbox:\n" <>
         "  {:status, :invalid}" = error.message
+    end
+  end
+
+  test "assert received with multiple identical pinned variables" do
+    status = :valid
+    send self(), {:status, :invalid, :invalid}
+    try do
+      "This should never be tested" = assert_received {
+        :status,
+        ^status,
+        ^status
+      }
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "No message matching {:status, ^status, ^status} after 0ms.\n" <>
+        "The following variables were pinned:\n" <>
+        "  status = :valid\n" <>
+        "Process mailbox:\n" <>
+        "  {:status, :invalid, :invalid}" = error.message
+    end
+  end
+
+  test "assert received with multiple unique pinned variables" do
+    status = :valid
+    other_status = :invalid
+    send self(), {:status, :invalid, :invalid}
+    try do
+      "This should never be tested" = assert_received {
+        :status,
+        ^status,
+        ^other_status
+      }
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "No message matching {:status, ^status, ^other_status} after 0ms.\n" <>
+        "The following variables were pinned:\n" <>
+        "  status = :valid\n" <>
+        "  other_status = :invalid\n" <>
+        "Process mailbox:\n" <>
+        "  {:status, :invalid, :invalid}" = error.message
     end
   end
 
@@ -220,9 +277,14 @@ defmodule ExUnit.AssertionsTest do
     {:ok, true} = assert {:ok, _} = ok(true)
   end
 
+  test "assert match with bitstrings" do
+    "foobar" = assert "foo" <> bar = "foobar"
+    "bar" = bar
+  end
+
   test "assert match when no match" do
     try do
-      "This should never be tested" = assert {:ok, _} = error(true)
+      assert {:ok, _} = error(true)
     rescue
       error in [ExUnit.AssertionError] ->
         "match (=) failed"       = error.message
@@ -233,7 +295,7 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert match when falsy but not match" do
     try do
-      "This should never be tested" = assert {:ok, _x} = nil
+      assert {:ok, _x} = nil
     rescue
       error in [ExUnit.AssertionError] ->
         "match (=) failed" = error.message
@@ -244,7 +306,7 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert match when falsy" do
     try do
-      "This should never be tested" = assert _x = nil
+      assert _x = nil
     rescue
       error in [ExUnit.AssertionError] ->
         "Expected truthy, got nil" = error.message
@@ -292,7 +354,7 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert raise with no error" do
     "This should never be tested" = assert_raise ArgumentError, fn ->
-      # nothing
+      nil
     end
   rescue
     error in [ExUnit.AssertionError] ->
@@ -314,7 +376,7 @@ defmodule ExUnit.AssertionsTest do
   rescue
     error in [ExUnit.AssertionError] ->
       "Expected exception ArgumentError but got UndefinedFunctionError " <>
-      "(undefined function: Not.Defined.function/3 (module Not.Defined is not available))" = error.message
+      "(undefined function Not.Defined.function/3 (module Not.Defined is not available))" = error.message
   end
 
   test "assert raise with some other error includes stacktrace from original error" do

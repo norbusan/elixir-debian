@@ -6,10 +6,10 @@
 %% Public API
 
 get_opt(Key) ->
-  Dict = elixir_config:get(compiler_options),
-  case lists:keyfind(Key, 1, Dict) of
-    false -> false;
-    {Key, Value} -> Value
+  Map = elixir_config:get(compiler_options),
+  case maps:find(Key, Map) of
+    {ok, Value} -> Value;
+    error -> false
   end.
 
 %% Compilation entry points.
@@ -67,7 +67,7 @@ eval_compilation(Forms, Vars, E) ->
   {Result, EE}.
 
 code_loading_compilation(Forms, Vars, #{line := Line} = E) ->
-  Dict = [{{Name, Kind}, {Value, 0}} || {Name, Kind, Value, _} <- Vars],
+  Dict = [{{Name, Kind}, {Value, 0, true}} || {Name, Kind, Value, _} <- Vars],
   S = elixir_env:env_to_scope_with_vars(E, Dict),
   {Expr, EE, _S} = elixir:quoted_to_erl(Forms, E, S),
 
@@ -78,9 +78,8 @@ code_loading_compilation(Forms, Vars, #{line := Line} = E) ->
 
   %% Pass {native, false} to speed up bootstrap
   %% process when native is set to true
-  AllOpts   = options(),
-  FinalOpts = AllOpts -- [native, warn_missing_spec],
-  inner_module(Form, FinalOpts, true, E, fun(_, Binary) ->
+  ErlOpts = options() -- [native, warn_missing_spec],
+  inner_module(Form, ErlOpts, [{bootstrap, true}], E, fun(_, Binary) ->
     %% If we have labeled locals, anonymous functions
     %% were created and therefore we cannot ditch the
     %% module
@@ -169,22 +168,32 @@ allows_fast_compilation(_) -> false.
 %% executes the callback in case of success. This automatically
 %% handles errors and warnings. Used by this module and elixir_module.
 module(Forms, Opts, E, Callback) ->
-  Final =
-    case (get_opt(debug_info) == true) orelse
-         lists:member(debug_info, Opts) of
-      true  -> [debug_info] ++ options();
-      false -> options()
+  ErlOpts =
+    case proplists:get_value(debug_info, Opts) of
+      true -> [debug_info];
+      false -> [];
+      undefined ->
+        case get_opt(debug_info) of
+          true  -> [debug_info];
+          false -> []
+        end
     end,
-  inner_module(Forms, Final, false, E, Callback).
+  inner_module(Forms, ErlOpts ++ options(), Opts, E, Callback).
 
-inner_module(Forms, Options, Bootstrap, #{file := File} = E, Callback) when
-    is_list(Forms), is_list(Options), is_boolean(Bootstrap), is_function(Callback) ->
+inner_module(Forms, ErlOpts, ExOpts, #{file := File} = E, Callback) when
+    is_list(Forms), is_list(ErlOpts), is_list(ExOpts), is_function(Callback) ->
   Source = elixir_utils:characters_to_list(File),
+  Autoload = proplists:get_value(autoload, ExOpts, true),
+  Bootstrap = proplists:get_value(bootstrap, ExOpts, false),
 
-  case compile:noenv_forms([no_auto_import()|Forms], [return, {source, Source}|Options]) of
+  case compile:noenv_forms([no_auto_import()|Forms], [return, {source, Source}|ErlOpts]) of
     {ok, Module, Binary, Warnings} ->
       format_warnings(Bootstrap, Warnings),
-      {module, Module} = code:load_binary(Module, beam_location(E), Binary),
+      {module, Module} =
+        case Autoload of
+          true  -> code:load_binary(Module, beam_location(E), Binary);
+          false -> {module, Module}
+        end,
       Callback(Module, Binary);
     {error, Errors, Warnings} ->
       format_warnings(Bootstrap, Warnings),
@@ -207,9 +216,7 @@ no_auto_import() ->
 
 core() ->
   {ok, _} = application:ensure_all_started(elixir),
-  New = orddict:from_list([{docs, false}, {internal, true}]),
-  Merge = fun(_, _, Value) -> Value end,
-  Update = fun(Old) -> orddict:merge(Merge, Old, New) end,
+  Update = fun(Old) -> maps:merge(Old, #{docs => false, internal => true}) end,
   _ = elixir_config:update(compiler_options, Update),
   [core_file(File) || File <- core_main()].
 
@@ -233,8 +240,8 @@ core_main() ->
    <<"lib/elixir/lib/macro.ex">>,
    <<"lib/elixir/lib/code.ex">>,
    <<"lib/elixir/lib/module/locals_tracker.ex">>,
-   <<"lib/elixir/lib/kernel/def.ex">>,
    <<"lib/elixir/lib/kernel/typespec.ex">>,
+   <<"lib/elixir/lib/kernel/utils.ex">>,
    <<"lib/elixir/lib/behaviour.ex">>,
    <<"lib/elixir/lib/exception.ex">>,
    <<"lib/elixir/lib/protocol.ex">>,

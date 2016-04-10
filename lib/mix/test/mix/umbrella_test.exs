@@ -9,8 +9,8 @@ defmodule Mix.UmbrellaTest do
     in_fixture "umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project(:umbrella, ".", fn _ ->
         Mix.Task.run "deps"
-        assert_received {:mix_shell, :info, ["* bar (apps/bar)"]}
-        assert_received {:mix_shell, :info, ["* foo (apps/foo)"]}
+        assert_received {:mix_shell, :info, ["* bar (apps/bar) (mix)"]}
+        assert_received {:mix_shell, :info, ["* foo (apps/foo) (mix)"]}
 
         # Ensure we can compile and run checks
         Mix.Task.run "deps.compile"
@@ -34,22 +34,45 @@ defmodule Mix.UmbrellaTest do
     end
   end
 
-  test "compiles umbrella with protocol consolidation" do
+  test "compiles umbrella with protocol consolidation (via build embedded)" do
     in_fixture "umbrella_dep/deps/umbrella", fn ->
-      Mix.Project.in_project(:umbrella, ".", [consolidate_protocols: true], fn _ ->
+      Mix.Project.in_project(:umbrella, ".", [build_embedded: true], fn _ ->
+        assert_raise Mix.Error, ~r"Cannot execute task because the project was not yet compiled", fn ->
+          Mix.Tasks.App.Start.run []
+        end
+
         Mix.Task.run "compile"
 
         assert_received {:mix_shell, :info, ["Generated bar app"]}
         assert_received {:mix_shell, :info, ["Generated foo app"]}
-        assert_received {:mix_shell, :info, ["Consolidated Enumerable"]}
         assert File.regular? "_build/dev/consolidated/Elixir.Enumerable.beam"
+        purge [Enumerable]
 
-        assert Mix.Task.run "app.start"
+        assert Mix.Tasks.App.Start.run []
         assert Protocol.consolidated?(Enumerable)
       end)
     end
-  after
-    purge [Enumerable]
+  end
+
+  test "recursive compiles umbrella with protocol consolidation" do
+    in_fixture "umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", [build_embedded: true], fn _ ->
+        defmodule Elixir.Mix.Tasks.Umbrella.Recur do
+          use Mix.Task
+          @recursive true
+          def run(_), do: Mix.Task.run "compile"
+        end
+
+        Mix.Task.run "umbrella.recur"
+        assert_received {:mix_shell, :info, ["Generated bar app"]}
+        assert_received {:mix_shell, :info, ["Generated foo app"]}
+        assert File.regular? "_build/dev/consolidated/Elixir.Enumerable.beam"
+        purge [Enumerable]
+
+        assert Mix.Tasks.App.Start.run []
+        assert Protocol.consolidated?(Enumerable)
+      end)
+    end
   end
 
   defmodule UmbrellaDeps do
@@ -75,12 +98,73 @@ defmodule Mix.UmbrellaTest do
     end
   end
 
+  test "loads umbrella child dependencies in all environments" do
+    in_fixture "umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project :umbrella, ".", fn _ ->
+        File.write! "apps/bar/mix.exs", """
+        defmodule Bar.Mixfile do
+          use Mix.Project
+
+          def project do
+            [app: :bar,
+             version: "0.1.0",
+             deps: [{:git_repo, git: MixTest.Case.fixture_path("git_repo"), only: :other}]]
+          end
+        end
+        """
+
+        # Does not fetch when filtered
+        Mix.Tasks.Deps.Get.run ["--only", "dev"]
+        refute_received {:mix_shell, :info, ["* Getting git_repo" <> _]}
+
+        # But works across all environments
+        Mix.Tasks.Deps.Get.run []
+        assert_received {:mix_shell, :info, ["* Getting git_repo" <> _]}
+
+        # Does not show by default
+        Mix.Tasks.Deps.run []
+        refute_received {:mix_shell, :info, ["* git_repo" <> _]}
+
+        # But shows on proper environment
+        Mix.env(:other)
+        Mix.Tasks.Deps.run []
+        assert_received {:mix_shell, :info, ["* git_repo " <> _]}
+      end
+    end
+  after
+    Mix.env(:test)
+  end
+
+  test "loads umbrella child dependencies in umbrellas" do
+    in_fixture "umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project :umbrella, ".", fn _ ->
+        File.write! "apps/bar/mix.exs", """
+        defmodule Bar.Mixfile do
+          use Mix.Project
+
+          def project do
+            [app: :bar,
+             version: "0.1.0",
+             deps: [{:foo, in_umbrella: true}]]
+          end
+        end
+        """
+
+        # Running from umbrella should not cause conflicts
+        Mix.Tasks.Deps.Get.run []
+        Mix.Tasks.Run.run []
+      end
+    end
+  end
+
+  ## Umbrellas as a dependency
+
   test "list deps for umbrella as dependency" do
     in_fixture("umbrella_dep", fn ->
       Mix.Project.in_project(:umbrella_dep, ".", fn _ ->
         Mix.Task.run "deps"
-        assert_received {:mix_shell, :info, ["* umbrella (deps/umbrella)"]}
-        assert_received {:mix_shell, :info, ["* foo (apps/foo)"]}
+        assert_received {:mix_shell, :info, ["* umbrella (deps/umbrella) (mix)"]}
+        assert_received {:mix_shell, :info, ["* foo (apps/foo) (mix)"]}
       end)
     end)
   end
@@ -116,32 +200,32 @@ defmodule Mix.UmbrellaTest do
     in_fixture "umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project :umbrella, ".", fn _ ->
         File.write! "apps/foo/mix.exs", """
-        defmodule Foo.Mix do
+        defmodule Foo.Mixfile do
           use Mix.Project
 
           def project do
             # Ensure we have the proper environment
             :dev = Mix.env
 
-            [ app: :foo,
-              version: "0.1.0",
-              deps: [{:bar, in_umbrella: true}] ]
+            [app: :foo,
+             version: "0.1.0",
+             deps: [{:bar, in_umbrella: true}]]
           end
         end
         """
 
         File.write! "apps/bar/mix.exs", """
-        defmodule Bar.Mix do
+        defmodule Bar.Mixfile do
           use Mix.Project
 
           def project do
             # Ensure we have the proper environment
             :dev = Mix.env
 
-            [ app: :bar,
-              version: "0.1.0",
-              deps: [{:a, path: "deps/a"},
-                     {:b, path: "deps/b"}] ]
+            [app: :bar,
+             version: "0.1.0",
+             deps: [{:a, path: "deps/a"},
+                    {:b, path: "deps/b"}]]
           end
         end
         """
@@ -155,7 +239,7 @@ defmodule Mix.UmbrellaTest do
     in_fixture "umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project :umbrella, ".", fn _ ->
         File.write! "apps/bar/mix.exs", """
-        defmodule Bar.Mix do
+        defmodule Bar.Mixfile do
           use Mix.Project
 
           def project do
@@ -180,17 +264,30 @@ defmodule Mix.UmbrellaTest do
         assert Mix.Tasks.Compile.Elixir.run([]) == :noop
         assert_receive {:mix_shell, :info, ["Compiled lib/foo.ex"]}
         assert_receive {:mix_shell, :info, ["Compiled lib/bar.ex"]}
-        purge [Foo, Bar]
-        Mix.Task.clear
+        assert File.regular?("_build/dev/consolidated/Elixir.Enumerable.beam")
 
         # Ensure we can measure a timestamp difference
-        ensure_touched("../foo/lib/foo.ex",
+        ensure_touched("_build/dev/lib/foo/.compile.elixir",
                        File.stat!("_build/dev/lib/bar/.compile.lock").mtime)
+        ensure_touched("../foo/mix.exs",
+                       File.stat!("_build/dev/lib/foo/.compile.elixir").mtime)
 
-        Mix.Task.run "compile"
+        # Mark locks and protocols as outdated
+        File.touch!("_build/dev/lib/foo/.compile.elixir",
+                    {{2010, 1, 1}, {0, 0, 0}})
+        File.touch!("_build/dev/consolidated/Elixir.Enumerable.beam",
+                    {{2010, 1, 1}, {0, 0, 0}})
+
+        purge [Foo, Bar]
+        Mix.Task.clear
+        Mix.shell.flush
+
+        assert Mix.Task.run("compile") == :ok
         assert Mix.Tasks.Compile.Elixir.run([]) == :noop
         assert_receive {:mix_shell, :info, ["Compiled lib/foo.ex"]}
         assert_receive {:mix_shell, :info, ["Compiled lib/bar.ex"]}
+        assert File.stat!("_build/dev/consolidated/Elixir.Enumerable.beam").mtime >
+               {{2010, 1, 1}, {0, 0, 0}}
         purge [Foo, Bar]
       end)
     end)

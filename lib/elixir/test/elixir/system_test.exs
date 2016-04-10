@@ -6,9 +6,9 @@ defmodule SystemTest do
 
   test "build_info/0" do
     assert is_map System.build_info
-    assert not is_nil(System.build_info[:version])
-    assert not is_nil(System.build_info[:tag])
-    assert not is_nil(System.build_info[:date])
+    assert is_binary System.build_info[:version]
+    assert is_binary System.build_info[:revision]
+    assert is_binary System.build_info[:date]
   end
 
   test "cwd/0" do
@@ -38,6 +38,11 @@ defmodule SystemTest do
     assert is_binary System.tmp_dir!
   end
 
+  test "endianness/0" do
+    assert System.endianness in [:little, :big]
+    assert System.endianness == System.compiled_endianness
+  end
+
   test "argv/0" do
     list = elixir('-e "IO.inspect System.argv" -- -o opt arg1 arg2 --long-opt 10')
     {args, _} = Code.eval_string list, []
@@ -65,7 +70,7 @@ defmodule SystemTest do
 
   test "cmd/3 (with options)" do
     assert {["hello\n"], 0} = System.cmd "echo", ["hello"],
-                                into: [], cd: System.cwd!, env: %{"foo" => "bar"},
+                                into: [], cd: System.cwd!, env: %{"foo" => "bar", "baz" => nil},
                                 arg0: "echo", stderr_to_stdout: true, parallelism: true
   end
 
@@ -94,5 +99,39 @@ defmodule SystemTest do
     assert System.find_executable("erl")
     assert is_binary System.find_executable("erl")
     assert !System.find_executable("does-not-really-exist-from-elixir")
+  end
+
+  test "monotonic_time/0" do
+    assert is_integer(System.monotonic_time())
+  end
+
+  test "monotonic_time/1" do
+    assert is_integer(System.monotonic_time(:nano_seconds))
+    assert abs(System.monotonic_time(:micro_seconds)) < abs(System.monotonic_time(:nano_seconds))
+  end
+
+  test "system_time/0" do
+    assert is_integer(System.system_time())
+  end
+
+  test "system_time/1" do
+    assert is_integer(System.system_time(:nano_seconds))
+    assert abs(System.system_time(:micro_seconds)) < abs(System.system_time(:nano_seconds))
+  end
+
+  test "time_offset/0 and time_offset/1" do
+    assert is_integer(System.time_offset())
+    assert is_integer(System.time_offset(:seconds))
+  end
+
+  test "unique_integer/0 and unique_integer/1" do
+    assert is_integer(System.unique_integer())
+    assert System.unique_integer([:positive]) > 0
+    assert System.unique_integer([:positive, :monotonic]) < System.unique_integer([:positive, :monotonic])
+  end
+
+  test "convert_time_unit/3" do
+    time = System.monotonic_time(:nano_seconds)
+    assert abs(System.convert_time_unit(time, :nano_seconds, :micro_seconds)) < abs(time)
   end
 end

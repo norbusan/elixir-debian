@@ -27,9 +27,13 @@ defmodule Mix.SCM.Git do
   def accepts_options(_app, opts) do
     cond do
       gh = opts[:github] ->
-        opts |> Keyword.delete(:github) |> Keyword.put(:git, "https://github.com/#{gh}.git")
+        opts
+        |> Keyword.delete(:github)
+        |> Keyword.put(:git, "https://github.com/#{gh}.git")
+        |> validate_git_options
       opts[:git] ->
         opts
+        |> validate_git_options
       true ->
         nil
     end
@@ -65,6 +69,10 @@ defmodule Mix.SCM.Git do
   def equal?(opts1, opts2) do
     git_repos_match?(opts1[:git], opts2[:git]) &&
       get_lock_opts(opts1) == get_lock_opts(opts2)
+  end
+
+  def managers(_opts) do
+    []
   end
 
   def checkout(opts) do
@@ -103,6 +111,15 @@ defmodule Mix.SCM.Git do
   end
 
   ## Helpers
+
+  # TODO: make it raise (at v2.0?)
+  defp validate_git_options(opts) do
+    if Enum.count(opts, fn({key, _}) -> key in [:branch, :ref, :tag] end) > 1 do
+      Mix.shell.error "warning: you should specify only one of branch, ref or tag, and only once. " <>
+                      "Error on git dependency: #{opts[:git]}"
+    end
+    opts
+  end
 
   defp do_checkout(opts) do
     ref = get_lock_rev(opts[:lock]) || get_opts_rev(opts)

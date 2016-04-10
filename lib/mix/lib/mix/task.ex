@@ -29,9 +29,8 @@ defmodule Mix.Task do
 
   ## Documentation
 
-  Users can read the documentation for public Mix tasks by doing `mix help
-  my_task`. The documentation that will be showed is the `@moduledoc` of the
-  task's module.
+  Users can read the documentation for public Mix tasks by doing `mix help my_task`.
+  The documentation that will be shown is the `@moduledoc` of the task's module.
 
   """
 
@@ -83,7 +82,7 @@ defmodule Mix.Task do
     part = byte_size(base) - @prefix_size - @suffix_size
 
     case base do
-      <<"Elixir.Mix.Tasks.", rest :: binary-size(part), ".beam">> ->
+      <<"Elixir.Mix.Tasks.", rest::binary-size(part), ".beam">> ->
         mod = :"Elixir.Mix.Tasks.#{rest}"
         ensure_task?(mod) && mod
       _ ->
@@ -251,6 +250,8 @@ defmodule Mix.Task do
   end
 
   defp run_task(proj, task, args) do
+    if Mix.debug?, do: output_task_debug_info(task, args, proj)
+
     # 1. If the task is available, we run it.
     # 2. Otherwise we look for it in dependencies.
     # 3. Finally, we compile the current project in hope it is available.
@@ -259,15 +260,32 @@ defmodule Mix.Task do
       get_task_or_run(proj, task, fn -> Mix.Project.compile([]) end) ||
       get!(task)
 
-    if recursive(module) and Mix.Project.umbrella? and Mix.ProjectStack.enable_recursion do
-      res = recur(fn _ -> run(task, args) end)
-      Mix.ProjectStack.disable_recursion
-      res
-    else
-      Mix.TasksServer.put({:task, task, proj})
-      module.run(args)
+    recursive = recursive(module)
+
+    cond do
+      recursive == true and Mix.Project.umbrella? ->
+        Mix.ProjectStack.recur fn ->
+          recur(fn _ -> run(task, args) end)
+        end
+
+      recursive == false and Mix.ProjectStack.recursing? ->
+        Mix.ProjectStack.root(fn -> run(task, args) end)
+
+      true ->
+        Mix.TasksServer.put({:task, task, proj})
+        module.run(args)
     end
   end
+
+  defp output_task_debug_info(task, args, proj) do
+    Mix.shell.info("** Running mix " <> task_to_string(task, args) <> project_to_string(proj))
+  end
+
+  defp project_to_string(nil), do: ""
+  defp project_to_string(proj), do: " (inside #{inspect proj})"
+
+  defp task_to_string(task, []), do: task
+  defp task_to_string(task, args), do: task <> " " <> Enum.join(args, " ")
 
   defp deps_loadpaths do
     Mix.Task.run "deps.check"
