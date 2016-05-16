@@ -1,8 +1,8 @@
 Source: elixir-lang
 Section: interpreters
 Priority: optional
-Maintainer: Antonio Terceiro <terceiro@debian.org>
-Uploaders: Evgeny Golyshev <eugulixes@gmail.com>
+Maintainer: Evgeny Golyshev <eugulixes@gmail.com>
+Uploaders: Antonio Terceiro <terceiro@debian.org>
 Build-Depends: debhelper (>= 9~),
                erlang-dev (>= 1:18),
                erlang-dialyzer (>= 1:18),
