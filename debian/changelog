@@ -3,7 +3,17 @@ elixir-lang (1.2.4-1) unstable; urgency=medium
   * New upstream release
   * Add patch disabling tests related to rebar3
 
- -- Evgeny Golyshev <eugulixes@gmail.com>  Sun, 10 Apr 2016 14:42:44 +0300
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Mon, 16 May 2016 22:43:45 +0300
+
+elixir-lang (1.1.0-1.1) unstable; urgency=medium
+
+  [ Anton Gladky ]
+  * Non-maintainer upload.
+
+  [ Sergei Golovan ]
+  * Kill daemon after test phase. (Closes: #819122)
+
+ -- Anton Gladky <gladk@debian.org>  Fri, 13 May 2016 21:02:10 +0200
 
 elixir-lang (1.1.0-1) unstable; urgency=medium
 
