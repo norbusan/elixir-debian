@@ -1,9 +1,14 @@
-elixir-lang (1.2.4-1) unstable; urgency=medium
+elixir-lang (1.2.6-1) unstable; urgency=medium
 
+  [ Antonio Terceiro ]
   * New upstream release
+  * Acknowledge Non-maintainer upload; thanks to Anton Gladky and Sergei
+    Golovan.
+
+  [ Evgeny Golyshev ]
   * Add patch disabling tests related to rebar3
 
- -- Evgeny Golyshev <eugulixes@gmail.com>  Mon, 16 May 2016 22:43:45 +0300
+ -- Antonio Terceiro <terceiro@debian.org>  Thu, 16 Jun 2016 09:48:49 -0300
 
 elixir-lang (1.1.0-1.1) unstable; urgency=medium
 
