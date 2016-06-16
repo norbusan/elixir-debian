@@ -9,7 +9,7 @@ export PREFIX=/usr
 	dh $@
 
 override_dh_auto_test: .home
-	HOME=$(CURDIR)/.home dh_auto_test
+	rc=0; HOME=$(CURDIR)/.home dh_auto_test || rc=$$?; epmd -kill; exit $$rc
 
 override_dh_auto_clean:
 	$(RM) -r .home

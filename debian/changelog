@@ -6,8 +6,11 @@ elixir-lang (1.2.6-1) unstable; urgency=medium
   * New upstream release
   * Acknowledge Non-maintainer upload; thanks to Anton Gladky and Sergei
     Golovan.
-  * debian/rules: also set LC_ALL=C.UTF-8 since the VM requires UTF-8 for
-    correct operation.
+  * debian/rules:
+    - also set LC_ALL=C.UTF-8 since the VM requires UTF-8 for correct
+      operation.
+    - kill epmd after running tests here instead of with a patch to the
+      Makefile (Closes: #819122)
 
   [ Evgeny Golyshev ]
   * Add patch disabling tests related to rebar3
