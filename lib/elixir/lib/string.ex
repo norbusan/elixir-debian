@@ -504,14 +504,14 @@ defmodule String do
   ## Examples
 
       iex> String.normalize("yêṩ", :nfd)
-      "yêṩ"
+      "yêṩ"
 
       iex> String.normalize("leña", :nfc)
       "leña"
 
   """
-  @spec normalize(t, atom) :: boolean
-  defdelegate normalize(binary, form), to: String.Normalizer
+  @spec normalize(t, atom) :: t
+  defdelegate normalize(string, form), to: String.Normalizer
 
   @doc """
   Converts all characters in the given string to uppercase.
@@ -628,12 +628,12 @@ defmodule String do
     replace_leading(string, match, replacement, prefix_size, suffix_size, "")
   end
 
-  defp replace_leading(string, match, replacement, prefix_size, suffix_size, acc) when suffix_size > 0 do
+  defp replace_leading(string, match, replacement, prefix_size, suffix_size, acc) when suffix_size >= 0 do
     case string do
       <<prefix::size(prefix_size)-binary, suffix::size(suffix_size)-binary>> when prefix == match ->
         replace_leading(suffix, match, replacement, prefix_size, suffix_size - prefix_size, acc <> replacement)
       _ ->
-        string
+        acc <> string
     end
   end
 
@@ -671,7 +671,7 @@ defmodule String do
       <<prefix::size(prefix_size)-binary, suffix::size(suffix_size)-binary>> when suffix == match ->
         replace_trailing(prefix, match, replacement, prefix_size - suffix_size, suffix_size, acc <> replacement)
       _ ->
-        string
+        string <> acc
     end
   end
 
