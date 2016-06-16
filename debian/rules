@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
 
 export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 export REBAR=/usr/bin/rebar
 export PREFIX=/usr
 
