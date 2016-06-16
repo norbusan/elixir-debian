@@ -85,6 +85,28 @@ ask Mix to use Rebar 3 to compile it by passing the `manager: :rebar3` option.
 Once configured, Mix will prompt you to install Rebar 3 if it is not yet
 available.
 
+## v1.2.6 (2016-06-06)
+
+### 1. Enhancements
+
+  * [Kernel] Support Erlang 19
+  * [Kernel] Supported generated: true in the `quote` special form
+
+### 2. Bug fixes
+
+  * [Path] Fix a bug in path join with "/" followed by empty segments
+  * [String] Fix a bug in NFD normalization when followed by one-byte sized graphemes
+  * [Typespec] Correctly support `<<_::size, _::_*unit>>` syntax
+
+## v1.2.5 (2016-04-30)
+
+### 1. Bug fixes
+
+  * [Logger] Stringify truncated function data in Logger
+  * [Logger] Ensure poorly formatted char data can also be logged by using the replacement character "�" (diamond question mark)
+  * [Mix] Do not assume `@impl` is always a list
+  * [String] Fix bugs in `String.replace_*` functions where it would not include the accumulated value for certain replacements
+
 ## v1.2.4 (2016-04-01)
 
 ### 1. Enhancements
