@@ -10,9 +10,9 @@ Build-Depends: debhelper (>= 9~),
                erlang-parsetools (>= 1:18),
                git,
                rebar
-Standards-Version: 3.9.6
-Vcs-Git: git://anonscm.debian.org/pkg-elixir/elixir.git
-Vcs-Browser: http://anonscm.debian.org/cgit/pkg-elixir/elixir.git
+Standards-Version: 3.9.8
+Vcs-Git: https://anonscm.debian.org/git/pkg-elixir/elixir.git
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-elixir/elixir.git
 Homepage: http://elixir-lang.org/
 Testsuite: autopkgtest
 

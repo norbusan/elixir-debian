@@ -11,6 +11,9 @@ elixir-lang (1.2.6-1) unstable; urgency=medium
       operation.
     - kill epmd after running tests here instead of with a patch to the
       Makefile (Closes: #819122)
+  * debian/control:
+    - Bump Standards-Version to 3.9.8, no other changes needed
+    - Use https:// URL's for Vcs-*
 
   [ Evgeny Golyshev ]
   * Add patch disabling tests related to rebar3
