@@ -1,1 +1,2 @@
 disable_rebar3_tests.patch
+kill_epmd_after_build.patch
