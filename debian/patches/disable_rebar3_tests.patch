@@ -3,54 +3,24 @@ Description: disable rebar3 tests
  We have to disable all of the tests related to rebar3 because Stretch and Sid
  don't have it so far.
 
---- elixir-lang-1.2.4.orig/lib/mix/test/mix/rebar_test.exs
-+++ elixir-lang-1.2.4/lib/mix/test/mix/rebar_test.exs
-@@ -146,65 +146,65 @@ defmodule Mix.RebarTest do
+--- elixir-lang-1.3.3.orig/lib/mix/test/mix/rebar_test.exs
++++ elixir-lang-1.3.3/lib/mix/test/mix/rebar_test.exs
+@@ -180,35 +180,35 @@ defmodule Mix.RebarTest do
      end
    end
  
--  test "get and compile dependencies for rebar" do
--    Mix.Project.push(RebarAsDep)
--
--    in_tmp "get and compile dependencies for rebar", fn ->
--      Mix.Tasks.Deps.Get.run []
--      assert_received {:mix_shell, :info, ["* Getting git_rebar (../../test/fixtures/git_rebar)"]}
--
--      Mix.Tasks.Deps.Compile.run []
--      assert_received {:mix_shell, :run, ["==> git_rebar (compile)\n"]}
--      assert_received {:mix_shell, :run, ["==> rebar_dep (compile)\n"]}
--      assert :git_rebar.any_function == :ok
--      assert :rebar_dep.any_function == :ok
--
--      load_paths = Mix.Dep.loaded([])
--        |> Enum.map(&Mix.Dep.load_paths(&1))
--        |> Enum.concat
--
--      assert File.exists?("_build/dev/lib/rebar_dep/ebin/rebar_dep.beam")
--      assert File.exists?("_build/dev/lib/git_rebar/ebin/git_rebar.beam")
--
--      # Assert we have no .compile.lock as a .compile.lock
--      # means we check for the Elixir version on every command.
--      refute File.exists?("_build/dev/lib/rebar_dep/.compile.lock")
--      refute File.exists?("_build/dev/lib/git_rebar/.compile.lock")
--
--      assert Enum.any?(load_paths, &String.ends_with?(&1, "git_rebar/ebin"))
--      assert Enum.any?(load_paths, &String.ends_with?(&1, "rebar_dep/ebin"))
--    end
--  end
-+  # test "get and compile dependencies for rebar" do
-+  #   Mix.Project.push(RebarAsDep)
- 
 -  test "get and compile dependencies for rebar3" do
 -    Mix.Project.push(Rebar3AsDep)
--
++  # test "get and compile dependencies for rebar3" do
++  #   Mix.Project.push(Rebar3AsDep)
+ 
 -    in_tmp "get and compile dependencies for rebar3", fn ->
 -      Mix.Tasks.Deps.Get.run []
--      assert_received {:mix_shell, :info, ["* Getting git_rebar (../../test/fixtures/git_rebar)"]}
+-      assert_received {:mix_shell, :info, ["* Getting git_rebar " <> _]}
 -
 -      Mix.Tasks.Deps.Compile.run []
--      assert_received {:mix_shell, :run, ["\e[0;32m===> Compiling git_rebar\n\e[0m"]}
--      assert_received {:mix_shell, :run, ["\e[0;32m===> Compiling rebar_dep\n\e[0m"]}
+-      assert_received {:mix_shell, :run, ["===> Compiling git_rebar\n"]}
+-      assert_received {:mix_shell, :run, ["===> Compiling rebar_dep\n"]}
 -      assert :git_rebar.any_function == :ok
 -      assert :rebar_dep.any_function == :ok
 -
@@ -70,43 +40,13 @@ Description: disable rebar3 tests
 -      assert Enum.any?(load_paths, &String.ends_with?(&1, "rebar_dep/ebin"))
 -    end
 -  end
-+  #   in_tmp "get and compile dependencies for rebar", fn ->
-+  #     Mix.Tasks.Deps.Get.run []
-+  #     assert_received {:mix_shell, :info, ["* Getting git_rebar (../../test/fixtures/git_rebar)"]}
-+
-+  #     Mix.Tasks.Deps.Compile.run []
-+  #     assert_received {:mix_shell, :run, ["==> git_rebar (compile)\n"]}
-+  #     assert_received {:mix_shell, :run, ["==> rebar_dep (compile)\n"]}
-+  #     assert :git_rebar.any_function == :ok
-+  #     assert :rebar_dep.any_function == :ok
-+
-+  #     load_paths = Mix.Dep.loaded([])
-+  #       |> Enum.map(&Mix.Dep.load_paths(&1))
-+  #       |> Enum.concat
-+
-+  #     assert File.exists?("_build/dev/lib/rebar_dep/ebin/rebar_dep.beam")
-+  #     assert File.exists?("_build/dev/lib/git_rebar/ebin/git_rebar.beam")
-+
-+  #     # Assert we have no .compile.lock as a .compile.lock
-+  #     # means we check for the Elixir version on every command.
-+  #     refute File.exists?("_build/dev/lib/rebar_dep/.compile.lock")
-+  #     refute File.exists?("_build/dev/lib/git_rebar/.compile.lock")
-+
-+  #     assert Enum.any?(load_paths, &String.ends_with?(&1, "git_rebar/ebin"))
-+  #     assert Enum.any?(load_paths, &String.ends_with?(&1, "rebar_dep/ebin"))
-+  #   end
-+  # end
-+
-+  # test "get and compile dependencies for rebar3" do
-+  #   Mix.Project.push(Rebar3AsDep)
-+
 +  #   in_tmp "get and compile dependencies for rebar3", fn ->
 +  #     Mix.Tasks.Deps.Get.run []
-+  #     assert_received {:mix_shell, :info, ["* Getting git_rebar (../../test/fixtures/git_rebar)"]}
++  #     assert_received {:mix_shell, :info, ["* Getting git_rebar " <> _]}
 +
 +  #     Mix.Tasks.Deps.Compile.run []
-+  #     assert_received {:mix_shell, :run, ["\e[0;32m===> Compiling git_rebar\n\e[0m"]}
-+  #     assert_received {:mix_shell, :run, ["\e[0;32m===> Compiling rebar_dep\n\e[0m"]}
++  #     assert_received {:mix_shell, :run, ["===> Compiling git_rebar\n"]}
++  #     assert_received {:mix_shell, :run, ["===> Compiling rebar_dep\n"]}
 +  #     assert :git_rebar.any_function == :ok
 +  #     assert :rebar_dep.any_function == :ok
 +
@@ -127,18 +67,5 @@ Description: disable rebar3 tests
 +  #   end
 +  # end
  
-   test "get and compile dependencies for rebar with Mix" do
+   test "get and compile dependencies for Rebar with Mix" do
      Mix.Project.push(RebarAsDep)
---- elixir-lang-1.2.4.orig/lib/mix/test/test_helper.exs
-+++ elixir-lang-1.2.4/lib/mix/test/test_helper.exs
-@@ -145,8 +145,8 @@ System.put_env("MIX_HOME", home)
- 
- rebar = System.get_env("REBAR") || Path.expand("../../../rebar", __DIR__)
- File.cp!(rebar, Path.join(home, "rebar"))
--rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
--File.cp!(rebar, Path.join(home, "rebar3"))
-+# rebar = System.get_env("REBAR3") || Path.expand("../../../rebar3", __DIR__)
-+# File.cp!(rebar, Path.join(home, "rebar3"))
- 
- ## Copy fixtures to tmp
- 
