@@ -5,7 +5,7 @@ defmodule IEx.Autocomplete do
     expand_import("")
   end
 
-  def expand([h|t]=expr) do
+  def expand([h | t]=expr) do
     cond do
       h === ?. and t != [] ->
         expand_dot(reduce(t))
@@ -45,7 +45,7 @@ defmodule IEx.Autocomplete do
         expand_import(Atom.to_string(atom))
       {:ok, {:__aliases__, _, [root]}} ->
         expand_elixir_modules([], Atom.to_string(root))
-      {:ok, {:__aliases__, _, [h|_] = list}} when is_atom(h) ->
+      {:ok, {:__aliases__, _, [h | _] = list}} when is_atom(h) ->
         hint = Atom.to_string(List.last(list))
         list = Enum.take(list, length(list) - 1)
         expand_elixir_modules(list, hint)
@@ -57,13 +57,19 @@ defmodule IEx.Autocomplete do
   end
 
   defp reduce(expr) do
-    Enum.reverse Enum.reduce ' ([{', expr, fn token, acc ->
+    Enum.reduce(' ([{', expr, fn token, acc ->
       hd(:string.tokens(acc, [token]))
-    end
+    end) |> Enum.reverse |> strip_ampersand |> strip_percent
   end
 
+  defp strip_percent([?% | t]), do: t
+  defp strip_percent(expr), do: expr
+
+  defp strip_ampersand([?& | t]), do: t
+  defp strip_ampersand(expr), do: expr
+
   defp yes(hint, entries) do
-    {:yes, String.to_char_list(hint), Enum.map(entries, &String.to_char_list/1)}
+    {:yes, String.to_charlist(hint), Enum.map(entries, &String.to_charlist/1)}
   end
 
   defp no do
@@ -83,7 +89,7 @@ defmodule IEx.Autocomplete do
     end
   end
 
-  defp format_expansion([first|_]=entries, hint) do
+  defp format_expansion([first | _]=entries, hint) do
     binary = Enum.map(entries, &(&1.name))
     length = byte_size(hint)
     prefix = :binary.longest_common_prefix(binary)
@@ -160,7 +166,7 @@ defmodule IEx.Autocomplete do
       if alias === module do
         case Atom.to_string(mod) do
           "Elixir." <> mod ->
-            Module.concat [mod|rest]
+            Module.concat [mod | rest]
           _ ->
             mod
         end
@@ -246,8 +252,8 @@ defmodule IEx.Autocomplete do
 
         list = Enum.reduce falist, [], fn {f, a}, acc ->
           case :lists.keyfind(f, 1, acc) do
-            {f, aa} -> :lists.keyreplace(f, 1, acc, {f, [a|aa]})
-            false -> [{f, [a]}|acc]
+            {f, aa} -> :lists.keyreplace(f, 1, acc, {f, [a | aa]})
+            false -> [{f, [a]} | acc]
           end
         end
 
@@ -262,16 +268,34 @@ defmodule IEx.Autocomplete do
   end
 
   defp get_module_funs(mod) do
+    docs = Code.get_docs(mod, :docs) || []
+    module_info_funs(mod) |> Enum.reject(&hidden_fun?(&1, docs))
+  end
+
+  defp module_info_funs(mod) do
     if function_exported?(mod, :__info__, 1) do
-      if docs = Code.get_docs(mod, :docs) do
-        for {tuple, _line, _kind, _sign, doc} <- docs, doc != false, do: tuple
-      else
-        mod.__info__(:macros) ++ (mod.__info__(:functions) -- [__info__: 1])
-      end
+      mod.__info__(:macros) ++ (mod.__info__(:functions) -- [__info__: 1])
     else
       mod.module_info(:exports)
     end
   end
+
+  defp hidden_fun?(fun, docs) do
+    case Enum.find(docs, &match?({^fun, _, _, _, _}, &1)) do
+      nil -> underscored_fun?(fun)
+      doc -> not has_content?(doc)
+    end
+  end
+
+  defp has_content?({_, _, _, _, false}),
+    do: false
+  defp has_content?({fun, _, _, _, nil}),
+    do: not underscored_fun?(fun)
+  defp has_content?({_, _, _, _, _}),
+    do: true
+
+  defp underscored_fun?({name, _}),
+    do: hd(Atom.to_charlist(name)) == ?_
 
   defp ensure_loaded(Elixir), do: {:error, :nofile}
   defp ensure_loaded(mod),

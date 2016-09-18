@@ -99,7 +99,7 @@ defmodule EExTest do
   end
 
   test "evaluates with parentheses after end in end token" do
-    assert_eval " 101  102  103 ", "<%= Enum.map([1,2,3], (fn x -> %> <%= 100 + x %> <% end) ) %>"
+    assert_eval " 101  102  103 ", "<%= Enum.map([1, 2, 3], (fn x -> %> <%= 100 + x %> <% end) ) %>"
   end
 
   test "evaluates with defined variable" do
@@ -316,7 +316,7 @@ foo
     assert_eval "\ndone\n", string, packages: nil, all: nil
   end
 
-  test "unicode" do
+  test "Unicode" do
     template = """
       • <%= "•" %> •
       <%= "Jößé Vâlìm" %> Jößé Vâlìm
@@ -344,7 +344,7 @@ foo
   end
 
   test "raises an Exception when there's an error with the given file" do
-    assert_raise File.Error, "could not read file non-existent.eex: no such file or directory", fn ->
+    assert_raise File.Error, "could not read file \"non-existent.eex\": no such file or directory", fn ->
       filename = "non-existent.eex"
       EEx.compile_file(filename)
     end
@@ -370,7 +370,7 @@ foo
         {EExTest.Compiled,
           :before_compile,
           0,
-          [file: to_char_list(Path.relative_to_cwd(__ENV__.file)), line: 7]
+          [file: to_charlist(Path.relative_to_cwd(__ENV__.file)), line: 7]
        }
      }
 
@@ -379,7 +379,7 @@ foo
         {EExTest.Compiled,
           :after_compile,
           0,
-          [file: to_char_list(Path.relative_to_cwd(__ENV__.file)), line: 22]
+          [file: to_charlist(Path.relative_to_cwd(__ENV__.file)), line: 22]
        }
      }
 
@@ -395,6 +395,10 @@ foo
 
   defmodule TestEngine do
     @behaviour EEx.Engine
+
+    def init(_opts) do
+      ""
+    end
 
     def handle_body(body) do
       {:wrapped, body}

@@ -1,5 +1,5 @@
 defmodule Mix.NoTaskError do
-  defexception [:task, :message, :mix]
+  defexception [:task, :message, mix: true]
 
   def exception(opts) do
     task = opts[:task]
@@ -9,7 +9,12 @@ defmodule Mix.NoTaskError do
   defp msg(task) do
     msg = "The task #{inspect task} could not be found"
     case did_you_mean(task) do
-      {similar, score} when score > 0.8 ->
+      {mod, ^task, _score} ->
+        msg <> " because the module is named #{inspect mod} instead of " <>
+               "#{expected_mod_name(task)} as expected. " <>
+               "Please rename it and try again"
+
+      {_mod, similar, score} when score > 0.8 ->
         msg <> ". Did you mean #{inspect similar}?"
 
       _otherwise -> msg
@@ -19,18 +24,22 @@ defmodule Mix.NoTaskError do
   defp did_you_mean(task) do
     Mix.Task.load_all # Ensure all tasks are loaded
     Mix.Task.all_modules
-    |> Enum.map(&Mix.Task.task_name/1)
-    |> Enum.reduce({nil, 0}, &max_similar(&1, task, &2))
+    |> Enum.map(&{&1, Mix.Task.task_name(&1)})
+    |> Enum.reduce({nil, nil, 0}, &max_similar(&1, task, &2))
   end
 
-  defp max_similar(source, target, {_, current} = best) do
+  defp max_similar({mod, source}, target, {_, _, current} = best) do
     score = String.jaro_distance(source, target)
-    if score < current, do: best, else: {source, score}
+    if score < current, do: best, else: {mod, source, score}
+  end
+
+  defp expected_mod_name(task) do
+    "Mix.Tasks." <> Mix.Utils.command_to_module_name(task)
   end
 end
 
 defmodule Mix.InvalidTaskError do
-  defexception [:task, :message, :mix]
+  defexception [:task, :message, mix: true]
 
   def exception(opts) do
     task = opts[:task]
@@ -39,7 +48,7 @@ defmodule Mix.InvalidTaskError do
 end
 
 defmodule Mix.ElixirVersionError do
-  defexception [:target, :expected, :actual, :message, :mix]
+  defexception [:target, :expected, :actual, :message, mix: true]
 
   def exception(opts) do
     target   = opts[:target]
@@ -53,9 +62,9 @@ end
 
 defmodule Mix.NoProjectError do
   defexception message: "Could not find a Mix.Project, please ensure a mix.exs file is available",
-               mix: nil
+               mix: true
 end
 
 defmodule Mix.Error do
-  defexception [:mix, :message]
+  defexception [:message, mix: true]
 end

@@ -72,12 +72,12 @@ defmodule VersionTest do
   end
 
   test "to_string" do
-    assert V.parse("1.0.0") |> elem(1) |> to_string == "1.0.0"
-    assert V.parse("1.0.0-dev") |> elem(1) |> to_string == "1.0.0-dev"
-    assert V.parse("1.0.0+lol") |> elem(1) |> to_string == "1.0.0+lol"
-    assert V.parse("1.0.0-dev+lol") |> elem(1) |> to_string == "1.0.0-dev+lol"
-    assert V.parse("1.0.0-0") |> elem(1) |> to_string == "1.0.0-0"
-    assert V.parse("1.0.0-rc.0") |> elem(1) |> to_string == "1.0.0-rc.0"
+    assert V.parse!("1.0.0") |> to_string == "1.0.0"
+    assert V.parse!("1.0.0-dev") |> to_string == "1.0.0-dev"
+    assert V.parse!("1.0.0+lol") |> to_string == "1.0.0+lol"
+    assert V.parse!("1.0.0-dev+lol") |> to_string == "1.0.0-dev+lol"
+    assert V.parse!("1.0.0-0") |> to_string == "1.0.0-0"
+    assert V.parse!("1.0.0-rc.0") |> to_string == "1.0.0-rc.0"
   end
 
   test "invalid match" do
@@ -111,6 +111,9 @@ defmodule VersionTest do
     assert V.match?("1.2.3-alpha", "1.2.3-alpha")
 
     assert V.match?("0.9.3", "== 0.9.3+dev")
+
+    {:ok, vsn} = Version.parse("2.3.0")
+    assert V.match?(vsn, "2.3.0")
   end
 
   test "!=" do
@@ -190,6 +193,20 @@ defmodule VersionTest do
     end
   end
 
+  test "allow_pre" do
+    assert V.match?("1.1.0", "~> 1.0", allow_pre: true)
+    assert V.match?("1.1.0", "~> 1.0", allow_pre: false)
+    assert V.match?("1.1.0-beta", "~> 1.0", allow_pre: true)
+    refute V.match?("1.1.0-beta", "~> 1.0", allow_pre: false)
+    assert V.match?("1.0.1-beta", "~> 1.0.0-beta", allow_pre: false)
+
+    assert V.match?("1.1.0", ">= 1.0.0", allow_pre: true)
+    assert V.match?("1.1.0", ">= 1.0.0", allow_pre: false)
+    assert V.match?("1.1.0-beta", ">= 1.0.0", allow_pre: true)
+    refute V.match?("1.1.0-beta", ">= 1.0.0", allow_pre: false)
+    assert V.match?("1.1.0-beta", ">= 1.0.0-beta", allow_pre: false)
+  end
+
   test "and" do
     assert V.match?("0.9.3", "> 0.9.0 and < 0.10.0")
     refute V.match?("0.10.2", "> 0.9.0 and < 0.10.0")
@@ -201,5 +218,13 @@ defmodule VersionTest do
     assert V.match?("0.9.5", "0.9.1 or 0.9.3 or 0.9.5")
 
     refute V.match?("0.9.6", "0.9.1 or 0.9.3 or 0.9.5")
+  end
+
+  test "compile requirement" do
+    {:ok, req} = V.parse_requirement("1.2.3")
+    req = V.compile_requirement(req)
+
+    assert V.match?("1.2.3", req)
+    refute V.match?("1.2.4", req)
   end
 end

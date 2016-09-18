@@ -6,20 +6,21 @@ defmodule ExUnit.FormatterTest do
   import ExUnit.Formatter
   doctest ExUnit.Formatter
 
-  def falsy, do: false
-  def formatter(_color, msg), do: msg
+  def falsy(), do: false
+
+  defp formatter(_kind, message), do: message
 
   defmacrop catch_assertion(expr) do
     quote do
       try do
         unquote(expr)
       rescue
-        e -> e
+        ex -> ex
       end
     end
   end
 
-  defp case do
+  defp test_case do
     %ExUnit.TestCase{name: Hello}
   end
 
@@ -52,11 +53,11 @@ defmodule ExUnit.FormatterTest do
   end
 
   test "formats test exits with mfa" do
-    failure = [{:exit, {:bye, {:m, :f, []}}, []}]
+    failure = [{:exit, {:bye, {:mod, :fun, []}}, []}]
     assert format_test_failure(test(), failure, 1, 80, &formatter/2) == """
       1) world (Hello)
          test/ex_unit/formatter_test.exs:1
-         ** (exit) exited in: :m.f()
+         ** (exit) exited in: :mod.fun()
              ** (EXIT) :bye
     """
   end
@@ -148,7 +149,7 @@ defmodule ExUnit.FormatterTest do
 
   test "formats test case errors" do
     failure = [{:error, catch_error(raise "oops"), []}]
-    assert format_test_case_failure(case(), failure, 1, 80, &formatter/2) =~ """
+    assert format_test_case_failure(test_case(), failure, 1, 80, &formatter/2) =~ """
       1) Hello: failure on setup_all callback, tests invalidated
          ** (RuntimeError) oops
     """
@@ -156,7 +157,7 @@ defmodule ExUnit.FormatterTest do
 
   test "formats assertions with operators with no limit" do
     failure = [{:error, catch_assertion(assert [1, 2, 3] == [4, 5, 6]), []}]
-    assert format_test_case_failure(case(), failure, 1, :infinity, &formatter/2) =~ """
+    assert format_test_case_failure(test_case(), failure, 1, :infinity, &formatter/2) =~ """
       1) Hello: failure on setup_all callback, tests invalidated
          Assertion with == failed
          code: [1, 2, 3] == [4, 5, 6]
@@ -167,7 +168,7 @@ defmodule ExUnit.FormatterTest do
 
   test "formats assertions with operators with column limit" do
     failure = [{:error, catch_assertion(assert [1, 2, 3] == [4, 5, 6]), []}]
-    assert format_test_case_failure(case(), failure, 1, 15, &formatter/2) =~ """
+    assert format_test_case_failure(test_case(), failure, 1, 15, &formatter/2) =~ """
       1) Hello: failure on setup_all callback, tests invalidated
          Assertion with == failed
          code: [1, 2, 3] == [4, 5, 6]
@@ -183,7 +184,7 @@ defmodule ExUnit.FormatterTest do
   test "formats assertions with message with multiple lines" do
     message = "Some meaningful error:\nuseful info\nanother useful info"
     failure = [{:error, catch_assertion(assert(false, message)), []}]
-    assert format_test_case_failure(case(), failure, 1, :infinity, &formatter/2) =~ """
+    assert format_test_case_failure(test_case(), failure, 1, :infinity, &formatter/2) =~ """
       1) Hello: failure on setup_all callback, tests invalidated
          Some meaningful error:
          useful info

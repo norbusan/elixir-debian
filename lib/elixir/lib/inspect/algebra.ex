@@ -15,35 +15,39 @@ defmodule Inspect.Opts do
       When the default `:infer`, the binary will be printed as a string if it
       is printable, otherwise in bit syntax.
 
-    * `:char_lists` - when `:as_char_lists` all lists will be printed as char
+    * `:charlists` - when `:as_charlists` all lists will be printed as char
       lists, non-printable elements will be escaped.
 
       When `:as_lists` all lists will be printed as lists.
 
-      When the default `:infer`, the list will be printed as a char list if it
+      When the default `:infer`, the list will be printed as a charlist if it
       is printable, otherwise as list.
 
     * `:limit` - limits the number of items that are printed for tuples,
-      bitstrings, and lists, does not apply to strings nor char lists, defaults
+      bitstrings, and lists, does not apply to strings nor charlists, defaults
       to 50.
 
     * `:pretty` - if set to `true` enables pretty printing, defaults to `false`.
 
-    * `:width` - defaults to the 80 characters, used when pretty is `true` or
-      when printing to IO devices.
+    * `:width` - defaults to 80 characters, used when pretty is `true` or when
+      printing to IO devices. Set to 0 to force each item to be printed on its
+      own line.
 
     * `:base` - print integers as :binary, :octal, :decimal, or :hex, defaults
-      to :decimal
+      to :decimal. When inspecting binaries any `:base` other than `:decimal`
+      implies `binaries: :as_binaries`.
 
     * `:safe` - when `false`, failures while inspecting structs will be raised
-      as errors instead of being wrapped in the Inspect.Error exception. This
+      as errors instead of being wrapped in the `Inspect.Error` exception. This
       is useful when debugging failures and crashes for custom inspect
       implementations
 
   """
 
+  # TODO: Deprecate char_lists key by v1.5
   defstruct structs: true,
             binaries: :infer,
+            charlists: :infer,
             char_lists: :infer,
             limit: 50,
             width: 80,
@@ -51,9 +55,11 @@ defmodule Inspect.Opts do
             pretty: false,
             safe: true
 
+  # TODO: Deprecate char_lists key and :as_char_lists value by v1.5
   @type t :: %__MODULE__{
                structs: boolean,
                binaries: :infer | :as_binaries | :as_strings,
+               charlists: :infer | :as_lists | :as_charlists,
                char_lists: :infer | :as_lists | :as_char_lists,
                limit: pos_integer | :infinity,
                width: pos_integer | :infinity,
@@ -77,7 +83,7 @@ defmodule Inspect.Algebra do
   This module implements the functionality described in
   ["Strictly Pretty" (2000) by Christian Lindig][0] with small
   additions, like support for String nodes, and a custom
-  rendering function that maximises horizontal space use. 
+  rendering function that maximises horizontal space use.
 
       iex> Inspect.Algebra.empty
       :doc_nil
@@ -120,7 +126,7 @@ defmodule Inspect.Algebra do
   `:flat` (breaks as spaces) and `:break` (breaks as newlines).
   Implementing the same logic in a strict language such as Elixir leads
   to an exponential growth of possible documents, unless document groups
-  are encoded explictly as `:flat` or `:break`. Those groups are then reduced
+  are encoded explicitly as `:flat` or `:break`. Those groups are then reduced
   to a simple document, where the layout is already decided, per [Lindig][0].
 
   This implementation slightly changes the semantic of Lindig's algorithm
@@ -416,7 +422,7 @@ defmodule Inspect.Algebra do
   def fold_doc(list, fun)
   def fold_doc([], _), do: empty
   def fold_doc([doc], _), do: doc
-  def fold_doc([d|ds], fun), do: fun.(d, fold_doc(ds, fun))
+  def fold_doc([d | ds], fun), do: fun.(d, fold_doc(ds, fun))
 
   # Elixir conveniences
 
@@ -488,14 +494,14 @@ defmodule Inspect.Algebra do
     fun.(h, %{opts | limit: limit})
   end
 
-  defp do_surround_many([h|t], limit, opts, fun, sep) when is_list(t) do
+  defp do_surround_many([h | t], limit, opts, fun, sep) when is_list(t) do
     limit = decrement(limit)
     h = fun.(h, %{opts | limit: limit})
     t = do_surround_many(t, limit, opts, fun, sep)
     do_join(h, t, sep)
   end
 
-  defp do_surround_many([h|t], limit, opts, fun, _sep) do
+  defp do_surround_many([h | t], limit, opts, fun, _sep) do
     limit = decrement(limit)
     h = fun.(h, %{opts | limit: limit})
     t = fun.(t, %{opts | limit: limit})
@@ -518,7 +524,7 @@ defmodule Inspect.Algebra do
   document to fit in the given width.
   """
   @spec format(t, non_neg_integer | :infinity) :: iodata
-  def format(d, w) do
+  def format(d, w) when w == :infinity or w >= 0 do
     format(w, 0, [{0, default_mode(w), doc_group(d)}])
   end
 

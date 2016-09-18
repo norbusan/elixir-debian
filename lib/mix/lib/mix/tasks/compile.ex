@@ -11,10 +11,11 @@ defmodule Mix.Tasks.Compile do
   ## Configuration
 
     * `:compilers` - compilers to run, defaults to:
-      `[:yeec, :leex, :erlang, :elixir, :app]`
+      `[:yecc, :leex, :erlang, :elixir, :xref, :app]`
 
     * `:consolidate_protocols` - when `true`, runs protocol
-      consolidation via the `compile.protocols` task
+      consolidation via the `compile.protocols` task. The default
+      value is `true`.
 
     * `:build_embedded` - when `true`, activates protocol
       consolidation and does not generate symlinks in builds
@@ -81,10 +82,6 @@ defmodule Mix.Tasks.Compile do
     Mix.Project.get!
     Mix.Task.run "loadpaths", args
 
-    if local_deps_changed?() do
-      Mix.Dep.Lock.touch_manifest
-    end
-
     res = Mix.Task.run "compile.all", args
     res = if :ok in List.wrap(res), do: :ok, else: :noop
 
@@ -97,23 +94,13 @@ defmodule Mix.Tasks.Compile do
 
   # Loadpaths without checks because compilers may be defined in deps.
   defp loadpaths! do
-    Mix.Task.run "loadpaths", ["--no-elixir-version-check", "--no-deps-check"]
+    Mix.Task.run "loadpaths", ["--no-elixir-version-check", "--no-deps-check", "--no-archives-check"]
     Mix.Task.reenable "loadpaths"
+    Mix.Task.reenable "deps.loadpaths"
   end
 
   defp consolidate_protocols? do
     Mix.Project.config[:consolidate_protocols]
-  end
-
-  defp local_deps_changed? do
-    manifest = Path.absname(Mix.Dep.Lock.manifest())
-
-    Enum.any?(Mix.Dep.children(), fn %{scm: scm} = dep ->
-      not scm.fetchable? and Mix.Dep.in_dependency(dep, fn _ ->
-        files = Mix.Project.config_files ++ manifests()
-        Mix.Utils.stale?(files, [manifest])
-      end)
-    end)
   end
 
   @doc """
@@ -142,6 +129,6 @@ defmodule Mix.Tasks.Compile do
   end
 
   defp first_line(doc) do
-    String.split(doc, "\n", parts: 2) |> hd |> String.strip |> String.rstrip(?.)
+    String.split(doc, "\n", parts: 2) |> hd |> String.trim |> String.trim_trailing(".")
   end
 end

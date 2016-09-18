@@ -2,8 +2,7 @@
 -module(elixir_scope).
 -export([translate_var/4, build_var/2, context_info/1,
   load_binding/2, dump_binding/2,
-  mergev/2, mergec/2, mergef/2,
-  merge_vars/2, merge_opt_vars/2,
+  mergev/2, mergec/2, merge_vars/2, merge_opt_vars/2,
   warn_unsafe_var/4, warn_underscored_var_access/3, format_error/1
 ]).
 -include("elixir.hrl").
@@ -128,14 +127,6 @@ mergec(S1, S2) ->
     caller=S2#elixir_scope.caller
  }.
 
-%% Similar to mergec but does not merge the user vars counter.
-
-mergef(S1, S2) ->
-  S1#elixir_scope{
-    super=S2#elixir_scope.super,
-    caller=S2#elixir_scope.caller
- }.
-
 %% Mergers.
 
 merge_vars(V, V) -> V;
@@ -170,7 +161,7 @@ load_binding(Binding, Scope) ->
     counter=#{'_' => NewCounter}
  }}.
 
-load_binding([{Key, Value}|T], Binding, Keys, Vars, Counter) ->
+load_binding([{Key, Value} | T], Binding, Keys, Vars, Counter) ->
   Actual = case Key of
     {_Name, _Kind} -> Key;
     Name when is_atom(Name) -> {Name, nil}
@@ -211,19 +202,20 @@ format_error({unused_match, Name, Kind}) ->
                 "give the variables different names", [Name, context_info(Kind), Name]);
 
 format_error({unsafe_var, Name}) ->
-  io_lib:format("the variable \"~ts\" is unsafe as it has been defined in a conditional clause, "
-                "as part of a case/cond/receive/if/&&/||. Please rewrite the clauses so the value is "
-                "explicitly returned. For example:\n\n"
+  io_lib:format("the variable \"~ts\" is unsafe as it has been set inside "
+                "a case/cond/receive/if/&&/||. Please explicitly return "
+                "the variable value instead. For example:\n\n"
                 "    case int do\n"
                 "      1 -> atom = :one\n"
                 "      2 -> atom = :two\n"
                 "    end\n\n"
-                "Can be rewritten as:\n\n"
+                "should be written as\n\n"
                 "    atom =\n"
                 "      case int do\n"
                 "        1 -> :one\n"
                 "        2 -> :two\n"
-                "      end\n", [Name]);
+                "      end\n\n"
+                "Unsafe variable found at:", [Name]);
 
 format_error({underscore_var_access, Name}) ->
   io_lib:format("the underscored variable \"~ts\" is used after being set. "

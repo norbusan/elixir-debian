@@ -184,8 +184,18 @@ defmodule Kernel.ExpansionTest do
   end
 
   test "structs: expects atoms" do
+    expand(quote do: %unknown{a: 1} = x)
+
     assert_raise CompileError, ~r"expected struct name to be a compile time atom or alias", fn ->
       expand(quote do: %unknown{a: 1})
+    end
+
+    assert_raise CompileError, ~r"expected struct name to be a compile time atom or alias", fn ->
+      expand(quote do: %unquote(1){a: 1})
+    end
+
+    assert_raise CompileError, ~r"expected struct name in a match to be a compile time atom, alias or a variable", fn ->
+      expand(quote do: %unquote(1){a: 1} = x)
     end
   end
 
@@ -209,7 +219,7 @@ defmodule Kernel.ExpansionTest do
 
   ## Remote calls
 
-  test "remote calls: expands to erlang" do
+  test "remote calls: expands to Erlang" do
     assert expand(quote do: Kernel.is_atom(a)) == quote do: :erlang.is_atom(a())
   end
 
@@ -272,6 +282,11 @@ defmodule Kernel.ExpansionTest do
   test "variables inside with are available in blocks" do
     assert expand(quote do: with(a <- b, c = a, do: c)) ==
            quote do: (with(a <- b(), c = a, do: c))
+  end
+
+  test "with: variables inside else do not leak" do
+    assert expand(quote do: (with(a <- b, do: 1, else: (a -> a)); a)) ==
+           quote do: (with(a <- b(), do: 1, else: (a -> a)); a())
   end
 
   ## Capture

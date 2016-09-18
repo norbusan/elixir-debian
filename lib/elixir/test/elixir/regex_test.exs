@@ -79,11 +79,11 @@ defmodule RegexTest do
     assert Regex.opts(Regex.compile!("foo", "i")) == "i"
   end
 
-  test "unicode" do
+  test "Unicode" do
     assert "olá" =~ ~r"\p{Latin}$"u
     refute "£" =~ ~r/\p{Lu}/u
 
-    # Non breaking space matches [[:space:]] with unicode
+    # Non breaking space matches [[:space:]] with Unicode
     assert <<0xA0::utf8>> =~ ~r/[[:space:]]/u
     assert <<0xA0::utf8>> =~ ~r/\s/u
 
@@ -187,6 +187,13 @@ defmodule RegexTest do
            ["a", "c a", "c a", "c"]
   end
 
+  test "split include_captures" do
+    assert Regex.split(~r/([ln])/, "Erlang", include_captures: true) == ["Er", "l", "a", "n", "g"]
+    assert Regex.split(~r/([kw])/, "Elixir", include_captures: true) == ["Elixir"]
+    assert Regex.split(~r/([Ee]lixir)/, "Elixir", include_captures: true, trim: true) == ["Elixir"]
+    assert Regex.split(~r/([Ee]lixir)/, "Elixir", include_captures: true, trim: false) == ["", "Elixir", ""]
+  end
+
   test "replace" do
     assert Regex.replace(~r(d), "abc", "d") == "abc"
     assert Regex.replace(~r(b), "abc", "d") == "adc"
@@ -215,7 +222,6 @@ defmodule RegexTest do
   test "ungreedy" do
     assert Regex.run(~r/[\d ]+/, "1 2 3 4 5"), ["1 2 3 4 5"]
     assert Regex.run(~r/[\d ]?+/, "1 2 3 4 5"), ["1"]
-    assert Regex.run(~r/[\d ]+/r, "1 2 3 4 5"), ["1"]
     assert Regex.run(~r/[\d ]+/U, "1 2 3 4 5"), ["1"]
   end
 
@@ -237,10 +243,16 @@ defmodule RegexTest do
 
     assert matches_escaped?("\\A  \\z")
     assert matches_escaped?("  x  ")
-    assert matches_escaped?("  x    x ") # unicode spaces here
+    assert matches_escaped?("  x    x ") # Unicode spaces here
     assert matches_escaped?("# lol")
 
-    assert matches_escaped?("\\A.^$*+?()[{\\| \t\n\xff\\z #hello\u202F\u205F")
+    assert matches_escaped?("\\A.^$*+?()[{\\| \t\n\x20\\z #hello\u202F\u205F")
+
+    assert Regex.escape("{}") == "\\{\\}"
+    assert Regex.escape("[]") == "\\[\\]"
+
+    assert Regex.escape("{foo}") == "\\{foo\\}"
+    assert Regex.escape("[foo]") == "\\[foo\\]"
   end
 
   defp matches_escaped?(string) do

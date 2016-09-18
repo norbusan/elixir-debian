@@ -86,10 +86,13 @@ defmodule Mix.Tasks.Escript.Build do
       end
 
   """
+  @switches [force: :boolean, compile: :boolean,
+             deps_check: :boolean, archives_check: :boolean, elixir_version_check: :boolean]
+
   @spec run(OptionParser.argv) :: :ok | :noop
   def run(args) do
     Mix.Project.get!
-    {opts, _, _} = OptionParser.parse(args, switches: [force: :boolean, compile: :boolean])
+    {opts, _} = OptionParser.parse!(args, strict: @switches)
 
     if Keyword.get(opts, :compile, true) do
       Mix.Task.run :compile, args
@@ -104,7 +107,7 @@ defmodule Mix.Tasks.Escript.Build do
   defp escriptize(project, language, force) do
     escript_opts = project[:escript] || []
 
-    script_name  = to_string(escript_opts[:name] || project[:app])
+    script_name  = Mix.Local.name_for(:escript, project)
     filename     = escript_opts[:path] || script_name
     main         = escript_opts[:main_module]
     app          = Keyword.get(escript_opts, :app, project[:app])
@@ -117,22 +120,20 @@ defmodule Mix.Tasks.Escript.Build do
         Mix.raise "Could not generate escript, no name given, " <>
           "set :name escript option or :app in the project settings"
 
-      !main or !Code.ensure_loaded?(main)->
+      !main ->
         Mix.raise "Could not generate escript, please set :main_module " <>
           "in your project configuration (under :escript option) to a module that implements main/1"
+
+      not Code.ensure_loaded?(main) ->
+        Mix.raise "Could not generate escript, module #{main} defined as " <>
+          ":main_module could not be loaded"
 
       force || Mix.Utils.stale?(files, [filename]) ->
         beam_paths =
           [files, deps_files(), core_files(escript_opts, language)]
           |> Stream.concat
-          |> prepare_beam_paths
-
-        if project[:consolidate_protocols] do
-          beam_paths =
-            consolidated_path <> "/*"
-            |> Path.wildcard()
-            |> prepare_beam_paths(beam_paths)
-        end
+          |> prepare_beam_paths()
+          |> Map.merge(consolidated_paths(project))
 
         tuples = gen_main(project, escript_mod, main, app, language) ++
                  read_beams(beam_paths)
@@ -173,13 +174,13 @@ defmodule Mix.Tasks.Escript.Build do
   end
 
   defp deps_files() do
-    deps = Mix.Dep.loaded(env: Mix.env) || []
+    deps = Mix.Dep.cached()
     Enum.flat_map(deps, fn dep -> get_files(dep.opts[:build]) end)
   end
 
   defp core_files(escript_opts, language) do
     if Keyword.get(escript_opts, :embed_elixir, language == :elixir) do
-      Enum.flat_map [:elixir|extra_apps()], &app_files/1
+      Enum.flat_map [:elixir | extra_apps()], &app_files/1
     else
       []
     end
@@ -203,18 +204,27 @@ defmodule Mix.Tasks.Escript.Build do
     end
   end
 
-  defp prepare_beam_paths(paths, map \\ %{}) do
-    Enum.into paths, map, &{Path.basename(&1), &1}
+  defp prepare_beam_paths(paths) do
+    for path <- paths, into: %{}, do: {Path.basename(path), path}
   end
 
   defp read_beams(items) do
     items
     |> Enum.map(fn {basename, beam_path} ->
-      {String.to_char_list(basename), File.read!(beam_path)}
+      {String.to_charlist(basename), File.read!(beam_path)}
     end)
   end
 
-  defp consolidated_path, do: Mix.Tasks.Compile.Protocols.default_path
+  defp consolidated_paths(config) do
+    if config[:consolidate_protocols] do
+      Mix.Project.consolidation_path(config)
+      |> Path.join("*")
+      |> Path.wildcard()
+      |> prepare_beam_paths()
+    else
+      %{}
+    end
+  end
 
   defp build_comment(user_comment) do
     "%% #{user_comment}\n"
@@ -287,7 +297,7 @@ defmodule Mix.Tasks.Escript.Build do
         {num, _} when num >= 18 -> nil
         _ ->
           io_error ["Incompatible Erlang/OTP release: ", erl_version,
-                    ".\nThis escript requires at least Erlang/OTP 18.0.\n"]
+                    ".\nThis escript requires at least Erlang/OTP 18.0\n"]
           :erlang.halt(1)
       end
 

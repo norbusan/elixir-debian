@@ -43,8 +43,7 @@ defmodule Mix.Tasks.Help do
   def run([]) do
     loadpaths!
 
-    modules = Mix.Task.load_all()
-
+    modules = load_tasks()
     {docs, max} = build_task_doc_list(modules)
 
     display_default_task_doc(max)
@@ -55,9 +54,7 @@ defmodule Mix.Tasks.Help do
   def run(["--names"]) do
     loadpaths!
 
-    tasks =
-      Mix.Task.load_all()
-      |> Enum.map(&Mix.Task.task_name/1)
+    tasks = Enum.map(load_tasks(), &Mix.Task.task_name/1)
 
     aliases =
       Mix.Project.config[:aliases]
@@ -72,9 +69,8 @@ defmodule Mix.Tasks.Help do
     loadpaths!
 
     modules =
-      Mix.Task.load_all()
+      load_tasks()
       |> Enum.filter(&(String.contains?(Mix.Task.task_name(&1), pattern)))
-
     {docs, max} = build_task_doc_list(modules)
 
     display_task_doc_list(docs, max)
@@ -109,16 +105,18 @@ defmodule Mix.Tasks.Help do
 
   # Loadpaths without checks because tasks may be defined in deps.
   defp loadpaths! do
-    Mix.Task.run "loadpaths", ["--no-elixir-version-check", "--no-deps-check"]
+    Mix.Task.run "loadpaths", ["--no-elixir-version-check", "--no-deps-check", "--no-archives-check"]
     Mix.Task.reenable "loadpaths"
+    Mix.Task.reenable "deps.loadpaths"
+  end
+
+  defp load_tasks() do
+    Mix.Task.load_all()
+    |> Enum.filter(&(Mix.Task.moduledoc(&1) != false))
   end
 
   defp ansi_docs?(opts) do
-    if Keyword.has_key?(opts, :enabled) do
-      opts[:enabled]
-    else
-      IO.ANSI.enabled?
-    end
+    Keyword.get(opts, :enabled, IO.ANSI.enabled?)
   end
 
   defp width() do
@@ -129,11 +127,11 @@ defmodule Mix.Tasks.Help do
   end
 
   defp format_task(task, max, doc) do
-    String.ljust(task, max) <> " # " <> doc
+    String.pad_trailing(task, max) <> " # " <> doc
   end
 
   defp where_is_file(module) do
-    case :code.where_is_file(Atom.to_char_list(module) ++ '.beam') do
+    case :code.where_is_file(Atom.to_charlist(module) ++ '.beam') do
       :non_existing ->
         "not available"
       location ->
@@ -151,7 +149,7 @@ defmodule Mix.Tasks.Help do
 
   defp display_iex_task_doc(max) do
     Mix.shell.info format_task("iex -S mix", max,
-                    "Starts IEx and run the default task")
+                    "Starts IEx and runs the default task")
   end
 
   defp display_task_doc_list(docs, max) do
@@ -162,13 +160,12 @@ defmodule Mix.Tasks.Help do
 
   defp build_task_doc_list(modules) do
     Enum.reduce modules, {[], 0}, fn module, {docs, max} ->
-      doc = Mix.Task.shortdoc(module)
-      if doc do
+      if doc = Mix.Task.shortdoc(module) do
         task = "mix " <> Mix.Task.task_name(module)
-        docs = [{task, doc} | docs]
-        max  = max(byte_size(task), max)
+        {[{task, doc} | docs], max(byte_size(task), max)}
+      else
+        {docs, max}
       end
-      {docs, max}
     end
   end
 end

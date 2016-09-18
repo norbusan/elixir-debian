@@ -244,7 +244,7 @@ defmodule IEx do
     * `:ls_directory` - ... for directory entries (ls helper)
     * `:ls_device`    - ... device entries (ls helper)
 
-  When printing documentation, IEx will convert the markdown
+  When printing documentation, IEx will convert the Markdown
   documentation to ANSI as well. Those can be configured via:
 
     * `:doc_code`        - the attributes for code blocks (cyan, bright)
@@ -335,7 +335,7 @@ defmodule IEx do
       nil ->
         string
       ansi ->
-        IO.iodata_to_binary([IO.ANSI.format_fragment(ansi, true), string | IO.ANSI.reset])
+        [ansi | string] |> IO.ANSI.format(true) |> IO.iodata_to_binary()
     end
   end
 
@@ -440,8 +440,6 @@ defmodule IEx do
 
     # We cannot use colors because IEx may be off.
     case res do
-      {:error, :self} ->
-        IO.puts :stdio, "IEx cannot pry the shell itself."
       {:error, :no_iex} ->
         extra =
           case :os.type do
@@ -461,7 +459,7 @@ defmodule IEx do
       env.file
       |> File.stream!
       |> Enum.slice(max(env.line - 3, 0), 5)
-    Enum.intersperse(["\n\n"|lines], "    ")
+    Enum.intersperse(["\n\n" | lines], "    ")
   end
 
   ## Callbacks
@@ -506,7 +504,7 @@ defmodule IEx do
       end
 
     # expand_fun is not supported by a shell variant
-    # on Windows, so we do two io calls, not caring
+    # on Windows, so we do two IO calls, not caring
     # about the result of the expand_fun one.
     _ = :io.setopts(gl, expand_fun: expand_fun)
     :io.setopts(gl, binary: true, encoding: :unicode)

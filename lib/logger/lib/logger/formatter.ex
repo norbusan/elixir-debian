@@ -53,8 +53,8 @@ defmodule Logger.Formatter do
   """
   @spec prune(IO.chardata) :: IO.chardata
   def prune(binary) when is_binary(binary), do: prune_binary(binary, "")
-  def prune([h|t]) when h in 0..1114111, do: [h|prune(t)]
-  def prune([h|t]), do: [prune(h)|prune(t)]
+  def prune([h | t]) when h in 0..1114111, do: [h | prune(t)]
+  def prune([h | t]), do: [prune(h) | prune(t)]
   def prune([]), do: []
   def prune(_), do: @replacement
 
@@ -66,7 +66,7 @@ defmodule Logger.Formatter do
     do: acc
 
   @doc ~S"""
-  Compiles a format string into an array that the `format/5` can handle.
+  Compiles a format string into a data structure that the `format/5` can handle.
 
   Check the module doc for documentation on the valid parameters. If you
   pass `nil`, it defaults to: `$time $metadata [$level] $levelpad$message\n`

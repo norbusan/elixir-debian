@@ -77,7 +77,7 @@ defmodule IEx.Evaluator do
 
       # Evaluate the contents in the same environment server_loop will run in
       {_result, binding, env, _scope} =
-        :elixir.eval(String.to_char_list(code), state.binding, env)
+        :elixir.eval(String.to_charlist(code), state.binding, env)
 
       %{state | binding: binding, env: :elixir.env_for_eval(env, file: "iex", line: 1)}
     catch
@@ -105,7 +105,7 @@ defmodule IEx.Evaluator do
 
   defp eval(code, iex_state, history, state) do
     try do
-      do_eval(String.to_char_list(code), iex_state, history, state)
+      do_eval(String.to_charlist(code), iex_state, history, state)
     catch
       kind, error ->
         print_error(kind, error, System.stacktrace)
@@ -182,7 +182,7 @@ defmodule IEx.Evaluator do
 
   @elixir_internals [:elixir, :elixir_exp, :elixir_compiler, :elixir_module, :elixir_clauses,
                      :elixir_translator, :elixir_expand, :elixir_lexical, :elixir_exp_clauses,
-                     :elixir_def]
+                     :elixir_def, :elixir_map]
 
   defp prune_stacktrace(stacktrace) do
     # The order in which each drop_while is listed is important.
@@ -225,7 +225,7 @@ defmodule IEx.Evaluator do
   end
 
   defp format_entry({app, info}, width) do
-    app = String.rjust(app, width)
+    app = String.pad_leading(app, width)
     IEx.color(:stack_app, app) <> IEx.color(:stack_info, info)
   end
 end

@@ -24,18 +24,26 @@ This document simply outlines the release process:
 
 10. Add the release to `elixir.csv` file in `elixir-lang/elixir-lang.github.com`
 
-11. Build and push standalone Mix with `make publish_mix` (requires AWS credentials)
-
 ## New vMAJOR.MINOR releases
 
-12. Create a new branch "vMAJOR.MINOR"
+11. Create a new branch "vMAJOR.MINOR"
 
-13. Move docs generation to `docs/vMAJOR.MINOR` in Makefile and copy them from `docs/stable` (change index.html accordingly)
+12. Move docs generation to `docs/vMAJOR.MINOR` in Makefile, set CANONICAL to stable and copy them to `docs/stable` (change index.html accordingly)
 
-14. In master, bump versions, start new CHANGELOG, add `-dev` back and commit "Start vVERSION+1"
+13. In master, bump versions, start new CHANGELOG, add `-dev` back and commit "Start vVERSION+1"
 
 ## Places where version is mentioned
 
-* VERSION (make sure there is no newline in this file)
+* VERSION
 * CHANGELOG.md
 * src/elixir.app.src (not lib/elixir/src/elixir.app.src)
+
+## Deprecation policy
+
+Elixir deprecations happens in 3 steps:
+
+  1. The feature is soft-deprecated. It means both CHANGELOG and documentation must list the feature as deprecated but no warning is effectively emitted by running the code. There is no requirement to soft-deprecate a feature.
+
+  2. The feature is effectively deprecated by emitting warnings on usage. In order to deprecate a feature, the proposed alternative MUST exist for AT LEAST two versions. For example, `Enum.uniq/2` was soft-deprecated in favor of `Enum.uniq_by/2` in Elixir v1.1. This means a deprecation warning may only be emitted by Elixir v1.3 or later.
+
+  3. The feature is removed. This can only happen on major releases. This means deprecated features in Elixir v1.x shall only be removed by Elixir v2.x.

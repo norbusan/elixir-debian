@@ -1,7 +1,7 @@
 -module(elixir_module).
--export([data_table/1, defs_table/1, clas_table/1, is_open/1,
-         get_attribute/2, delete_doc/6,
-         compile/4, expand_callback/6, add_beam_chunk/3, format_error/1]).
+-export([data_table/1, defs_table/1, is_open/1, get_attribute/2, delete_doc/6,
+         compile/4, expand_callback/6, add_beam_chunk/3, format_error/1,
+         compiler_modules/0]).
 -include("elixir.hrl").
 
 -define(acc_attr, {elixir, acc_attributes}).
@@ -10,6 +10,19 @@
 -define(overridable_attr, {elixir, overridable}).
 -define(location_attr, {elixir, location}).
 
+%% Stores modules currently being defined by the compiler
+
+compiler_modules() ->
+  case erlang:get(elixir_compiler_modules) of
+    undefined -> [];
+    M when is_list(M) -> M
+  end.
+
+put_compiler_modules([]) ->
+  erlang:erase(elixir_compiler_modules);
+put_compiler_modules(M) when is_list(M) ->
+  erlang:put(elixir_compiler_modules, M).
+
 %% TABLE METHODS
 
 data_table(Module) ->
@@ -17,9 +30,6 @@ data_table(Module) ->
 
 defs_table(Module) ->
   ets:lookup_element(elixir_modules, Module, 3).
-
-clas_table(Module) ->
-  ets:lookup_element(elixir_modules, Module, 4).
 
 is_open(Module) ->
   ets:lookup(elixir_modules, Module) /= [].
@@ -63,10 +73,12 @@ do_compile(Line, Module, Block, Vars, E) ->
   File = ?m(E, file),
   check_module_availability(Line, File, Module),
 
+  CompilerModules = compiler_modules(),
   Docs = elixir_compiler:get_opt(docs),
-  {Data, Defs, Clas, Ref} = build(Line, File, Module, Docs, ?m(E, lexical_tracker)),
+  {Data, Defs, Ref} = build(Line, File, Module, Docs, ?m(E, lexical_tracker)),
 
   try
+    put_compiler_modules([Module|CompilerModules]),
     {Result, NE} = eval_form(Line, Module, Data, Block, Vars, E),
 
     _ = case ets:lookup(Data, 'on_load') of
@@ -111,10 +123,10 @@ do_compile(Line, Module, Block, Vars, E) ->
           erlang:raise(error, undef, Stack)
       end
   after
+    put_compiler_modules(CompilerModules),
     elixir_locals:cleanup(Module),
     ets:delete(Data),
     ets:delete(Defs),
-    ets:delete(Clas),
     elixir_code_server:call({undefmodule, Ref})
   end.
 
@@ -137,7 +149,7 @@ compile_undef(Module, Fun, Arity, Stack) ->
 
 build(Line, File, Module, Docs, Lexical) ->
   case ets:lookup(elixir_modules, Module) of
-    [{Module, _, _, _, OldLine, OldFile}] ->
+    [{Module, _, _, OldLine, OldFile}] ->
       Error = {module_in_definition, Module, OldFile, OldLine},
       elixir_errors:form_error([{line, Line}], File, ?MODULE, Error);
     _ ->
@@ -145,11 +157,9 @@ build(Line, File, Module, Docs, Lexical) ->
   end,
 
   Data = ets:new(Module, [set, public]),
-  Defs = ets:new(Module, [set, public]),
-  Clas = ets:new(Module, [bag, public]),
-
-  Ref = elixir_code_server:call({defmodule, self(),
-                                 {Module, Data, Defs, Clas, Line, File}}),
+  Defs = ets:new(Module, [bag, public]),
+  Ref  = elixir_code_server:call({defmodule, self(),
+                                 {Module, Data, Defs, Line, File}}),
 
   ets:insert(Data, {before_compile, []}),
   ets:insert(Data, {after_compile, []}),
@@ -164,8 +174,9 @@ build(Line, File, Module, Docs, Lexical) ->
 
   Attributes = [behaviour, on_load, compile, external_resource, dialyzer],
   ets:insert(Data, {?acc_attr, [before_compile, after_compile, on_definition, derive,
-                                spec, type, typep, opaque, callback, macrocallback|Attributes]}),
-  ets:insert(Data, {?persisted_attr, [vsn|Attributes]}),
+                                spec, type, typep, opaque, callback, macrocallback,
+                                optional_callbacks | Attributes]}),
+  ets:insert(Data, {?persisted_attr, [vsn | Attributes]}),
   ets:insert(Data, {?lexical_attr, Lexical}),
 
   %% Setup definition related modules
@@ -173,7 +184,7 @@ build(Line, File, Module, Docs, Lexical) ->
   elixir_locals:setup(Module),
   elixir_def_overridable:setup(Module),
 
-  {Data, Defs, Clas, Ref}.
+  {Data, Defs, Ref}.
 
 %% Receives the module representation and evaluates it.
 
@@ -199,8 +210,8 @@ functions_form(Line, File, Module, Def, Defp, Defmacro, Defmacrop, Exports, Body
   All = Def ++ Defmacro ++ Defp ++ Defmacrop,
   {Spec, Info} = add_info_function(Line, File, Module, All, Def, Defmacro),
 
-  {[{'__info__', 1}|All],
-   [{attribute, Line, export, lists:sort([{'__info__', 1}|Exports])},
+  {[{'__info__', 1} | All],
+   [{attribute, Line, export, lists:sort([{'__info__', 1} | Exports])},
     Spec, Info | Body]}.
 
 %% Add attributes handling to the form
@@ -220,7 +231,7 @@ attributes_form(Line, File, Data, Current) ->
           end,
 
         lists:foldl(fun(X, Final) ->
-          [{attribute, Line, Key, X}|Final]
+          [{attribute, Line, Key, X} | Final]
         end, Acc, process_attribute(Line, File, Key, Values))
     end
   end,
@@ -261,14 +272,14 @@ types_form(Line, File, Data, Forms0) ->
 
 types_attributes(Types, Forms) ->
   Fun = fun({{Kind, _NameArity, Expr}, Line, _Export}, Acc) ->
-    [{attribute, Line, Kind, Expr}|Acc]
+    [{attribute, Line, Kind, Expr} | Acc]
   end,
   lists:foldl(Fun, Forms, Types).
 
 export_types_attributes(Types, Forms) ->
   Fun = fun
     ({{_Kind, NameArity, _Expr}, Line, true}, Acc) ->
-      [{attribute, Line, export_type, [NameArity]}|Acc];
+      [{attribute, Line, export_type, [NameArity]} | Acc];
     ({_Type, _Line, false}, Acc) ->
       Acc
   end,
@@ -290,7 +301,8 @@ specs_form(Data, Defmacro, Defmacrop, Unreachable, Forms) ->
       Specs3 = lists:filter(fun({{_Kind, NameArity, _Spec}, _Line}) ->
                                 not lists:member(NameArity, Unreachable)
                             end, Specs2),
-      specs_attributes(Forms, Specs3);
+      optional_callbacks_attributes(get_typespec(Data, optional_callbacks), Specs3) ++
+        specs_attributes(Forms, Specs3);
     true ->
       Forms
   end.
@@ -302,7 +314,7 @@ specs_attributes(Forms, Specs) ->
   dict:fold(fun({Kind, NameArity}, ExprsLines, Acc) ->
     {Exprs, Lines} = lists:unzip(ExprsLines),
     Line = lists:min(Lines),
-    [{attribute, Line, Kind, {NameArity, Exprs}}|Acc]
+    [{attribute, Line, Kind, {NameArity, Exprs}} | Acc]
   end, Forms, Dict).
 
 translate_macro_spec({{spec, NameArity, Spec}, Line}, Defmacro, Defmacrop) ->
@@ -321,11 +333,27 @@ translate_macro_spec({{spec, NameArity, Spec}, Line}, Defmacro, Defmacrop) ->
 translate_macro_spec({{callback, NameArity, Spec}, Line}, _Defmacro, _Defmacrop) ->
   [{{callback, NameArity, Spec}, Line}].
 
-spec_for_macro({type, Line, 'fun', [{type, _, product, Args}|T]}) ->
-  NewArgs = [{type, Line, term, []}|Args],
-  {type, Line, 'fun', [{type, Line, product, NewArgs}|T]};
+spec_for_macro({type, Line, 'fun', [{type, _, product, Args} | T]}) ->
+  NewArgs = [{type, Line, term, []} | Args],
+  {type, Line, 'fun', [{type, Line, product, NewArgs} | T]};
 
 spec_for_macro(Else) -> Else.
+
+optional_callbacks_attributes(OptionalCallbacksTypespec, Specs) ->
+  % We only take the specs of the callbacks (which are both callbacks and
+  % macrocallbacks).
+  Callbacks = [NameArity || {{callback, NameArity, _Spec}, _Line} <- Specs],
+  [{attribute, Line, optional_callbacks, macroify_callback_names(NamesArities, Callbacks)} ||
+    {Line, NamesArities} <- OptionalCallbacksTypespec].
+
+macroify_callback_names(NamesArities, Callbacks) ->
+  lists:map(fun({Name, Arity} = NameArity) ->
+                MacroNameArity = {elixir_utils:macro_name(Name), Arity + 1},
+                case lists:member(MacroNameArity, Callbacks) of
+                  true -> MacroNameArity;
+                  false -> NameArity
+                end
+            end, NamesArities).
 
 %% Loads the form into the code server.
 
@@ -341,15 +369,16 @@ load_form(Line, Data, Forms, Opts, E) ->
     Binary = add_docs_chunk(Binary0, Data, Line, Docs),
     eval_callbacks(Line, Data, after_compile, [E, Binary], E),
 
-    case get(elixir_compiled) of
+    case get(elixir_module_binaries) of
       Current when is_list(Current) ->
-        put(elixir_compiled, [{Module, Binary}|Current]),
+        put(elixir_module_binaries, [{Module, Binary} | Current]),
 
         case get(elixir_compiler_pid) of
-          undefined -> ok;
+          undefined ->
+            ok;
           PID ->
             Ref = make_ref(),
-            PID ! {module_available, self(), Ref, ?m(E, file), Module, Binary},
+            PID ! {module_available, self(), Ref, get(elixir_compiler_file), Module, Binary},
             receive {Ref, ack} -> ok end
         end;
       _ ->
@@ -488,7 +517,7 @@ add_beam_chunk(Bin, Id, ChunkData)
         when is_binary(Bin), is_list(Id), is_binary(ChunkData) ->
   {ok, _, Chunks0} = beam_lib:all_chunks(Bin),
   NewChunk = {Id, ChunkData},
-  Chunks = [NewChunk|Chunks0],
+  Chunks = [NewChunk | Chunks0],
   {ok, NewBin} = beam_lib:build_module(Chunks),
   NewBin.
 
@@ -496,7 +525,7 @@ add_beam_chunk(Bin, Id, ChunkData)
 %% the callback can't be expanded, invokes the given
 %% fun passing a possibly expanded AM:AF(Args).
 expand_callback(Line, M, F, Args, E, Fun) ->
-  Meta = [{line, Line}, {require, false}],
+  Meta = [{line, Line}, {required, true}],
 
   {EE, ET} = elixir_dispatch:dispatch_require(Meta, M, F, Args, E, fun(AM, AF, AA) ->
     Fun(AM, AF, AA),
@@ -521,12 +550,12 @@ location(Line, E) ->
   [{file, elixir_utils:characters_to_list(?m(E, file))}, {line, Line}].
 
 %% We've reached the elixir_module or eval internals, skip it with the rest
-prune_stacktrace(Info, [{elixir, eval_forms, _, _}|_]) ->
+prune_stacktrace(Info, [{elixir, eval_forms, _, _} | _]) ->
   [Info];
-prune_stacktrace(Info, [{elixir_module, _, _, _}|_]) ->
+prune_stacktrace(Info, [{elixir_module, _, _, _} | _]) ->
   [Info];
-prune_stacktrace(Info, [H|T]) ->
-  [H|prune_stacktrace(Info, T)];
+prune_stacktrace(Info, [H | T]) ->
+  [H | prune_stacktrace(Info, T)];
 prune_stacktrace(Info, []) ->
   [Info].
 
@@ -544,9 +573,18 @@ format_error({internal_function_overridden, {Name, Arity}}) ->
 format_error({invalid_module, Module}) ->
   io_lib:format("invalid module name: ~ts", ['Elixir.Kernel':inspect(Module)]);
 format_error({module_defined, Module}) ->
-  io_lib:format("redefining module ~ts", [elixir_aliases:inspect(Module)]);
+  Extra =
+    case code:which(Module) of
+      Path when is_list(Path) ->
+        io_lib:format(" (current version loaded from ~ts)", [elixir_utils:relative_to_cwd(Path)]);
+      in_memory ->
+        " (current version defined in memory)";
+      _ ->
+        ""
+    end,
+  io_lib:format("redefining module ~ts~ts", [elixir_aliases:inspect(Module), Extra]);
 format_error({module_reserved, Module}) ->
   io_lib:format("module ~ts is reserved and cannot be defined", [elixir_aliases:inspect(Module)]);
 format_error({module_in_definition, Module, File, Line}) ->
   io_lib:format("cannot define module ~ts because it is currently being defined in ~ts:~B",
-    [elixir_aliases:inspect(Module), 'Elixir.Path':relative_to_cwd(File), Line]).
+    [elixir_aliases:inspect(Module), elixir_utils:relative_to_cwd(File), Line]).

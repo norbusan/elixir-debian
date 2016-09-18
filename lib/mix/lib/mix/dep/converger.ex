@@ -16,8 +16,11 @@ defmodule Mix.Dep.Converger do
       end)
 
       Enum.each(deps, fn %Mix.Dep{app: app, deps: other_deps} ->
-        Enum.each(other_deps, fn %Mix.Dep{app: other_app} ->
-          :digraph.add_edge(graph, other_app, app)
+        Enum.each(other_deps, fn
+          %Mix.Dep{app: ^app} ->
+            Mix.raise "App #{app} lists itself as a dependency"
+          %Mix.Dep{app: other_app} ->
+            :digraph.add_edge(graph, other_app, app)
         end)
       end)
 
@@ -76,14 +79,14 @@ defmodule Mix.Dep.Converger do
 
     # Run remote converger if one is available and rerun Mix's
     # converger with the new information
-    if not diverged? && (remote = Mix.RemoteConverger.get) do
+    remote = Mix.RemoteConverger.get
+
+    if not diverged? && remote do
       # If there is a lock, it means we are doing a get/update
       # and we need to hit the remote converger which do external
-      # requests and what not. In case of deps.check, deps and so
+      # requests and what not. In case of deps.loadpaths, deps and so
       # on, there is no lock, so we won't hit this branch.
-      if lock_given? do
-        lock = remote.converge(deps, lock)
-      end
+      lock = if lock_given?, do: remote.converge(deps, lock), else: lock
 
       deps = deps
              |> Enum.reject(&remote.remote?(&1))
@@ -101,9 +104,9 @@ defmodule Mix.Dep.Converger do
           end
         end)
 
-      {reject_non_fullfilled_optional(deps), rest, lock}
+      {reject_non_fulfilled_optional(deps), rest, lock}
     else
-      {reject_non_fullfilled_optional(deps), rest, lock}
+      {reject_non_fulfilled_optional(deps), rest, lock}
     end
   end
 
@@ -154,39 +157,39 @@ defmodule Mix.Dep.Converger do
   # Now, since "d" was specified in a parent project, no
   # exception is going to be raised since d is considered
   # to be the authoritative source.
-  defp all([dep|t], acc, upper_breadths, current_breadths, callback, rest, lock, env, cache) do
+  defp all([dep | t], acc, upper_breadths, current_breadths, callback, rest, lock, env, cache) do
     cond do
       new_acc = diverged_deps(acc, upper_breadths, dep) ->
         all(t, new_acc, upper_breadths, current_breadths, callback, rest, lock, env, cache)
       Mix.Dep.Loader.skip?(dep, env) ->
         # We still keep skipped dependencies around to detect conflicts.
         # They must be rejected after every all iteration.
-        all(t, [dep|acc], upper_breadths, current_breadths, callback, rest, lock, env, cache)
+        all(t, [dep | acc], upper_breadths, current_breadths, callback, rest, lock, env, cache)
       true ->
-        dep =
+        {dep, rest, lock} =
           case cache.(dep) do
             {:loaded, cached_dep} ->
-              cached_dep
+              {cached_dep, rest, lock}
             {:unloaded, dep, children} ->
               {dep, rest, lock} = callback.(put_lock(dep, lock), rest, lock)
 
               # After we invoke the callback (which may actually check out the
               # dependency), we load the dependency including its latest info
               # and children information.
-              Mix.Dep.Loader.load(dep, children)
+              {Mix.Dep.Loader.load(dep, children), rest, lock}
           end
 
         {acc, rest, lock} =
-          all(t, [dep|acc], upper_breadths, current_breadths, callback, rest, lock, env, cache)
+          all(t, [dep | acc], upper_breadths, current_breadths, callback, rest, lock, env, cache)
 
-        deps = reject_non_fullfilled_optional(dep.deps, current_breadths)
+        deps = reject_non_fulfilled_optional(dep.deps, Enum.map(acc, & &1.app))
         new_breadths = Enum.map(deps, &(&1.app)) ++ current_breadths
         all(deps, acc, current_breadths, new_breadths, callback, rest, lock, env, cache)
     end
   end
 
   defp all([], acc, _upper, _current, _callback, rest, lock, _env, _cache) do
-    {acc, rest, lock}
+    {Enum.reverse(acc), rest, lock}
   end
 
   defp put_lock(%Mix.Dep{app: app} = dep, lock) do
@@ -289,14 +292,14 @@ defmodule Mix.Dep.Converger do
     Enum.all?(keys, &(Keyword.fetch(opts1, &1) == Keyword.fetch(opts2, &1)))
   end
 
-  defp reject_non_fullfilled_optional(deps) do
+  defp reject_non_fulfilled_optional(deps) do
     apps = Enum.map(deps, & &1.app)
     for dep <- deps do
-      update_in dep.deps, &reject_non_fullfilled_optional(&1, apps)
+      update_in dep.deps, &reject_non_fulfilled_optional(&1, apps)
     end
   end
 
-  defp reject_non_fullfilled_optional(children, upper_breadths) do
+  defp reject_non_fulfilled_optional(children, upper_breadths) do
     Enum.reject children, fn %Mix.Dep{app: app, opts: opts} ->
       opts[:optional] && not(app in upper_breadths)
     end
@@ -321,7 +324,7 @@ defmodule Mix.Dep.Converger do
       {:ok, vsn} when not is_nil(vsn) ->
         case Mix.Dep.Loader.vsn_match(dep.requirement, vsn, dep.app) do
           {:ok, true} -> other
-          _ -> %{other | status: {:divergedreq, dep}}
+          _ -> %{other | status: {:divergedreq, vsn, dep}}
         end
       _ ->
         other

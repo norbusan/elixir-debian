@@ -45,8 +45,10 @@ defmodule PathTest do
       assert Path.relative_to("D:/usr/local/foo", "D:/usr/") == "local/foo"
       assert Path.relative_to("D:/usr/local/foo", "d:/usr/") == "local/foo"
       assert Path.relative_to("d:/usr/local/foo", "D:/usr/") == "local/foo"
-      assert Path.relative_to("D:/usr/local/foo", "d:") == "usr/local/foo"
-      assert Path.relative_to("D:/usr/local/foo", "D:") == "usr/local/foo"
+      assert Path.relative_to("D:/usr/local/foo", "d:/") == "usr/local/foo"
+      assert Path.relative_to("D:/usr/local/foo", "D:/") == "usr/local/foo"
+      assert Path.relative_to("D:/usr/local/foo", "d:") == "D:/usr/local/foo"
+      assert Path.relative_to("D:/usr/local/foo", "D:") == "D:/usr/local/foo"
     end
 
     test "type win" do
@@ -64,14 +66,14 @@ defmodule PathTest do
       assert Path.split("C:/foo/bar") == ["c:/", "foo", "bar"]
     end
   else
-    test "relative unix" do
+    test "relative Unix" do
       assert Path.relative("/usr/local/bin")   == "usr/local/bin"
       assert Path.relative("usr/local/bin")    == "usr/local/bin"
       assert Path.relative("../usr/local/bin") == "../usr/local/bin"
       assert Path.relative(['/usr', ?/, "local/bin"]) == "usr/local/bin"
     end
 
-    test "type unix" do
+    test "type Unix" do
       assert Path.type("/usr/local/bin")   == :absolute
       assert Path.type("usr/local/bin")    == :relative
       assert Path.type("../usr/local/bin") == :relative
@@ -90,8 +92,8 @@ defmodule PathTest do
     assert Path.relative_to_cwd(__ENV__.file) ==
            Path.relative_to(__ENV__.file, System.cwd!)
 
-    assert Path.relative_to_cwd(to_char_list(__ENV__.file)) ==
-           Path.relative_to(to_char_list(__ENV__.file), to_char_list(System.cwd!))
+    assert Path.relative_to_cwd(to_charlist(__ENV__.file)) ==
+           Path.relative_to(to_charlist(__ENV__.file), to_charlist(System.cwd!))
   end
 
   test "absname" do
@@ -111,7 +113,7 @@ defmodule PathTest do
   end
 
   test "expand path with user home" do
-    home = System.user_home!
+    home = System.user_home! |> Path.absname
 
     assert home == Path.expand("~")
     assert home == Path.expand('~')
@@ -236,7 +238,7 @@ defmodule PathTest do
   end
 
   if windows? do
-    defp strip_drive_letter_if_windows([_d, ?:|rest]), do: rest
+    defp strip_drive_letter_if_windows([_d, ?: | rest]), do: rest
     defp strip_drive_letter_if_windows(<<_d, ?:, rest::binary>>), do: rest
   else
     defp strip_drive_letter_if_windows(path), do: path

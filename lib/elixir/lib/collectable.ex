@@ -13,7 +13,7 @@ defprotocol Collectable do
   The `Enumerable` protocol is useful to take values out of a collection.
   In order to support a wide range of values, the functions provided by
   the `Enumerable` protocol do not keep shape. For example, passing a
-  dictionary to `Enum.map/2` always returns a list.
+  map to `Enum.map/2` always returns a list.
 
   This design is intentional. `Enumerable` was designed to support infinite
   collections, resources and other structures with fixed shape. For example,
@@ -49,7 +49,7 @@ end
 defimpl Collectable, for: List do
   def into(original) do
     {[], fn
-      list, {:cont, x} -> [x|list]
+      list, {:cont, x} -> [x | list]
       list, :done -> original ++ :lists.reverse(list)
       _, :halt -> :ok
     end}
@@ -59,7 +59,7 @@ end
 defimpl Collectable, for: BitString do
   def into(original) do
     {original, fn
-      acc, {:cont, x} when is_bitstring(x) -> [acc|x]
+      acc, {:cont, x} when is_bitstring(x) -> [acc | x]
       acc, :done -> IO.iodata_to_binary(acc)
       _, :halt -> :ok
     end}

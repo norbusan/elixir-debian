@@ -90,10 +90,65 @@ defmodule Application do
   supervisor is automatically handled by the VM.
   """
 
+  @doc """
+  Called when an application is started.
+
+  This function is called when an the application is started using
+  `Application.start/2` (and functions on top of that, such as
+  `Application.ensure_started/2`). This function should start the top-level
+  process of the application (which should be the top supervisor of the
+  application's supervision tree if the application follows the OTP design
+  principles around supervision).
+
+  `start_type` defines how the application is started:
+
+    * `:normal` - used if the startup is a normal startup or if the application
+      is distributed and is started on the current node because of a failover
+      from another mode and the application specification key `:start_phases`
+      is `:undefined`.
+    * `{:takeover, node}` - used if the application is distributed and is
+      started on the current node because of a failover on the node `node`.
+    * `{:failover, node}` - used if the application is distributed and is
+      started on the current node because of a failover on node `node`, and the
+      application specification key `:start_phases` is not `:undefined`.
+
+  `start_args` are the arguments passed to the application in the `:mod`
+  specification key (e.g., `mod: {MyApp, [:my_args]}`).
+
+  This function should either return `{:ok, pid}` or `{:ok, pid, state}` if
+  startup is successful. `pid` should be the pid of the top supervisor. `state`
+  can be an arbitrary term, and if omitted will default to `[]`; if the
+  application is later stopped, `state` is passed to the `stop/1` callback (see
+  the documentation for the `stop/2` callback for more information).
+
+  `use Application` provides no default implementation for the `start/2`
+  callback.
+  """
+  @callback start(start_type, start_args :: term) ::
+    {:ok, pid} |
+    {:ok, pid, state} |
+    {:error, reason :: term}
+
+  @doc """
+  Called when an application is stopped.
+
+  This function is called when an application has stopped, i.e., when its
+  supervision tree has been stopped. It should do the opposite of what the
+  `start/2` callback did, and should perform any necessary cleanup. The return
+  value of this callback is ignored.
+
+  `state` is the return value of the `start/2` callback or the return value of
+  the `prep_stop/1` function if the application module defines such a function.
+
+  `use Application` defines a default implementation of this function which does
+  nothing and just returns `:ok`.
+  """
+  @callback stop(state) :: term
+
   @doc false
   defmacro __using__(_) do
     quote location: :keep do
-      @behaviour :application
+      @behaviour Application
 
       @doc false
       def stop(_state) do
@@ -107,6 +162,7 @@ defmodule Application do
   @type app :: atom
   @type key :: atom
   @type value :: term
+  @type state :: term
   @type start_type :: :permanent | :transient | :temporary
 
   @application_keys [:description, :id, :vsn, :modules, :maxP, :maxT, :registered,
@@ -146,7 +202,7 @@ defmodule Application do
   end
 
   @doc """
-  Get the application for the given module.
+  Gets the application for the given module.
 
   The application is located by analyzing the spec
   of all loaded applications. Returns `nil` if
@@ -376,9 +432,12 @@ defmodule Application do
   @doc """
   Returns the given path inside `app_dir/1`.
   """
-  @spec app_dir(app, String.t) :: String.t
+  @spec app_dir(app, String.t | [String.t]) :: String.t
   def app_dir(app, path) when is_binary(path) do
     Path.join(app_dir(app), path)
+  end
+  def app_dir(app, path) when is_list(path) do
+    Path.join([app_dir(app) | path])
   end
 
   @doc """
@@ -405,7 +464,7 @@ defmodule Application do
   @spec format_error(any) :: String.t
   def format_error(reason) do
     try do
-      impl_format_error(reason)
+      do_format_error(reason)
     catch
       # A user could create an error that looks like a builtin one
       # causing an error.
@@ -415,68 +474,68 @@ defmodule Application do
   end
 
   # exit(:normal) call is special cased, undo the special case.
-  defp impl_format_error({{:EXIT, :normal}, {mod, :start, args}}) do
+  defp do_format_error({{:EXIT, :normal}, {mod, :start, args}}) do
     Exception.format_exit({:normal, {mod, :start, args}})
   end
 
   # {:error, reason} return value
-  defp impl_format_error({reason, {mod, :start, args}}) do
+  defp do_format_error({reason, {mod, :start, args}}) do
     Exception.format_mfa(mod, :start, args) <> " returned an error: " <>
       Exception.format_exit(reason)
   end
 
   # error or exit(reason) call, use exit reason as reason.
-  defp impl_format_error({:bad_return, {{mod, :start, args}, {:EXIT, reason}}}) do
+  defp do_format_error({:bad_return, {{mod, :start, args}, {:EXIT, reason}}}) do
     Exception.format_exit({reason, {mod, :start, args}})
   end
 
   # bad return value
-  defp impl_format_error({:bad_return, {{mod, :start, args}, return}}) do
+  defp do_format_error({:bad_return, {{mod, :start, args}, return}}) do
     Exception.format_mfa(mod, :start, args) <>
       " returned a bad value: " <> inspect(return)
   end
 
-  defp impl_format_error({:already_started, app}) when is_atom(app) do
+  defp do_format_error({:already_started, app}) when is_atom(app) do
     "already started application #{app}"
   end
 
-  defp impl_format_error({:not_started, app}) when is_atom(app) do
+  defp do_format_error({:not_started, app}) when is_atom(app) do
     "not started application #{app}"
   end
 
-  defp impl_format_error({:bad_application, app}) do
+  defp do_format_error({:bad_application, app}) do
     "bad application: #{inspect(app)}"
   end
 
-  defp impl_format_error({:already_loaded, app}) when is_atom(app) do
+  defp do_format_error({:already_loaded, app}) when is_atom(app) do
     "already loaded application #{app}"
   end
 
-  defp impl_format_error({:not_loaded, app}) when is_atom(app) do
+  defp do_format_error({:not_loaded, app}) when is_atom(app) do
     "not loaded application #{app}"
   end
 
-  defp impl_format_error({:invalid_restart_type, restart}) do
+  defp do_format_error({:invalid_restart_type, restart}) do
     "invalid application restart type: #{inspect(restart)}"
   end
 
-  defp impl_format_error({:invalid_name, name}) do
+  defp do_format_error({:invalid_name, name}) do
     "invalid application name: #{inspect(name)}"
   end
 
-  defp impl_format_error({:invalid_options, opts}) do
+  defp do_format_error({:invalid_options, opts}) do
     "invalid application options: #{inspect(opts)}"
   end
 
-  defp impl_format_error({:badstartspec, spec}) do
+  defp do_format_error({:badstartspec, spec}) do
     "bad application start specs: #{inspect(spec)}"
   end
 
-  defp impl_format_error({'no such file or directory', file}) do
+  defp do_format_error({'no such file or directory', file}) do
     "could not find application file: #{file}"
   end
 
-  defp impl_format_error(reason) do
+  defp do_format_error(reason) do
     Exception.format_exit(reason)
   end
 end

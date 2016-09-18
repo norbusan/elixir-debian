@@ -150,8 +150,16 @@ defmodule Base do
   @doc """
   Encodes a binary string into a base 16 encoded string.
 
-  Accepts an atom `:upper` (default) for encoding to upper case characters or
-  `:lower` for lower case characters.
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+
+  The values for `:case` can be:
+
+    * `:upper` - use upper case characters (default)
+    * `:lower` - use lower case characters
 
   ## Examples
 
@@ -172,9 +180,17 @@ defmodule Base do
   @doc """
   Decodes a base 16 encoded string into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
 
   ## Examples
 
@@ -199,9 +215,17 @@ defmodule Base do
   @doc """
   Decodes a base 16 encoded string into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
 
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
@@ -252,8 +276,8 @@ defmodule Base do
   @spec encode64(binary) :: binary
   @spec encode64(binary, Keyword.t) :: binary
   def encode64(data, opts \\ []) when is_binary(data) do
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_encode64(data, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode64(data, pad?)
   end
 
   @doc """
@@ -318,8 +342,8 @@ defmodule Base do
   @spec decode64!(binary) :: binary
   @spec decode64!(binary, Keyword.t) :: binary
   def decode64!(string, opts \\ []) when is_binary(string) do
-    pad_flag = Keyword.get(opts, :padding, true)
-    string |> filter_ignored(opts[:ignore]) |> do_decode64(pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    string |> remove_ignored(opts[:ignore]) |> do_decode64(pad?)
   end
 
   @doc """
@@ -341,8 +365,8 @@ defmodule Base do
   @spec url_encode64(binary) :: binary
   @spec url_encode64(binary, Keyword.t) :: binary
   def url_encode64(data, opts \\ []) when is_binary(data) do
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_encode64url(data, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode64url(data, pad?)
   end
 
   @doc """
@@ -403,18 +427,29 @@ defmodule Base do
   @spec url_decode64!(binary) :: binary
   @spec url_decode64!(binary, Keyword.t) :: binary
   def url_decode64!(string, opts \\ []) when is_binary(string)  do
-    pad_flag = Keyword.get(opts, :padding, true)
-    string |> filter_ignored(opts[:ignore]) |> do_decode64url(pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    string |> remove_ignored(opts[:ignore]) |> do_decode64url(pad?)
   end
 
   @doc """
   Encodes a binary string into a base 32 encoded string.
 
-  Accepts an atom `:upper` (default) for encoding to upper case characters or
-  `:lower` for lower case characters.
+  ## Options
 
-  Accepts `padding: false` option which will omit padding from
-  the output string.
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+    * `:padding` - specifies whether to apply padding
+
+  The values for `:case` can be:
+
+    * `:upper` - use upper case characters (default)
+    * `:lower` - use lower case characters
+
+  The values for `:padding` can be:
+
+    * `true` - pad the output string to the nearest multiple of 8 (default)
+    * `false` - omit padding from the output string
 
   ## Examples
 
@@ -432,19 +467,30 @@ defmodule Base do
   @spec encode32(binary, Keyword.t) :: binary
   def encode32(data, opts \\ []) when is_binary(data) do
     case = Keyword.get(opts, :case, :upper)
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_encode32(case, data, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_encode32(case, data, pad?)
   end
 
   @doc """
   Decodes a base 32 encoded string into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
+  ## Options
 
-  Accepts `padding: false` option which will ignore padding from
-  the input string.
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow  upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - require the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignore padding from the input string
 
   ## Examples
 
@@ -472,15 +518,26 @@ defmodule Base do
   @doc """
   Decodes a base 32 encoded string into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
-
-  Accepts `padding: false` option which will ignore padding from
-  the input string.
-
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - require the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignore padding from the input string
 
   ## Examples
 
@@ -501,19 +558,30 @@ defmodule Base do
   @spec decode32!(binary, Keyword.t) :: binary
   def decode32!(string, opts \\ []) when is_binary(string) do
     case = Keyword.get(opts, :case, :upper)
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_decode32(case, string, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_decode32(case, string, pad?)
   end
 
   @doc """
   Encodes a binary string into a base 32 encoded string with an
   extended hexadecimal alphabet.
 
-  Accepts an atom `:upper` (default) for encoding to upper case characters or
-  `:lower` for lower case characters.
+  ## Options
 
-  Accepts `padding: false` option which will omit padding from
-  the output string.
+  The accepted options are:
+
+    * `:case` - specifies the character case to use when encoding
+    * `:padding` - specifies whether to apply padding
+
+  The values for `:case` can be:
+
+    * `:upper` - use upper case characters (default)
+    * `:lower` - use lower case characters
+
+  The values for `:padding` can be:
+
+    * `true` - pad the output string to the nearest multiple of 8 (default)
+    * `false` - omit padding from the output string
 
   ## Examples
 
@@ -531,20 +599,31 @@ defmodule Base do
   @spec hex_encode32(binary, Keyword.t) :: binary
   def hex_encode32(data, opts \\ []) when is_binary(data) do
     case = Keyword.get(opts, :case, :upper)
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_hex_encode32(case, data, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_hex_encode32(case, data, pad?)
   end
 
   @doc """
   Decodes a base 32 encoded string with extended hexadecimal alphabet
   into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
+  ## Options
 
-  Accepts `padding: false` option which will ignore padding from
-  the input string.
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - require the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignore padding from the input string
 
   ## Examples
 
@@ -573,15 +652,26 @@ defmodule Base do
   Decodes a base 32 encoded string with extended hexadecimal alphabet
   into a binary string.
 
-  Accepts an atom `:upper` (default) for decoding from upper case characters or
-  `:lower` for lower case characters. `:mixed` can be given for mixed case
-  characters.
-
-  Accepts `padding: false` option which will ignore padding from
-  the input string.
-
   An `ArgumentError` exception is raised if the padding is incorrect or
   a non-alphabet character is present in the string.
+
+  ## Options
+
+  The accepted options are:
+
+    * `:case` - specifies the character case to accept when decoding
+    * `:padding` - specifies whether to require padding
+
+  The values for `:case` can be:
+
+    * `:upper` - only allow upper case characters (default)
+    * `:lower` - only allow lower case characters
+    * `:mixed` - allow mixed case characters
+
+  The values for `:padding` can be:
+
+    * `true` - require the input string to be padded to the nearest multiple of 8 (default)
+    * `false` - ignore padding from the input string
 
   ## Examples
 
@@ -602,12 +692,12 @@ defmodule Base do
   @spec hex_decode32!(binary, Keyword.t) :: binary
   def hex_decode32!(string, opts \\ []) when is_binary(string) do
     case = Keyword.get(opts, :case, :upper)
-    pad_flag = Keyword.get(opts, :padding, true)
-    do_hex_decode32(case, string, pad_flag)
+    pad? = Keyword.get(opts, :padding, true)
+    do_hex_decode32(case, string, pad?)
   end
 
-  defp filter_ignored(string, nil), do: string
-  defp filter_ignored(string, :whitespace) do
+  defp remove_ignored(string, nil), do: string
+  defp remove_ignored(string, :whitespace) do
     for <<c::8 <- string>>, not c in '\s\t\r\n', into: <<>>, do: <<c::8>>
   end
 
@@ -637,7 +727,7 @@ defmodule Base do
   end
 
   defp do_encode64(<<>>, _), do: <<>>
-  defp do_encode64(data, pad_flag) do
+  defp do_encode64(data, pad?) do
     split =  3 * div(byte_size(data), 3)
     <<main::size(split)-binary, rest::binary>> = data
     main = for <<c::6 <- main>>, into: <<>>, do: <<enc64(c)::8>>
@@ -649,14 +739,14 @@ defmodule Base do
       <<>> ->
         <<>>
     end
-    main <> maybe_pad(tail, pad_flag, 4, "=")
+    main <> maybe_pad(tail, pad?, 4, "=")
   end
 
   defp do_decode64(<<>>, _), do: <<>>
   defp do_decode64(string, false) do
     maybe_pad(string, true, 4, "=") |> do_decode64(true)
   end
-  defp do_decode64(string, _pad_flag) when rem(byte_size(string), 4) == 0 do
+  defp do_decode64(string, _pad?) when rem(byte_size(string), 4) == 0 do
     split = byte_size(string) - 4
     <<main::size(split)-binary, rest::binary>> = string
     main = for <<c::8 <- main>>, into: <<>>, do: <<dec64(c)::6>>
@@ -677,7 +767,7 @@ defmodule Base do
   end
 
   defp do_encode64url(<<>>, _), do: <<>>
-  defp do_encode64url(data, pad_flag) do
+  defp do_encode64url(data, pad?) do
     split =  3 * div(byte_size(data), 3)
     <<main::size(split)-binary, rest::binary>> = data
     main = for <<c::6 <- main>>, into: <<>>, do: <<enc64url(c)::8>>
@@ -689,14 +779,14 @@ defmodule Base do
       <<>> ->
         <<>>
     end
-    main <> maybe_pad(tail, pad_flag, 4, "=")
+    main <> maybe_pad(tail, pad?, 4, "=")
   end
 
   defp do_decode64url(<<>>, _), do: <<>>
   defp do_decode64url(string, false) do
     maybe_pad(string, true, 4, "=") |> do_decode64url(true)
   end
-  defp do_decode64url(string, _pad_flag) when rem(byte_size(string), 4) == 0 do
+  defp do_decode64url(string, _pad?) when rem(byte_size(string), 4) == 0 do
     split = byte_size(string) - 4
     <<main::size(split)-binary, rest::binary>> = string
     main = for <<c::8 <- main>>, into: <<>>, do: <<dec64url(c)::6>>
@@ -719,7 +809,7 @@ defmodule Base do
   defp do_encode32(_, <<>>, _), do: <<>>
 
   for {case, fun} <- [upper: :to_upper, lower: :to_lower] do
-    defp do_encode32(unquote(case), data, pad_flag) do
+    defp do_encode32(unquote(case), data, pad?) do
       split =  5 * div(byte_size(data), 5)
       <<main::size(split)-binary, rest::binary>> = data
       main = for <<c::5 <- main>>, into: <<>>, do: <<unquote(fun)(enc32(c))::8>>
@@ -741,7 +831,7 @@ defmodule Base do
         <<>> ->
           <<>>
       end
-      main <> maybe_pad(tail, pad_flag, 8, "=")
+      main <> maybe_pad(tail, pad?, 8, "=")
     end
   end
 
@@ -750,7 +840,7 @@ defmodule Base do
     do: do_decode32(case, maybe_pad(string, true, 8, "="), true)
 
   for {case, fun} <- [upper: :from_upper, lower: :from_lower, mixed: :from_mixed] do
-    defp do_decode32(unquote(case), string, _pad_flag) when rem(byte_size(string), 8) == 0 do
+    defp do_decode32(unquote(case), string, _pad?) when rem(byte_size(string), 8) == 0 do
       split = byte_size(string) - 8
       <<main::size(split)-binary, rest::binary>> = string
       main = for <<c::8 <- main>>, into: <<>>, do: <<dec32(unquote(fun)(c))::5>>
@@ -787,7 +877,7 @@ defmodule Base do
   defp do_hex_encode32(_, <<>>, _), do: <<>>
 
   for {case, fun} <- [upper: :to_upper, lower: :to_lower] do
-    defp do_hex_encode32(unquote(case), data, pad_flag) do
+    defp do_hex_encode32(unquote(case), data, pad?) do
       split =  5 * div(byte_size(data), 5)
       <<main::size(split)-binary, rest::binary>> = data
       main = for <<c::5 <- main>>, into: <<>>, do: <<unquote(fun)(enc32hex(c))::8>>
@@ -809,7 +899,7 @@ defmodule Base do
         <<>> ->
           <<>>
       end
-      main <> maybe_pad(tail, pad_flag, 8, "=")
+      main <> maybe_pad(tail, pad?, 8, "=")
     end
   end
 
@@ -818,7 +908,7 @@ defmodule Base do
     do: do_hex_decode32(case, maybe_pad(string, true, 8, "="), true)
 
   for {case, fun} <- [upper: :from_upper, lower: :from_lower, mixed: :from_mixed] do
-    defp do_hex_decode32(unquote(case), string, _pad_flag) when rem(byte_size(string), 8) == 0 do
+    defp do_hex_decode32(unquote(case), string, _pad?) when rem(byte_size(string), 8) == 0 do
       split = byte_size(string) - 8
       <<main::size(split)-binary, rest::binary>> = string
       main = for <<c::8 <- main>>, into: <<>>, do: <<dec32hex(unquote(fun)(c))::5>>

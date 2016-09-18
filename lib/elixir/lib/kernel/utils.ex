@@ -8,12 +8,12 @@ defmodule Kernel.Utils do
 
   defp destructure_list(_, 0), do: []
   defp destructure_list([], count), do: destructure_nil(count)
-  defp destructure_list([h|t], count), do: [h|destructure_list(t, count - 1)]
+  defp destructure_list([h | t], count), do: [h | destructure_list(t, count - 1)]
 
   defp destructure_nil(0), do: []
-  defp destructure_nil(count), do: [nil|destructure_nil(count - 1)]
+  defp destructure_nil(count), do: [nil | destructure_nil(count - 1)]
 
-  def defdelegate(fun, opts, env) do
+  def defdelegate(fun, opts) do
     append_first = Keyword.get(opts, :append_first, false)
 
     {name, args} =
@@ -22,32 +22,44 @@ defmodule Kernel.Utils do
         _ -> raise ArgumentError, "invalid syntax in defdelegate #{Macro.to_string(fun)}"
       end
 
-    :ok = check_defdelegate_args(args, env)
-
-    as_args =
-      case append_first and args != [] do
-        true  -> tl(args) ++ [hd(args)]
-        false -> args
-      end
-
+    as_args_list = normalize_args(args)
     as = Keyword.get(opts, :as, name)
-    {name, args, as, as_args}
+    :lists.map(fn as_args ->
+      formal_args = make_formal_args(as_args)
+      as_args = case append_first do
+        true  -> tl(as_args) ++ [hd(as_args)]
+        false -> as_args
+      end
+      {name, formal_args, as, as_args}
+    end, as_args_list)
   end
 
-  # TODO: Convert this to an error on 1.3
-  defp check_defdelegate_args([], _env),
-    do: :ok
-  defp check_defdelegate_args([{var, _, mod}|rest], env) when is_atom(var) and is_atom(mod),
-    do: check_defdelegate_args(rest, env)
-  defp check_defdelegate_args([code|_], env) do
-    :elixir_errors.warn(env.line, env.file,
-      "defdelegate/2 will only accept variable names in upcoming versions, " <>
-      "got: #{Macro.to_string(code)}")
+  defp make_formal_args(args) do
+    fun = &match?({name, _, mod} when is_atom(name) and is_atom(mod), &1)
+    :lists.filter(fun, args)
+  end
+
+  defp normalize_args(raw_args) do
+    :lists.foldr(fn
+      ({:\\, _, [arg, default_arg]}, [as_args | _] = as_args_list) ->
+        new_as_args = [default_arg | as_args]
+        [new_as_args | add_arg(as_args_list, arg)]
+      (arg, as_args_list) ->
+        add_arg(as_args_list, arg)
+    end, [[]], raw_args)
+  end
+
+  defp add_arg(as_args_list, {name, _, mod} = arg) when is_atom(name) and is_atom(mod),
+    do: :lists.map(&([arg | &1]), as_args_list)
+  defp add_arg(_, code) do
+    raise ArgumentError,
+      "defdelegate/2 only accepts function parameters, got: #{Macro.to_string(code)}"
   end
 
   def defstruct(module, fields) do
     case fields do
-      fs when is_list(fs) -> :ok
+      fs when is_list(fs) ->
+        :ok
       other ->
         raise ArgumentError, "struct fields definition must be list, got: #{inspect other}"
     end
@@ -68,6 +80,15 @@ defmodule Kernel.Utils do
         raise ArgumentError, "struct field names must be atoms, got: #{inspect other}"
     end, fields)
 
-    :maps.put(:__struct__, module, :maps.from_list(fields))
+    {:maps.put(:__struct__, module, :maps.from_list(fields)),
+     List.wrap(Module.get_attribute(module, :enforce_keys)),
+     Module.get_attribute(module, :derive)}
+  end
+
+  def announce_struct(module) do
+    case :erlang.get(:elixir_compiler_pid) do
+      :undefined -> :ok
+      pid -> send(pid, {:struct_available, module})
+    end
   end
 end

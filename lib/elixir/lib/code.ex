@@ -56,11 +56,11 @@ defmodule Code do
 
   """
   def append_path(path) do
-    :code.add_pathz(to_char_list(Path.expand path))
+    :code.add_pathz(to_charlist(Path.expand path))
   end
 
   @doc """
-  Prepends a path to the begining of the Erlang VM code path list.
+  Prepends a path to the beginning of the Erlang VM code path list.
 
   This is the list of directories the Erlang VM uses for finding
   module code.
@@ -76,7 +76,7 @@ defmodule Code do
 
   """
   def prepend_path(path) do
-    :code.add_patha(to_char_list(Path.expand path))
+    :code.add_patha(to_charlist(Path.expand path))
   end
 
   @doc """
@@ -95,7 +95,7 @@ defmodule Code do
 
   """
   def delete_path(path) do
-    :code.del_path(to_char_list(Path.expand path))
+    :code.del_path(to_charlist(Path.expand path))
   end
 
   @doc """
@@ -126,7 +126,7 @@ defmodule Code do
   Notice that setting any of the values above overrides Elixir's default
   values. For example, setting `:requires` to `[]`, will no longer
   automatically require the `Kernel` module; in the same way setting
-  `:macros` will no longer auto-import `Kernel` macros like `if`, `case`,
+  `:macros` will no longer auto-import `Kernel` macros like `if/2`, `case/2`,
   etc.
 
   Returns a tuple of the form `{value, binding}`,
@@ -159,13 +159,13 @@ defmodule Code do
   def eval_string(string, binding \\ [], opts \\ [])
 
   def eval_string(string, binding, %Macro.Env{} = env) do
-    {value, binding, _env, _scope} = :elixir.eval to_char_list(string), binding, Map.to_list(env)
+    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, Map.to_list(env)
     {value, binding}
   end
 
   def eval_string(string, binding, opts) when is_list(opts) do
     validate_eval_opts(opts)
-    {value, binding, _env, _scope} = :elixir.eval to_char_list(string), binding, opts
+    {value, binding, _env, _scope} = :elixir.eval to_charlist(string), binding, opts
     {value, binding}
   end
 
@@ -263,7 +263,7 @@ defmodule Code do
   def string_to_quoted(string, opts \\ []) when is_list(opts) do
     file = Keyword.get opts, :file, "nofile"
     line = Keyword.get opts, :line, 1
-    :elixir.string_to_quoted(to_char_list(string), line, file, opts)
+    :elixir.string_to_quoted(to_charlist(string), line, file, opts)
   end
 
   @doc """
@@ -279,7 +279,7 @@ defmodule Code do
   def string_to_quoted!(string, opts \\ []) when is_list(opts) do
     file = Keyword.get opts, :file, "nofile"
     line = Keyword.get opts, :line, 1
-    :elixir.string_to_quoted!(to_char_list(string), line, file, opts)
+    :elixir.string_to_quoted!(to_charlist(string), line, file, opts)
   end
 
   @doc """
@@ -311,7 +311,7 @@ defmodule Code do
 
   ## Examples
 
-      Code.load_file("eex_test.exs","../eex/test") |> List.first
+      Code.load_file("eex_test.exs", "../eex/test") |> List.first
       #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
 
   """
@@ -343,11 +343,11 @@ defmodule Code do
 
   If the code is already loaded, it returns `nil`:
 
-      Code.require_file("eex_test.exs","../eex/test") #=> nil
+      Code.require_file("eex_test.exs", "../eex/test") #=> nil
 
   If the code is not loaded yet, it returns the same as `load_file/2`:
 
-      Code.require_file("eex_test.exs","../eex/test") |> List.first
+      Code.require_file("eex_test.exs", "../eex/test") |> List.first
       #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
 
   """
@@ -389,8 +389,8 @@ defmodule Code do
 
   ## Examples
 
-      Code.available_compiler_options
-      #=> [:docs, :debug_info, :ignore_module_conflict, :warnings_as_errors]
+      iex> Code.available_compiler_options
+      [:docs, :debug_info, :ignore_module_conflict, :warnings_as_errors]
 
   """
   def available_compiler_options do
@@ -445,7 +445,7 @@ defmodule Code do
   For compiling many files at once, check `Kernel.ParallelCompiler.files/2`.
   """
   def compile_string(string, file \\ "nofile") when is_binary(file) do
-    :elixir_compiler.string to_char_list(string), file
+    :elixir_compiler.string to_charlist(string), file
   end
 
   @doc """
@@ -542,15 +542,11 @@ defmodule Code do
   def ensure_compiled(module) when is_atom(module) do
     case :code.ensure_loaded(module) do
       {:error, :nofile} = error ->
-        case :erlang.get(:elixir_ensure_compiled) do
-          :undefined -> error
-          _ ->
-            try do
-              module.__info__(:module)
-              {:module, module}
-            rescue
-              UndefinedFunctionError -> error
-            end
+        if is_pid(:erlang.get(:elixir_compiler_pid)) and
+           Kernel.ErrorHandler.ensure_compiled(module, :module) do
+          {:module, module}
+        else
+          error
         end
       other -> other
     end
@@ -597,11 +593,10 @@ defmodule Code do
 
   ## Examples
 
-      # Get the documentation for the first function listed
-      iex> [fun|_] = Code.get_docs(Atom, :docs) |> Enum.sort()
-      iex> {{_function, _arity}, _line, _kind, _signature, text} = fun
+      # Get the module documentation
+      iex> {_line, text} = Code.get_docs(Atom, :moduledoc)
       iex> String.split(text, "\n") |> Enum.at(0)
-      "Converts an atom to a char list."
+      "Convenience functions for working with atoms."
 
       # Module doesn't exist
       iex> Code.get_docs(ModuleNotGood, :all)
@@ -620,7 +615,7 @@ defmodule Code do
   end
 
   def get_docs(binpath, kind) when is_binary(binpath) and kind in @doc_kinds do
-    do_get_docs(String.to_char_list(binpath), kind)
+    do_get_docs(String.to_charlist(binpath), kind)
   end
 
   @docs_chunk 'ExDc'

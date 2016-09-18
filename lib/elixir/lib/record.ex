@@ -85,14 +85,14 @@ defmodule Record do
     case Macro.Env.in_guard?(__CALLER__) do
       true ->
         quote do
-          is_tuple(unquote(data)) and tuple_size(unquote(data)) > 0
-            and :erlang.element(1, unquote(data)) == unquote(kind)
+          is_atom(unquote(kind)) and is_tuple(unquote(data)) and tuple_size(unquote(data)) > 0 and
+            elem(unquote(data), 0) == unquote(kind)
         end
       false ->
         quote do
           result = unquote(data)
-          is_tuple(result) and tuple_size(result) > 0
-            and :erlang.element(1, result) == unquote(kind)
+          kind = unquote(kind)
+          is_atom(kind) and is_tuple(result) and tuple_size(result) > 0 and elem(result, 0) == kind
         end
     end
   end
@@ -116,14 +116,13 @@ defmodule Record do
     case Macro.Env.in_guard?(__CALLER__) do
       true ->
         quote do
-          is_tuple(unquote(data)) and tuple_size(unquote(data)) > 0
-            and is_atom(:erlang.element(1, unquote(data)))
+          is_tuple(unquote(data)) and tuple_size(unquote(data)) > 0 and
+            is_atom(elem(unquote(data), 0))
         end
       false ->
         quote do
           result = unquote(data)
-          is_tuple(result) and tuple_size(result) > 0
-            and is_atom(:erlang.element(1, result))
+          is_tuple(result) and tuple_size(result) > 0 and is_atom(elem(result, 0))
         end
     end
   end
@@ -179,7 +178,7 @@ defmodule Record do
 
   ## Defining extracted records with anonymous functions
 
-  If a record defines an anonymous function, an ArgumentError
+  If a record defines an anonymous function, an `ArgumentError`
   will occur if you attempt to create a record with it.
   This can occur unintentionally when defining a record after extracting
   it from an Erlang library that uses anonymous functions for defaults.
@@ -260,8 +259,8 @@ defmodule Record do
         create(atom, fields, args, caller)
       true ->
         case Macro.expand(args, caller) do
-          {:{}, _, [^atom|list]} when length(list) == length(fields) ->
-            record = List.to_tuple([atom|list])
+          {:{}, _, [^atom | list]} when length(list) == length(fields) ->
+            record = List.to_tuple([atom | list])
             Macro.escape(Record.__keyword__(atom, fields, record))
           {^atom, arg} when length(fields) == 1 ->
             Macro.escape(Record.__keyword__(atom, fields, {atom, arg}))
@@ -297,17 +296,15 @@ defmodule Record do
   # Creates a new record with the given default fields and keyword values.
   defp create(atom, fields, keyword, caller) do
     in_match = Macro.Env.in_match?(caller)
+    keyword = apply_underscore(fields, keyword)
 
     {match, remaining} =
       Enum.map_reduce(fields, keyword, fn({field, default}, each_keyword) ->
         new_fields =
-          case Keyword.has_key?(each_keyword, field) do
-            true  -> Keyword.get(each_keyword, field)
-            false ->
-              case in_match do
-                true  -> {:_, [], nil}
-                false -> Macro.escape(default)
-              end
+          case Keyword.fetch(each_keyword, field) do
+            {:ok, value} -> value
+            :error when in_match -> {:_, [], nil}
+            :error -> Macro.escape(default)
           end
 
         {new_fields, Keyword.delete(each_keyword, field)}
@@ -315,7 +312,7 @@ defmodule Record do
 
     case remaining do
       [] ->
-        {:{}, [], [atom|match]}
+        {:{}, [], [atom | match]}
       _  ->
         keys = for {key, _} <- remaining, do: key
         raise ArgumentError, "record #{inspect atom} does not have the key: #{inspect hd(keys)}"
@@ -327,6 +324,8 @@ defmodule Record do
     if Macro.Env.in_match?(caller) do
       raise ArgumentError, "cannot invoke update style macro inside match"
     end
+
+    keyword = apply_underscore(fields, keyword)
 
     Enum.reduce keyword, var, fn({key, value}, acc) ->
       index = find_index(fields, key, 0)
@@ -352,15 +351,15 @@ defmodule Record do
     end
   end
 
-  defp find_index([{k, _}|_], k, i), do: i + 2
-  defp find_index([{_, _}|t], k, i), do: find_index(t, k, i + 1)
+  defp find_index([{k, _} | _], k, i), do: i + 2
+  defp find_index([{_, _} | t], k, i), do: find_index(t, k, i + 1)
   defp find_index([], _k, _i), do: nil
 
   # Returns a keyword list of the record
   @doc false
   def __keyword__(atom, fields, record) do
     if is_record(record, atom) do
-      [_tag|values] = Tuple.to_list(record)
+      [_tag | values] = Tuple.to_list(record)
       join_keyword(fields, values, [])
     else
       msg = "expected argument to be a literal atom, literal keyword or a #{inspect atom} record, got runtime: #{inspect record}"
@@ -368,8 +367,20 @@ defmodule Record do
     end
   end
 
-  defp join_keyword([{field, _default}|fields], [value|values], acc),
-    do: join_keyword(fields, values, [{field, value}| acc])
+  defp join_keyword([{field, _default} | fields], [value | values], acc),
+    do: join_keyword(fields, values, [{field, value} | acc])
   defp join_keyword([], [], acc),
     do: :lists.reverse(acc)
+
+  defp apply_underscore(fields, keyword) do
+    case Keyword.fetch(keyword, :_) do
+      {:ok, default} ->
+        fields
+        |> Enum.map(fn {k, _} -> {k, default} end)
+        |> Keyword.merge(keyword)
+        |> Keyword.delete(:_)
+      :error ->
+        keyword
+    end
+  end
 end

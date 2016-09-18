@@ -23,7 +23,8 @@ defmodule IEx.Helpers do
   There are many other helpers available:
 
     * `b/1`           - prints callbacks info and docs for a given module
-    * `c/2`           - compiles a file at the given path
+    * `c/1`           - compiles a file into the current directory
+    * `c/2`           - compiles a file to the given path
     * `cd/1`          - changes the current directory
     * `clear/0`       - clears the screen
     * `flush/0`       - flushes all messages sent to the shell
@@ -34,14 +35,17 @@ defmodule IEx.Helpers do
     * `l/1`           - loads the given module's beam code
     * `ls/0`          - lists the contents of the current directory
     * `ls/1`          - lists the contents of the specified directory
-    * `pid/3`         — creates a PID with the 3 integer arguments passed
-    * `pwd/0`         — prints the current working directory
-    * `r/1`           — recompiles and reloads the given module's source file
-    * `respawn/0`     — respawns the current shell
-    * `s/1`           — prints spec information
-    * `t/1`           — prints type information
-    * `v/0`           — retrieves the last value from the history
-    * `v/1`           — retrieves the nth value from the history
+    * `nl/2`          - deploys local beam code to a list of nodes
+    * `pid/1`         - creates a PID from a string
+    * `pid/3`         - creates a PID with the 3 integer arguments passed
+    * `pwd/0`         - prints the current working directory
+    * `r/1`           - recompiles the given module's source file
+    * `recompile/0`   - recompiles the current project
+    * `respawn/0`     - respawns the current shell
+    * `s/1`           - prints spec information
+    * `t/1`           - prints type information
+    * `v/0`           - retrieves the last value from the history
+    * `v/1`           - retrieves the nth value from the history
 
   Help for all of those functions can be consulted directly from
   the command line using the `h` helper itself. Try:
@@ -57,35 +61,24 @@ defmodule IEx.Helpers do
   Recompiles the current Mix application.
 
   This helper only works when IEx is started with a Mix
-  project, for example, `iex -S mix`. Before compiling
-  the code, it will stop the current application, and
-  start it again afterwards. Stopping applications are
-  required so processes in the supervision tree won't
-  crash when code is upgraded multiple times without
-  going through the proper hot-code swapping mechanism.
-
-  Changes to `mix.exs` or configuration files won't be
-  picked up by this helper, only changes to sources.
-  Restarting the shell and Mix is required in such cases.
+  project, for example, `iex -S mix`. The application is
+  not restarted after compilation, which means any long
+  running process may crash as the code is updated but the
+  state does not go through the proper code changes callback.
+  In any case, the supervision tree should notice the failure
+  and restart such servers.
 
   If you want to reload a single module, consider using
   `r ModuleName` instead.
 
-  NOTE: This feature is experimental and may be removed
-  in upcoming releases.
+  This function is meant to be used for development and
+  debugging purposes. Do not depend on it in production code.
   """
   def recompile do
     if mix_started? do
       config = Mix.Project.config
       reenable_tasks(config)
-      case stop_apps(config) do
-        {true, apps} ->
-          Mix.Task.run("app.start")
-          {:restarted, apps}
-        {false, apps} ->
-          Mix.Task.run("app.start", ["--no-start"])
-          {:recompiled, apps}
-      end
+      Mix.Task.run("compile")
     else
       IO.puts IEx.color(:eval_error, "Mix is not running. Please start IEx with: iex -S mix")
       :error
@@ -97,28 +90,11 @@ defmodule IEx.Helpers do
   end
 
   defp reenable_tasks(config) do
-    Mix.Task.reenable("app.start")
     Mix.Task.reenable("compile")
     Mix.Task.reenable("compile.all")
+    Mix.Task.reenable("compile.protocols")
     compilers = config[:compilers] || Mix.compilers
     Enum.each compilers, &Mix.Task.reenable("compile.#{&1}")
-  end
-
-  defp stop_apps(config) do
-    apps =
-      cond do
-        Mix.Project.umbrella?(config) ->
-          for %Mix.Dep{app: app} <- Mix.Dep.Umbrella.loaded, do: app
-        app = config[:app] ->
-          [app]
-        true ->
-          []
-      end
-    stopped? =
-      Enum.reverse(apps)
-      |> Enum.all?(&match?({:error, {:not_started, &1}}, Application.stop(&1)))
-      |> Kernel.not
-    {stopped?, apps}
   end
 
   @doc """
@@ -139,6 +115,7 @@ defmodule IEx.Helpers do
 
       c "baz.ex"
       #=> [Baz]
+
   """
   def c(files, path \\ ".") when is_binary(path) do
     files = List.wrap(files)
@@ -147,10 +124,7 @@ defmodule IEx.Helpers do
       raise ArgumentError, "expected a binary or a list of binaries as argument"
     end
 
-    {found, not_found} =
-      files
-      |> Enum.map(&Path.expand(&1, path))
-      |> Enum.partition(&File.exists?/1)
+    {found, not_found} = Enum.partition(files, &File.exists?/1)
 
     unless Enum.empty?(not_found) do
       raise ArgumentError, "could not find files #{Enum.join(not_found, ", ")}"
@@ -350,7 +324,7 @@ defmodule IEx.Helpers do
   @doc """
   Retrieves the nth expression's value from the history.
 
-  Use negative values to lookup expression values relative to the current one.
+  Use negative values to look up expression values relative to the current one.
   For instance, v(-1) returns the result of the last evaluated expression.
   """
   def v(n \\ -1) do
@@ -363,16 +337,20 @@ defmodule IEx.Helpers do
   Please note that all the modules defined in the same
   file as `module` are recompiled and reloaded.
 
+  This function is meant to be used for development and
+  debugging purposes. Do not depend on it in production code.
+
   ## In-memory reloading
 
-  When we reload the module in IEx, we recompile the module source code,
-  updating its contents in memory. The original `.beam` file in disk,
-  probably the one where the first definition of the module came from,
-  does not change at all.
+  When we reload the module in IEx, we recompile the module source
+  code, updating its contents in memory. The original `.beam` file
+  in disk, probably the one where the first definition of the module
+  came from, does not change at all.
 
-  Since typespecs and docs are loaded from the .beam file (they are not
-  loaded in memory with the module because there is no need for them to
-  be in memory), they are not reloaded when you reload the module.
+  Since typespecs and docs are loaded from the .beam file (they
+  are not loaded in memory with the module because there is no need
+  for them to be in memory), they are not reloaded when you reload
+  the module.
   """
   def r(module) when is_atom(module) do
     {:reloaded, module, do_r(module)}
@@ -419,7 +397,7 @@ defmodule IEx.Helpers do
     info = ["Term": inspect(term)] ++ IEx.Info.info(term)
 
     for {subject, info} <- info do
-      info = info |> to_string() |> String.strip() |> String.replace("\n", "\n  ")
+      info = info |> to_string() |> String.trim() |> String.replace("\n", "\n  ")
       IO.puts IEx.color(:eval_result, to_string(subject))
       IO.puts IEx.color(:eval_info, "  #{info}")
     end
@@ -514,13 +492,17 @@ defmodule IEx.Helpers do
 
   defp ls_print(path, list, width) do
     Enum.reduce(list, 0, fn(item, len) ->
-      if len >= 80 do
-        IO.puts ""
-        len = 0
-      end
-      IO.write format_item(Path.join(path, item), String.ljust(item, width))
-      len+width
+      len =
+        if len >= 80 do
+          IO.puts ""
+          0
+        else
+          len
+        end
+      IO.write format_item(Path.join(path, item), String.pad_leading(item, width))
+      len + width
     end)
+
     IO.puts ""
   end
 
@@ -548,6 +530,15 @@ defmodule IEx.Helpers do
     if whereis = IEx.Server.whereis do
       send whereis, {:respawn, self}
       dont_display_result
+    end
+  end
+
+  @doc """
+  Similar to `import_file` but only imports it if it is available.
+  """
+  defmacro import_file_if_available(path) do
+    quote do
+      import_file(unquote(path), optional: true)
     end
   end
 
@@ -603,9 +594,28 @@ defmodule IEx.Helpers do
     raise ArgumentError, "import_file/1 expects a literal binary as its argument"
   end
 
+  @doc """
+  Calls `import/2` with the given arguments, but only if the module is available.
+
+  This lets you put imports in `.iex.exs` files (including `~/.iex.exs`) without
+  getting compile errors if you open a console where the module is not available.
+
+  ## Example
+
+      # In ~/.iex.exs
+      import_if_available Ecto.Query
+  """
+  defmacro import_if_available(quoted_module, opts \\ []) do
+    module = Macro.expand(quoted_module, __CALLER__)
+
+    if Code.ensure_loaded?(module) do
+      quote do: import unquote(quoted_module), unquote(opts)
+    end
+  end
+
   # Compiles and loads an Erlang source file, returns {module, binary}
   defp compile_erlang(source) do
-    source = Path.relative_to_cwd(source) |> String.to_char_list
+    source = Path.relative_to_cwd(source) |> String.to_charlist
     case :compile.file(source, [:binary, :report]) do
       {:ok, module, binary} ->
         :code.purge(module)
@@ -617,6 +627,19 @@ defmodule IEx.Helpers do
   end
 
   defp history, do: Process.get(:iex_history)
+
+  @doc """
+  Creates a PID from `string`.
+
+  ## Examples
+
+      iex> pid("0.21.32")
+      #PID<0.21.32>
+
+  """
+  def pid(string) when is_binary(string) do
+    :erlang.list_to_pid('<#{string}>')
+  end
 
   @doc """
   Creates a PID with 3 non negative integers passed as arguments
@@ -634,9 +657,47 @@ defmodule IEx.Helpers do
                         is_integer(y) and y >= 0 and
                         is_integer(z) and z >= 0 do
     :erlang.list_to_pid(
-      '<' ++ Integer.to_char_list(x) ++ '.' ++
-             Integer.to_char_list(y) ++ '.' ++
-             Integer.to_char_list(z) ++ '>'
+      '<' ++ Integer.to_charlist(x) ++ '.' ++
+             Integer.to_charlist(y) ++ '.' ++
+             Integer.to_charlist(z) ++ '>'
     )
+  end
+
+  @doc """
+  Deloys a given module's beam code to a list of nodes.
+
+  This function is useful for development and debugging when you have code that
+  has been compiled or updated locally that you want to run on other nodes.
+
+  The node list defaults to a list of all connected nodes.
+
+  Returns `{:error, :nofile}` if the object code (i.e. ".beam" file) for the module
+  could not be found locally.
+
+  ## Examples
+
+      nl(HelloWorld)
+      #=> {:ok, [{:node1@easthost, :loaded, HelloWorld},
+                 {:node1@westhost, :loaded, HelloWorld}]}
+
+      nl(NoSuchModuleExists)
+      #=> {:error, :nofile}
+
+  """
+  def nl(nodes \\ Node.list, module) when is_list(nodes) and is_atom(module) do
+    case :code.get_object_code(module) do
+      {^module, bin, beam_path} ->
+        results =
+          for node <- nodes do
+            case :rpc.call(node, :code, :load_binary, [module, beam_path, bin]) do
+              {:module, _} -> {node, :loaded, module}
+              {:badrpc, message} -> {node, :badrpc, message}
+              {:error, message} -> {node, :error, message}
+              unexpected -> {node, :error, unexpected}
+            end
+          end
+        {:ok, results}
+      _otherwise -> {:error, :nofile}
+    end
   end
 end

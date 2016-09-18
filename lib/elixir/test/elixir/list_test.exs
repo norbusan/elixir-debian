@@ -6,7 +6,7 @@ defmodule ListTest do
   doctest List
 
   test "cons cell precedence" do
-    assert [1|:lists.flatten([2, 3])] == [1, 2, 3]
+    assert [1 | :lists.flatten([2, 3])] == [1, 2, 3]
   end
 
   test "optional comma" do
@@ -18,8 +18,8 @@ defmodule ListTest do
     assert (&[&1, 2]).(1) == [1, 2]
     assert (&[&1, &2]).(1, 2) == [1, 2]
     assert (&[&2, &1]).(2, 1) == [1, 2]
-    assert (&[&1|&2]).(1, 2) == [1|2]
-    assert (&[&1, &2|&3]).(1, 2, 3) == [1, 2|3]
+    assert (&[&1 | &2]).(1, 2) == [1 | 2]
+    assert (&[&1, &2 | &3]).(1, 2, 3) == [1, 2 | 3]
   end
 
   test "wrap" do
@@ -163,8 +163,7 @@ defmodule ListTest do
       List.to_string(["a", "b", <<0xD800 :: size(16)>>])
     end
 
-    assert_raise ArgumentError,
-                 "cannot convert list to string. The list must contain only integers, strings or nested such lists; got: [:a, :b]", fn ->
+    assert_raise ArgumentError, ~r"cannot convert the given list to a string", fn ->
       List.to_string([:a, :b])
     end
   end

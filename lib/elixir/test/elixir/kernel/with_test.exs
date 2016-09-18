@@ -4,7 +4,8 @@ defmodule Kernel.WithTest do
   use ExUnit.Case, async: true
 
   test "basic with" do
-    assert with(res <- 41, do: res + 1) == 42
+    assert with({:ok, res} <- ok(41), do: res) == 41
+    assert with(res <- four(), do: res + 10) == 14
   end
 
   test "matching with" do
@@ -13,13 +14,19 @@ defmodule Kernel.WithTest do
     assert with({:ok, _} = res <- ok(42), do: elem(res, 1)) == 42
   end
 
+  test "with guards" do
+    assert with(x when x < 2 <- four(), do: :ok) == 4
+    assert with(x when x > 2 <- four(), do: :ok) == :ok
+    assert with(x when x < 2 when x == 4 <- four(), do: :ok) == :ok
+  end
+
   test "pin matching with" do
     key = :ok
     assert with({^key, res} <- ok(42), do: res) == 42
   end
 
   test "two levels with" do
-    result = with(n1 <- 11, n2 <- 22, do: n1 + n2)
+    result = with({:ok, n1} <- ok(11), n2 <- 22, do: n1 + n2)
     assert result == 33
 
     result = with(n1 <- 11, {:ok, n2} <- :error, do: n1 + n2)
@@ -40,6 +47,13 @@ defmodule Kernel.WithTest do
     assert result == :error
   end
 
+  test "does not leak variables to else" do
+    state = 1
+    result = with 1 <- state, state = 2, :ok <- error(), do: state, else: (_ -> state)
+    assert result == 1
+    assert state == 1
+  end
+
   test "errors in with" do
     assert_raise RuntimeError, fn ->
       with({:ok, res} <- oops(), do: res)
@@ -48,6 +62,28 @@ defmodule Kernel.WithTest do
     assert_raise RuntimeError, fn ->
       with({:ok, res} <- ok(42), res = res + oops(), do: res)
     end
+  end
+
+  test "else conditions" do
+    assert with({:ok, res} <- 41, do: res, else: ({:error, error} -> error; res -> res + 1)) == 42
+    assert with({:ok, res} <- 41, do: res, else: (res when res == 41 -> res + 1; res -> res)) == 42
+    assert with({:ok, res} <- 41, do: res, else: (_ -> :error)) == :error
+  end
+
+  test "else conditions with match error" do
+    assert_raise WithClauseError, "no with clause matching: :error",  fn ->
+      with({:ok, res} <- error(), do: res, else: ({:error, error} -> error))
+    end
+  end
+
+  test "invalid else form" do
+    assert_raise CompileError, "nofile:1: expected -> clauses for else in with",  fn ->
+      Code.eval_quoted(quote do: with(_ <- true, do: :ok, else: :error))
+    end
+  end
+
+  defp four() do
+    4
   end
 
   defp error() do

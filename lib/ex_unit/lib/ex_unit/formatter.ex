@@ -35,7 +35,7 @@ defmodule ExUnit.Formatter do
   @type run_us :: pos_integer
   @type load_us :: pos_integer | nil
 
-  import Exception, only: [format_stacktrace_entry: 1]
+  import Exception, only: [format_stacktrace_entry: 1, format_file_line: 3]
 
   @label_padding   "      "
   @counter_padding "     "
@@ -68,8 +68,8 @@ defmodule ExUnit.Formatter do
     run_us  = run_us |> normalize_us
     load_us = load_us |> normalize_us
 
-    ms = run_us + load_us
-    "Finished in #{format_us ms} seconds (#{format_us load_us}s on load, #{format_us run_us}s on tests)"
+    total_us = run_us + load_us
+    "Finished in #{format_us total_us} seconds (#{format_us load_us}s on load, #{format_us run_us}s on tests)"
   end
 
   defp normalize_us(us) do
@@ -118,6 +118,23 @@ defmodule ExUnit.Formatter do
     <> report(tags, failures, width, formatter)
   end
 
+  @doc false
+  def format_assertion_error(%ExUnit.AssertionError{} = struct, width, formatter, counter_padding) do
+    padding_size = byte_size(@inspect_padding)
+    inspect = &inspect_multiline(&1, padding_size, width)
+    {left, right} = format_sides(struct, formatter, inspect)
+
+    [
+      note: if_value(struct.message, &format_banner(&1, formatter)),
+      code: if_value(struct.expr, &code_multiline(&1, padding_size)),
+      lhs: left,
+      rhs: right
+    ]
+    |> filter_interesting_fields()
+    |> format_each_field(formatter)
+    |> make_into_lines(counter_padding)
+  end
+
   defp report(tags, failures, width, formatter) do
     case Map.take(tags, List.wrap(tags[:report])) do
       report when map_size(report) == 0 ->
@@ -149,18 +166,7 @@ defmodule ExUnit.Formatter do
   end
 
   defp format_kind_reason(:error, %ExUnit.AssertionError{} = struct, width, formatter) do
-    padding = byte_size(@inspect_padding)
-
-    fields =
-      [note: if_value(struct.message, &format_banner(&1, formatter)),
-       code: if_value(struct.expr, &code_multiline(&1, padding)),
-       lhs:  if_value(struct.left,  &inspect_multiline(&1, padding, width)),
-       rhs:  if_value(struct.right, &inspect_multiline(&1, padding, width))]
-
-    fields
-    |> filter_interesting_fields
-    |> format_each_reason(formatter)
-    |> make_into_lines(@counter_padding)
+    format_assertion_error(struct, width, formatter, @counter_padding)
   end
 
   defp format_kind_reason(kind, reason, _width, formatter) do
@@ -168,31 +174,27 @@ defmodule ExUnit.Formatter do
   end
 
   defp filter_interesting_fields(fields) do
-    Enum.filter(fields, fn {_, value} ->
-      value != ExUnit.AssertionError.no_value
-    end)
+    Enum.filter(fields, fn {_, value} -> has_value?(value) end)
   end
 
-  defp format_each_reason(reasons, formatter) do
-    Enum.map(reasons, fn {label, value} ->
+  defp format_each_field(fields, formatter) do
+    Enum.map(fields, fn {label, value} ->
       format_label(label, formatter) <> value
     end)
   end
 
   defp if_value(value, fun) do
-    if value == ExUnit.AssertionError.no_value do
-      value
-    else
+    if has_value?(value) do
       fun.(value)
+    else
+      value
     end
   end
 
-  defp format_label(:note, _formatter) do
-    ""
-  end
+  defp format_label(:note, _formatter), do: ""
 
   defp format_label(label, formatter) do
-    formatter.(:error_info, String.ljust("#{label}:", byte_size(@label_padding)))
+    formatter.(:extra_info, String.pad_trailing("#{label}:", byte_size(@label_padding)))
   end
 
   defp format_banner(value, formatter) do
@@ -200,23 +202,71 @@ defmodule ExUnit.Formatter do
     formatter.(:error_info, value)
   end
 
-  defp code_multiline(expr, padding) when is_binary(expr) do
-    String.replace(expr, "\n", "\n" <> String.duplicate(" ", padding))
+  defp code_multiline(expr, padding_size) when is_binary(expr) do
+    padding = String.duplicate(" ", padding_size)
+    String.replace(expr, "\n", "\n" <> padding)
   end
 
-  defp code_multiline(expr, padding) do
-    code_multiline(expr |> Macro.to_string, padding)
+  defp code_multiline(expr, padding_size) do
+    code_multiline(Macro.to_string(expr), padding_size)
   end
 
-  defp inspect_multiline(expr, padding, width) do
-    width = if width == :infinity, do: width, else: width - padding
-    expr
-    |> inspect(pretty: true, width: width)
-    |> String.replace("\n", "\n" <> String.duplicate(" ", padding))
+  defp inspect_multiline(expr, padding_size, width) do
+    padding = String.duplicate(" ", padding_size)
+    width = if width == :infinity, do: width, else: width - padding_size
+    inspect(expr, [pretty: true, width: width])
+    |> String.replace("\n", "\n" <> padding)
   end
 
   defp make_into_lines(reasons, padding) do
     padding <> Enum.join(reasons, "\n" <> padding) <> "\n"
+  end
+
+  defp format_sides(struct, formatter, inspect) do
+    left = struct.left
+    right = struct.right
+    case format_diff(left, right, formatter) do
+      {left, right} ->
+        {IO.iodata_to_binary(left), IO.iodata_to_binary(right)}
+      nil ->
+        {if_value(left, inspect), if_value(right, inspect)}
+    end
+  end
+
+  defp has_value?(value) do
+    value != ExUnit.AssertionError.no_value
+  end
+
+  defp format_diff(left, right, formatter) do
+    if has_value?(left) and has_value?(right) and formatter.(:diff_enabled?, false) do
+      if script = edit_script(left, right) do
+        colorize_diff(script, formatter, {[], []})
+      end
+    end
+  end
+
+  defp colorize_diff(script, formatter, acc) when is_list(script) do
+    Enum.reduce(script, acc, &colorize_diff(&1, formatter, &2))
+  end
+
+  defp colorize_diff({:eq, content}, _formatter, {left, right}) do
+    {[left | content], [right | content]}
+  end
+
+  defp colorize_diff({:del, content}, formatter, {left, right}) do
+    {[left | formatter.(:diff_delete, content)], right}
+  end
+
+  defp colorize_diff({:ins, content}, formatter, {left, right}) do
+    {left, [right | formatter.(:diff_insert, content)]}
+  end
+
+  defp edit_script(left, right) do
+    task = Task.async(ExUnit.Diff, :script, [left, right])
+    case Task.yield(task, 1_500) || Task.shutdown(task, :brutal_kill) do
+      {:ok, script} -> script
+      nil -> nil
+    end
   end
 
   defp format_stacktrace([], _case, _test, _color) do
@@ -225,16 +275,17 @@ defmodule ExUnit.Formatter do
 
   defp format_stacktrace(stacktrace, test_case, test, color) do
     extra_info("stacktrace:", color) <>
-      Enum.map_join(stacktrace,
-        fn(s) -> stacktrace_info format_stacktrace_entry(s, test_case, test), color end)
+      Enum.map_join(stacktrace, fn entry ->
+        stacktrace_info format_stacktrace_entry(entry, test_case, test), color
+      end)
   end
 
   defp format_stacktrace_entry({test_case, test, _, location}, test_case, test) do
-    "#{location[:file]}:#{location[:line]}"
+    format_file_line(location[:file], location[:line], " (test)")
   end
 
-  defp format_stacktrace_entry(s, _test_case, _test) do
-    format_stacktrace_entry(s)
+  defp format_stacktrace_entry(entry, _test_case, _test) do
+    format_stacktrace_entry(entry)
   end
 
   defp with_location(tags) do
@@ -258,7 +309,7 @@ defmodule ExUnit.Formatter do
   defp test_location(msg, formatter), do: test_location(formatter.(:location_info, msg), nil)
 
   defp error_info(msg, nil) do
-    "     " <> String.replace(msg, "\n", "\n     ") <> <<"\n">>
+    "     " <> String.replace(msg, "\n", "\n     ") <> "\n"
   end
 
   defp error_info(msg, formatter), do: error_info(formatter.(:error_info, msg), nil)
@@ -266,6 +317,7 @@ defmodule ExUnit.Formatter do
   defp extra_info(msg, nil),       do: "     " <> msg <> "\n"
   defp extra_info(msg, formatter), do: extra_info(formatter.(:extra_info, msg), nil)
 
+  defp stacktrace_info("", _formatter), do: ""
   defp stacktrace_info(msg, nil),       do: "       " <> msg <> "\n"
   defp stacktrace_info(msg, formatter), do: stacktrace_info(formatter.(:stacktrace_info, msg), nil)
 end

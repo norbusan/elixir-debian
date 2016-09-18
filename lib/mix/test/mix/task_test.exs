@@ -9,7 +9,7 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "run/1" do
+  test "run/2" do
     assert Mix.Task.run("hello") == "Hello, World!"
     assert Mix.Task.run("hello") == :noop
 
@@ -24,9 +24,31 @@ defmodule Mix.TaskTest do
     assert_raise Mix.InvalidTaskError, "The task \"invalid\" does not export run/1", fn ->
       Mix.Task.run("invalid")
     end
+
+    misnamed_message =
+      "The task \"acronym.http\" could not be found because the module is named " <>
+      "Mix.Tasks.Acronym.HTTP instead of Mix.Tasks.Acronym.Http as expected. " <>
+      "Please rename it and try again"
+    assert_raise Mix.NoTaskError, misnamed_message, fn ->
+      Mix.Task.run("acronym.http")
+    end
   end
 
-  test "output task debug info if Mix.debug? is true" do
+  test "run/2 converts OptionParser.ParseError into mix errors" do
+    assert_raise Mix.Error,
+                 "Could not invoke task \"hello\": 1 error found!\n--unknown : Unknown option", fn ->
+      Mix.Task.run("hello", ["--parser", "--unknown"])
+    end
+
+    Mix.Task.clear
+
+    assert_raise Mix.Error,
+                 "Could not invoke task \"hello\": 1 error found!\n--int : Expected type integer, got \"foo\"", fn ->
+      Mix.Task.run("hello", ["--parser", "--int", "foo"])
+    end
+  end
+
+  test "run/2 outputs task debug info if Mix.debug? is true" do
     Mix.shell Mix.Shell.IO
     Mix.debug(true)
 
@@ -37,7 +59,7 @@ defmodule Mix.TaskTest do
     Mix.debug(false)
   end
 
-  test "try to deps.loadpaths if task is missing", context do
+  test "run/2 tries to load deps if task is missing", context do
     in_tmp context.test, fn ->
       Mix.Project.push(SampleProject, "sample")
 
@@ -66,7 +88,7 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "try to compile if task is missing", context do
+  test "run/2 tries to compile if task is missing", context do
     in_tmp context.test, fn ->
       Mix.Project.push(SampleProject, "sample")
 
@@ -79,7 +101,7 @@ defmodule Mix.TaskTest do
     end
   end
 
-  test "does not try to compile if task is missing in build embedded", context do
+  test "run/2 does not try to compile if task is missing in build embedded", context do
     in_tmp context.test, fn ->
       Mix.ProjectStack.post_config(build_embedded: true)
       Mix.Project.push(SampleProject, "sample")
@@ -111,6 +133,21 @@ defmodule Mix.TaskTest do
         Mix.Task.reenable "clean"
         assert [:ok, :ok] = Mix.Task.run "clean"
         assert :noop      = Mix.Task.run "clean"
+      end)
+    end
+  end
+
+  test "rerun/1" do
+    assert Mix.Task.run("hello") == "Hello, World!"
+    assert Mix.Task.rerun("hello") == "Hello, World!"
+  end
+
+  test "rerun/1 for umbrella" do
+    in_fixture "umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", fn _ ->
+        assert [:ok, :ok] = Mix.Task.run "clean"
+        assert :noop      = Mix.Task.run "clean"
+        assert [:ok, :ok] = Mix.Task.rerun "clean"
       end)
     end
   end
@@ -149,6 +186,18 @@ defmodule Mix.TaskTest do
   test "moduledoc/1" do
     Code.prepend_path MixTest.Case.tmp_path("beams")
     assert Mix.Task.moduledoc(Mix.Tasks.Hello) == "A test task.\n"
+  end
+
+  test "preferred_cli_env/1 returns nil for missing task" do
+    assert Mix.Task.preferred_cli_env(:no_task) == nil
+  end
+
+  test "preferred_cli_env/1 returns nil when task does not have `preferred_cli_env` attribute" do
+    assert Mix.Task.preferred_cli_env(:deps) == nil
+  end
+
+  test "preferred_cli_env/1 returns specified `preferred_cli_env` attribute" do
+    assert Mix.Task.preferred_cli_env(:test) == :test
   end
 
   test "shortdoc/1" do

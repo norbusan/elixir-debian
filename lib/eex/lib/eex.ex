@@ -35,13 +35,14 @@ defmodule EEx do
 
   ## Options
 
-  All functions in this module accepts EEx-related options.
+  All functions in this module accept EEx-related options.
   They are:
 
     * `:line` - the line to be used as the template start. Defaults to 1.
     * `:file` - the file to be used in the template. Defaults to the given
       file the template is read from or to "nofile" when compiling from a string.
     * `:engine` - the EEx engine to be used for compilation.
+    * `:trim` - trims whitespace left/right of quotation tags
 
   ## Engine
 
@@ -64,7 +65,7 @@ defmodule EEx do
   **must** use the equals sign (`=`). Since everything in
   Elixir is an expression, there are no exceptions for this rule.
   For example, while some template languages would special-case
-  `if` clauses, they are treated the same in EEx and
+  `if/2` clauses, they are treated the same in EEx and
   also require `=` in order to have their result printed:
 
       <%= if true do %>
@@ -89,7 +90,7 @@ defmodule EEx do
 
       <%= {:ok, v} = Access.fetch(assigns, :foo); v %>
 
-  The assigns extension is useful when the number of variables
+  The `assigns` extension is useful when the number of variables
   required by the template is not specified at compilation time.
   """
 

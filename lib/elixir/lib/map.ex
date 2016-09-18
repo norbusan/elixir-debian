@@ -13,7 +13,7 @@ defmodule Map do
   @compile {:inline, fetch: 2, put: 3, delete: 2, has_key?: 2}
 
   @doc """
-  Returns all keys from the map.
+  Returns all keys from `map`.
 
   ## Examples
 
@@ -25,7 +25,7 @@ defmodule Map do
   defdelegate keys(map), to: :maps
 
   @doc """
-  Returns all values from the map.
+  Returns all values from `map`.
 
   ## Examples
 
@@ -37,7 +37,7 @@ defmodule Map do
   defdelegate values(map), to: :maps
 
   @doc """
-  Converts the map to a list.
+  Converts `map` to a list.
 
   ## Examples
 
@@ -63,7 +63,7 @@ defmodule Map do
   def new, do: %{}
 
   @doc """
-  Creates a map from an enumerable.
+  Creates a map from an `enumerable`.
 
   Duplicated keys are removed; the latest one prevails.
 
@@ -76,14 +76,21 @@ defmodule Map do
 
   """
   @spec new(Enum.t) :: map
-  def new(enumerable) do
-    Enum.reduce(enumerable, %{}, fn {k, v}, acc -> put(acc, k, v) end)
+  def new(enumerable)
+  def new(%{__struct__: _} = struct), do: new_from_enum(struct)
+  def new(%{} = map), do: map
+  def new(enum), do: new_from_enum(enum)
+
+  defp new_from_enum(enumerable) do
+    enumerable
+    |> Enum.to_list
+    |> :maps.from_list
   end
 
   @doc """
-  Creates a map from an enumerable via the transformation function.
+  Creates a map from an `enumerable` via the transformation function.
 
-  Duplicated entries are removed; the latest one prevails.
+  Duplicated keys are removed; the latest one prevails.
 
   ## Examples
 
@@ -93,11 +100,18 @@ defmodule Map do
   """
   @spec new(Enum.t, (term -> {key, value})) :: map
   def new(enumerable, transform) do
-    fun = fn el, acc ->
-      {k, v} = transform.(el)
-      put(acc, k, v)
-    end
-    Enum.reduce(enumerable, %{}, fun)
+    enumerable
+    |> Enum.to_list
+    |> do_new_transform(transform, [])
+  end
+
+  defp do_new_transform([], _fun, acc) do
+    acc
+    |> :lists.reverse
+    |> :maps.from_list
+  end
+  defp do_new_transform([item | rest], fun, acc) do
+    do_new_transform(rest, fun, [fun.(item) | acc])
   end
 
   @doc """
@@ -209,14 +223,20 @@ defmodule Map do
       %{a: 1, c: 3}
 
   """
-  @spec take(map, [key]) :: map
+  @spec take(map, Enumerable.t) :: map
   def take(map, keys) do
-    Enum.reduce(keys, new, fn key, acc ->
-      case fetch(map, key) do
-        {:ok, value} -> put(acc, key, value)
-        :error -> acc
-      end
-    end)
+    keys
+    |> Enum.to_list
+    |> do_take(map, [])
+  end
+
+  defp do_take([], _map, acc), do: :maps.from_list(acc)
+  defp do_take([key | rest], map, acc) do
+    acc = case fetch(map, key) do
+      {:ok, value} -> [{key, value} | acc]
+      :error -> acc
+    end
+    do_take(rest, map, acc)
   end
 
   @doc """
@@ -292,9 +312,9 @@ defmodule Map do
   end
 
   @doc """
-  Deletes the entries in the map for a specific `key`.
+  Deletes the entries in `map` for a specific `key`.
 
-  If the `key` does not exist, returns the map unchanged.
+  If the `key` does not exist, returns `map` unchanged.
 
   ## Examples
 
@@ -311,6 +331,11 @@ defmodule Map do
   Merges two maps into one.
 
   All keys in `map2` will be added to `map1`, overriding any existing one.
+
+  If you have a struct and you would like to merge a set of keys into the
+  struct, do not use this function, as it would merge all keys on the right
+  side into the struct, even if the key is not part of the struct. Instead,
+  use `Kernel.struct/2`.
 
   ## Examples
 
@@ -366,7 +391,7 @@ defmodule Map do
   end
 
   @doc """
-  Returns and removes all values associated with `key` in the `map`.
+  Returns and removes the value associated with `key` in `map`.
 
   ## Examples
 
@@ -380,14 +405,14 @@ defmodule Map do
   """
   @spec pop(map, key, value) :: {value, map}
   def pop(map, key, default \\ nil) do
-    case fetch(map, key) do
-      {:ok, value} -> {value, delete(map, key)}
-      :error -> {default, map}
+    case map do
+      %{^key => value} -> {value, delete(map, key)}
+      %{} -> {default, map}
     end
   end
 
   @doc """
-  Lazily returns and removes all values associated with `key` in the `map`.
+  Lazily returns and removes the value associated with `key` in `map`.
 
   This is useful if the default value is very expensive to calculate or
   generally difficult to setup and teardown again.
@@ -414,7 +439,7 @@ defmodule Map do
   end
 
   @doc """
-  Drops the given keys from the map.
+  Drops the given `keys` from `map`.
 
   ## Examples
 
@@ -422,18 +447,25 @@ defmodule Map do
       %{a: 1, c: 3}
 
   """
-  @spec drop(map, [key]) :: map
+  @spec drop(map, Enumerable.t) :: map
   def drop(map, keys) do
-    Enum.reduce(keys, map, &delete(&2, &1))
+    keys
+    |> Enum.to_list
+    |> drop_list(map)
+  end
+
+  defp drop_list([], acc), do: acc
+  defp drop_list([key | rest], acc) do
+    drop_list(rest, Map.delete(acc, key))
   end
 
   @doc """
-  Takes all entries corresponding to the given keys and extracts them into a
-  separate map.
+  Takes all entries corresponding to the given `keys` and extracts them into a
+  separate `map`.
 
   Returns a tuple with the new map and the old map with removed keys.
 
-  Keys for which there are no entires in the map are ignored.
+  Keys for which there are no entries in `map` are ignored.
 
   ## Examples
 
@@ -441,16 +473,23 @@ defmodule Map do
       {%{a: 1, c: 3}, %{b: 2}}
 
   """
-  @spec split(map, [key]) :: {map, map}
+  @spec split(map, Enumerable.t) :: {map, map}
   def split(map, keys) do
-    Enum.reduce(keys, {new, map}, fn key, {inc, exc} = acc ->
-      case fetch(exc, key) do
-        {:ok, value} ->
-          {put(inc, key, value), delete(exc, key)}
-        :error ->
-          acc
-      end
-    end)
+    keys
+    |> Enum.to_list
+    |> do_split([], map)
+  end
+
+  defp do_split([], inc, exc) do
+    {:maps.from_list(inc), exc}
+  end
+  defp do_split([key | rest], inc, exc) do
+    case fetch(exc, key) do
+      {:ok, value} ->
+        do_split(rest, [{key, value} | inc], delete(exc, key))
+      :error ->
+        do_split(rest, inc, exc)
+    end
   end
 
   @doc """
@@ -483,12 +522,14 @@ defmodule Map do
   Gets the value from `key` and updates it, all in one pass.
 
   This `fun` argument receives the value of `key` (or `nil` if `key`
-  is not present) and must return a two-elements tuple: the "get" value (the
-  retrieved value, which can be operated on before being returned) and the new
-  value to be stored under `key`.
+  is not present) and must return a two-element tuple: the "get" value
+  (the retrieved value, which can be operated on before being returned)
+  and the new value to be stored under `key`. The `fun` may also
+  return `:pop`, implying the current value shall be removed
+  from `map` and returned.
 
-  The returned value is a tuple with the "get" value returned by `fun` and a
-  new map with the updated value under `key`.
+  The returned value is a tuple with the "get" value returned by
+  `fun` and a new map with the updated value under `key`.
 
   ## Examples
 
@@ -502,16 +543,25 @@ defmodule Map do
       ...> end)
       {nil, %{b: "new value!", a: 1}}
 
-  """
-  @spec get_and_update(map, key, (value -> {get, value})) :: {get, map} when get: term
-  def get_and_update(%{} = map, key, fun) do
-    current_value = case :maps.find(key, map) do
-      {:ok, value} -> value
-      :error -> nil
-    end
+      iex> Map.get_and_update(%{a: 1}, :a, fn _ -> :pop end)
+      {1, %{}}
 
-    {get, update} = fun.(current_value)
-    {get, :maps.put(key, update, map)}
+      iex> Map.get_and_update(%{a: 1}, :b, fn _ -> :pop end)
+      {nil, %{a: 1}}
+
+  """
+  @spec get_and_update(map, key, (value -> {get, value} | :pop)) :: {get, map} when get: term
+  def get_and_update(%{} = map, key, fun) do
+    current =
+      case :maps.find(key, map) do
+        {:ok, value} -> value
+        :error -> nil
+      end
+
+    case fun.(current) do
+      {get, update} -> {get, :maps.put(key, update, map)}
+      :pop          -> {current, :maps.remove(key, map)}
+    end
   end
 
   def get_and_update(map, _key, _fun), do: :erlang.error({:badmap, map})
@@ -520,7 +570,7 @@ defmodule Map do
   Gets the value from `key` and updates it. Raises if there is no `key`.
 
   This `fun` argument receives the value of `key` and must return a
-  two-elements tuple: the "get" value (the retrieved value, which can be
+  two-element tuple: the "get" value (the retrieved value, which can be
   operated on before being returned) and the new value to be stored under
   `key`.
 
@@ -529,7 +579,7 @@ defmodule Map do
 
   ## Examples
 
-      iex> Map.get_and_update!(%{a: 1}, :a, fn(current_value) ->
+      iex> Map.get_and_update!(%{a: 1}, :a, fn current_value ->
       ...>   {current_value, "new value!"}
       ...> end)
       {1, %{a: "new value!"}}
@@ -539,13 +589,20 @@ defmodule Map do
       ...> end)
       ** (KeyError) key :b not found
 
+      iex> Map.get_and_update!(%{a: 1}, :a, fn _ ->
+      ...>   :pop
+      ...> end)
+      {1, %{}}
+
   """
   @spec get_and_update!(map, key, (value -> {get, value})) :: {get, map} | no_return when get: term
   def get_and_update!(%{} = map, key, fun) do
     case :maps.find(key, map) do
       {:ok, value} ->
-        {get, update} = fun.(value)
-        {get, :maps.put(key, update, map)}
+        case fun.(value) do
+          {get, update} -> {get, :maps.put(key, update, map)}
+          :pop          -> {value, :maps.remove(key, map)}
+        end
       :error ->
         :erlang.error({:badkey, key})
     end
@@ -554,7 +611,7 @@ defmodule Map do
   def get_and_update!(map, _key, _fun), do: :erlang.error({:badmap, map})
 
   @doc """
-  Converts a struct to map.
+  Converts a `struct` to map.
 
   It accepts the struct module or a struct itself and
   simply removes the `__struct__` field from the struct.
@@ -598,10 +655,10 @@ defmodule Map do
   @spec equal?(map, map) :: boolean
   def equal?(%{} = map1, %{} = map2), do: map1 === map2
 
-  # TODO: Deprecate by 1.3
-  # TODO: Remove by 1.4
   @doc false
+  # TODO: Remove on 2.0
   def size(map) do
+    IO.warn "Map.size/1 is deprecated, please use Kernel.map_size/1"
     map_size(map)
   end
 end

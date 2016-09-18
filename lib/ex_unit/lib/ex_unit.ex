@@ -14,7 +14,8 @@ defmodule ExUnit do
       # 2) Create a new test module (test case) and use "ExUnit.Case".
       defmodule AssertionTest do
         # 3) Notice we pass "async: true", this runs the test case
-        #    concurrently with other test cases
+        #    concurrently with other test cases. The individual tests
+        #    within each test case are still run serially.
         use ExUnit.Case, async: true
 
         # 4) Use the "test" macro instead of "def" for clarity.
@@ -130,6 +131,7 @@ defmodule ExUnit do
 
     children = [
       worker(ExUnit.Server, []),
+      worker(ExUnit.CaptureServer, []),
       worker(ExUnit.OnExitHandler, [])
     ]
 
@@ -154,7 +156,8 @@ defmodule ExUnit do
 
       System.at_exit fn
         0 ->
-          %{failures: failures} = ExUnit.run
+          time = ExUnit.Server.cases_loaded()
+          %{failures: failures} = ExUnit.Runner.run(configuration(), time)
           System.at_exit fn _ ->
             if failures > 0, do: exit({:shutdown, 1})
           end
@@ -175,8 +178,11 @@ defmodule ExUnit do
       calls. Defaults to 100ms.
 
     * `:capture_log` - if ExUnit should default to keeping track of log messages
-      and print them on test failure. Can be overriden for individual tests via
+      and print them on test failure. Can be overridden for individual tests via
       `@tag capture_log: false`. Defaults to `false`.
+
+    * `:case_load_timeout` - the timeout to be used when loading a test case.
+      Defaults to `60_000` milliseconds.
 
     * `:colors` - a keyword list of colors to be used by some formatters.
       The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/0`
@@ -185,7 +191,8 @@ defmodule ExUnit do
       defaults to `[ExUnit.CLIFormatter]`
 
     * `:max_cases` - maximum number of cases to run in parallel;
-      defaults to `:erlang.system_info(:schedulers_online)`
+      defaults to `:erlang.system_info(:schedulers_online) * 2` to
+      optimize both CPU-bound and IO-bound tests
 
     * `:trace` - set ExUnit into trace mode, this sets `:max_cases` to `1` and
       prints each test case and test while running
@@ -193,7 +200,8 @@ defmodule ExUnit do
     * `:autorun` - if ExUnit should run by default on exit; defaults to `true`
 
     * `:include` - specify which tests are run by skipping tests that do not
-      match the filter
+      match the filter. Keep in mind that all tests are included by default, so unless they are
+      excluded first, the `:include` option has no effect.
 
     * `:exclude` - specify which tests are run by skipping tests that match the
       filter
@@ -207,6 +215,7 @@ defmodule ExUnit do
       on formatting and reporters (defaults to 20)
 
     * `:timeout` - set the timeout for the tests (default 60_000ms)
+
   """
   def configure(options) do
     Enum.each options, fn {k, v} ->
@@ -222,6 +231,30 @@ defmodule ExUnit do
   end
 
   @doc """
+  Returns the pluralization for `word`.
+
+  If one is not registered, returns the word appended with an "s".
+  """
+  @spec plural_rule(binary) :: binary
+  def plural_rule(word) when is_binary(word) do
+    Application.get_env(:ex_unit, :plural_rules, %{})
+    |> Map.get(word, "#{word}s")
+  end
+
+  @doc """
+  Registers a `pluralization` for `word`.
+
+  If one is already registered, it is replaced.
+  """
+  @spec plural_rule(binary, binary) :: :ok
+  def plural_rule(word, pluralization) when is_binary(word) and is_binary(pluralization) do
+    plural_rules =
+      Application.get_env(:ex_unit, :plural_rules, %{})
+      |> Map.put(word, pluralization)
+    configure(plural_rules: plural_rules)
+  end
+
+  @doc """
   API used to run the tests. It is invoked automatically
   if ExUnit is started via `ExUnit.start/1`.
 
@@ -229,7 +262,6 @@ defmodule ExUnit do
   of failures and the number of skipped tests.
   """
   def run do
-    {async, sync, load_us} = ExUnit.Server.start_run
-    ExUnit.Runner.run async, sync, configuration, load_us
+    ExUnit.Runner.run(configuration(), nil)
   end
 end

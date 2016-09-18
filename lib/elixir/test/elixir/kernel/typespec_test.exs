@@ -80,19 +80,19 @@ defmodule Kernel.TypespecTest do
 
   test "@type with an atom" do
     module = test_module do
-      @type mytype :: :atom
+      @type my_type :: :foo
     end
 
-    assert [type: {:mytype, {:atom, _, :atom}, []}] =
+    assert [type: {:my_type, {:atom, _, :foo}, []}] =
            types(module)
   end
 
   test "@type with an atom alias" do
     module = test_module do
-      @type mytype :: Atom
+      @type my_type :: Atom
     end
 
-    assert [type: {:mytype, {:atom, _, Atom}, []}] =
+    assert [type: {:my_type, {:atom, _, Atom}, []}] =
            types(module)
   end
 
@@ -115,12 +115,12 @@ defmodule Kernel.TypespecTest do
 
   test "@type with a remote type" do
     module = test_module do
-      @type mytype :: Remote.Some.type
-      @type mytype_arg :: Remote.type(integer)
+      @type my_type :: Remote.Some.type
+      @type my_type_arg :: Remote.type(integer)
     end
 
-    assert [type: {:mytype, {:remote_type, _, [{:atom, _, Remote.Some}, {:atom, _, :type}, []]}, []},
-            type: {:mytype_arg, {:remote_type, _, [{:atom, _, Remote}, {:atom, _, :type}, [{:type, _, :integer, []}]]}, []}] =
+    assert [type: {:my_type, {:remote_type, _, [{:atom, _, Remote.Some}, {:atom, _, :type}, []]}, []},
+            type: {:my_type_arg, {:remote_type, _, [{:atom, _, Remote}, {:atom, _, :type}, [{:type, _, :integer, []}]]}, []}] =
            types(module)
   end
 
@@ -186,14 +186,27 @@ defmodule Kernel.TypespecTest do
            types(module)
   end
 
-  test "@type with a map" do
+  test "@type with a keyword map" do
     module = test_module do
-      @type mytype :: %{hello: :world}
+      @type my_type :: %{hello: :world}
     end
 
-    assert [type: {:mytype,
+    assert [type: {:my_type,
              {:type, _, :map, [
-               {:type, _, :map_field_assoc, [{:atom, _, :hello}, {:atom, _, :world}]}
+               {:type, _, :map_field_exact, [{:atom, _, :hello}, {:atom, _, :world}]}
+             ]},
+            []}] = types(module)
+  end
+
+  test "@type with a map" do
+    module = test_module do
+      @type my_type :: %{required(:a) => :b, optional(:c) => :d}
+    end
+
+    assert [type: {:my_type,
+             {:type, _, :map, [
+               {:type, _, :map_field_exact, [{:atom, _, :a}, {:atom, _, :b}]},
+               {:type, _, :map_field_assoc, [{:atom, _, :c}, {:atom, _, :d}]}
              ]},
             []}] = types(module)
   end
@@ -201,14 +214,14 @@ defmodule Kernel.TypespecTest do
   test "@type with a struct" do
     module = test_module do
       defstruct [hello: nil, other: nil]
-      @type mytype :: %TestTypespec{hello: :world}
+      @type my_type :: %TestTypespec{hello: :world}
     end
 
-    assert [type: {:mytype,
+    assert [type: {:my_type,
              {:type, _, :map, [
-               {:type, _, :map_field_assoc, [{:atom, _, :__struct__}, {:atom, _, TestTypespec}]},
-               {:type, _, :map_field_assoc, [{:atom, _, :hello}, {:atom, _, :world}]},
-               {:type, _, :map_field_assoc, [{:atom, _, :other}, {:type, _, :term, []}]}
+               {:type, _, :map_field_exact, [{:atom, _, :__struct__}, {:atom, _, TestTypespec}]},
+               {:type, _, :map_field_exact, [{:atom, _, :hello}, {:atom, _, :world}]},
+               {:type, _, :map_field_exact, [{:atom, _, :other}, {:type, _, :term, []}]}
              ]},
             []}] = types(module)
   end
@@ -236,7 +249,7 @@ defmodule Kernel.TypespecTest do
     end
   end
 
-  test "@type when overriding elixir builtin" do
+  test "@type when overriding Elixir builtin" do
     assert_raise CompileError, ~r"type struct\(\) is a builtin type; it cannot be redefined", fn ->
       test_module do
         @type struct :: :oops
@@ -244,7 +257,7 @@ defmodule Kernel.TypespecTest do
     end
   end
 
-  test "@type when overriding erlang builtin" do
+  test "@type when overriding Erlang builtin" do
     assert_raise CompileError, ~r"type list\(\) is a builtin type; it cannot be redefined", fn ->
       test_module do
         @type list :: :oops
@@ -256,10 +269,10 @@ defmodule Kernel.TypespecTest do
     module = test_module do
       require Record
       Record.defrecord :timestamp, [date: 1, time: 2]
-      @type mytype :: record(:timestamp, time: :foo)
+      @type my_type :: record(:timestamp, time: :foo)
     end
 
-    assert [type: {:mytype,
+    assert [type: {:my_type,
              {:type, _, :tuple, [
                {:atom, 0, :timestamp}, {:type, 0, :term, []}, {:atom, 0, :foo}
              ]},
@@ -270,10 +283,10 @@ defmodule Kernel.TypespecTest do
     module = test_module do
       require Record
       Record.defrecordp :timestamp, [date: 1, time: 2]
-      @type mytype :: record(:timestamp, time: :foo)
+      @type my_type :: record(:timestamp, time: :foo)
     end
 
-    assert [type: {:mytype,
+    assert [type: {:my_type,
              {:type, _, :tuple, [
                {:atom, 0, :timestamp}, {:type, 0, :term, []}, {:atom, 0, :foo}
              ]},
@@ -361,21 +374,21 @@ defmodule Kernel.TypespecTest do
 
   test "@type with a union" do
     module = test_module do
-      @type mytype :: integer | char_list | atom
+      @type my_type :: integer | charlist | atom
     end
 
-    assert [type: {:mytype, {:type, _, :union, [{:type, _, :integer, []},
-             {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :char_list}, []]},
+    assert [type: {:my_type, {:type, _, :union, [{:type, _, :integer, []},
+             {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :charlist}, []]},
              {:type, _, :atom, []}]}, []}] =
            types(module)
   end
 
   test "@type with keywords" do
     module = test_module do
-      @type mytype :: [first: integer, step: integer, last: integer]
+      @type my_type :: [first: integer, step: integer, last: integer]
     end
 
-    assert [type: {:mytype, {:type, _, :list, [
+    assert [type: {:my_type, {:type, _, :list, [
       {:type, _, :union, [
         {:type, _, :tuple, [{:atom, _, :first}, {:type, _, :integer, []}]},
         {:type, _, :tuple, [{:atom, _, :step}, {:type, _, :integer, []}]},
@@ -431,15 +444,36 @@ defmodule Kernel.TypespecTest do
   test "@type unquote fragment" do
     module = test_module do
       quoted = quote unquote: false do
-        name = :mytype
-        type = :atom
+        name = :my_type
+        type = :foo
         @type unquote(name)() :: unquote(type)
       end
       Module.eval_quoted(__MODULE__, quoted) |> elem(0)
     end
 
-    assert [type: {:mytype, {:atom, _, :atom}, []}] =
+    assert [type: {:my_type, {:atom, _, :foo}, []}] =
            types(module)
+  end
+
+  test "@type with module attributes" do
+    module = test_module do
+      @keyword Keyword
+      @type kw :: @keyword.t
+      @type kw(value) :: @keyword.t(value)
+    end
+
+    assert [type: {:kw, {:remote_type, _, [{:atom, _, Keyword}, {:atom, _, :t}, []]}, _},
+            type: {:kw, {:remote_type, _, [{:atom, _, Keyword}, {:atom, _, :t}, [{:var, _, :value}]]}, [{:var, _, :value}]}] =
+      types(module)
+  end
+
+  test "invalid remote @type with module attribute that does not evaluate to a module" do
+    assert_raise CompileError, ~r/\(@foo is "bar"\)/, fn ->
+      test_module do
+        @foo "bar"
+        @type t :: @foo.t
+      end
+    end
   end
 
   test "defines_type?" do
@@ -454,84 +488,84 @@ defmodule Kernel.TypespecTest do
 
   test "@spec(spec)" do
     module = test_module do
-      def myfun1(x), do: x
-      def myfun2(), do: :ok
-      def myfun3(x, y), do: {x, y}
-      def myfun4(x), do: x
-      @spec myfun1(integer) :: integer
-      @spec myfun2() :: integer
-      @spec myfun3(integer, integer) :: {integer, integer}
-      @spec myfun4(x :: integer) :: integer
+      def my_fun1(x), do: x
+      def my_fun2(), do: :ok
+      def my_fun3(x, y), do: {x, y}
+      def my_fun4(x), do: x
+      @spec my_fun1(integer) :: integer
+      @spec my_fun2() :: integer
+      @spec my_fun3(integer, integer) :: {integer, integer}
+      @spec my_fun4(x :: integer) :: integer
     end
 
-    assert [{{:myfun1, 1}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]},
-            {{:myfun2, 0}, [{:type, _, :fun, [{:type, _, :product, []}, {:type, _, :integer, []}]}]},
-            {{:myfun3, 2}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}, {:type, _, :integer, []}]}, {:type, _, :tuple, [{:type, _, :integer, []}, {:type, _, :integer, []}]}]}]},
-            {{:myfun4, 1}, [{:type, _, :fun, [{:type, _, :product, [{:ann_type, _, [{:var, _, :x}, {:type, _, :integer, []}]}]}, {:type, _, :integer, []}]}]}] =
+    assert [{{:my_fun1, 1}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]},
+            {{:my_fun2, 0}, [{:type, _, :fun, [{:type, _, :product, []}, {:type, _, :integer, []}]}]},
+            {{:my_fun3, 2}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}, {:type, _, :integer, []}]}, {:type, _, :tuple, [{:type, _, :integer, []}, {:type, _, :integer, []}]}]}]},
+            {{:my_fun4, 1}, [{:type, _, :fun, [{:type, _, :product, [{:ann_type, _, [{:var, _, :x}, {:type, _, :integer, []}]}]}, {:type, _, :integer, []}]}]}] =
            specs(module)
   end
 
   test "@spec(spec) for unreachable private function" do
-    # Run it inside capture_io/2 so that the "myfun/1 is unused"
+    # Run it inside capture_io/2 so that the "my_fun/1 is unused"
     # warning doesn't get printed among the ExUnit test results.
     output = ExUnit.CaptureIO.capture_io :stderr, fn ->
       module = test_module do
-        defp myfun(x), do: x
-        @spec myfun(integer) :: integer
+        defp my_fun(x), do: x
+        @spec my_fun(integer) :: integer
       end
 
       assert [] == specs(module)
     end
 
-    assert output =~ "warning: function myfun/1 is unused"
+    assert output =~ "function my_fun/1 is unused"
   end
 
   test "@spec(spec) with guards" do
     module = test_module do
-      def myfun1(x), do: x
-      @spec myfun1(x) :: boolean when [x: integer]
+      def my_fun1(x), do: x
+      @spec my_fun1(x) :: boolean when [x: integer]
 
-      def myfun2(x), do: x
-      @spec myfun2(x) :: x when [x: var]
+      def my_fun2(x), do: x
+      @spec my_fun2(x) :: x when [x: var]
 
-      def myfun3(_x, y), do: y
-      @spec myfun3(x, y) :: y when [y: x, x: var]
+      def my_fun3(_x, y), do: y
+      @spec my_fun3(x, y) :: y when [y: x, x: var]
     end
 
-    assert [{{:myfun1, 1}, [{:type, _, :bounded_fun, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}]}, {:type, _, :boolean, []}]}, [{:type, _, :constraint, [{:atom, _, :is_subtype}, [{:var, _, :x}, {:type, _, :integer, []}]]}]]}]},
-            {{:myfun2, 1}, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}]}, {:var, _, :x}]}]},
-            {{:myfun3, 2}, [{:type, _, :bounded_fun, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}, {:var, _, :y}]}, {:var, _, :y}]}, [{:type, _, :constraint, [{:atom, _, :is_subtype}, [{:var, _, :y}, {:var, _, :x}]]}]]}]}] =
+    assert [{{:my_fun1, 1}, [{:type, _, :bounded_fun, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}]}, {:type, _, :boolean, []}]}, [{:type, _, :constraint, [{:atom, _, :is_subtype}, [{:var, _, :x}, {:type, _, :integer, []}]]}]]}]},
+            {{:my_fun2, 1}, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}]}, {:var, _, :x}]}]},
+            {{:my_fun3, 2}, [{:type, _, :bounded_fun, [{:type, _, :fun, [{:type, _, :product, [{:var, _, :x}, {:var, _, :y}]}, {:var, _, :y}]}, [{:type, _, :constraint, [{:atom, _, :is_subtype}, [{:var, _, :y}, {:var, _, :x}]]}]]}]}] =
            specs(module)
   end
 
   test "@callback(callback)" do
     module = test_module do
-      @callback myfun(integer) :: integer
-      @callback myfun() :: integer
-      @callback myfun(integer, integer) :: {integer, integer}
+      @callback my_fun(integer) :: integer
+      @callback my_fun() :: integer
+      @callback my_fun(integer, integer) :: {integer, integer}
     end
 
-    assert [{{:myfun, 0}, [{:type, _, :fun, [{:type, _, :product, []}, {:type, _, :integer, []}]}]},
-            {{:myfun, 1}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]},
-            {{:myfun, 2}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}, {:type, _, :integer, []}]}, {:type, _, :tuple, [{:type, _, :integer, []}, {:type, _, :integer, []}]}]}]}] =
+    assert [{{:my_fun, 0}, [{:type, _, :fun, [{:type, _, :product, []}, {:type, _, :integer, []}]}]},
+            {{:my_fun, 1}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]},
+            {{:my_fun, 2}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}, {:type, _, :integer, []}]}, {:type, _, :tuple, [{:type, _, :integer, []}, {:type, _, :integer, []}]}]}]}] =
            callbacks(module)
   end
 
   test "@spec + @callback" do
     module = test_module do
-      def myfun(x), do: x
-      @spec myfun(integer)   :: integer
-      @spec myfun(char_list) :: char_list
+      def my_fun(x), do: x
+      @spec my_fun(integer)   :: integer
+      @spec my_fun(charlist) :: charlist
       @callback cb(integer)  :: integer
     end
 
     assert [{{:cb, 1}, [{:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]}] =
            callbacks(module)
 
-    assert [{{:myfun, 1}, [
+    assert [{{:my_fun, 1}, [
              {:type, _, :fun, [{:type, _, :product, [
-               {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :char_list}, []]}]},
-               {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :char_list}, []]}]},
+               {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :charlist}, []]}]},
+               {:remote_type, _, [{:atom, _, :elixir}, {:atom, _, :charlist}, []]}]},
              {:type, _, :fun, [{:type, _, :product, [{:type, _, :integer, []}]}, {:type, _, :integer, []}]}]}] =
            specs(module)
   end
@@ -558,7 +592,7 @@ defmodule Kernel.TypespecTest do
       (quote do: @type one_tuple() :: {:foo}),
       (quote do: @type two_tuple() :: {:foo, :bar}),
       (quote do: @type imm_type_1() :: 1),
-      (quote do: @type imm_type_2() :: :atom),
+      (quote do: @type imm_type_2() :: :foo),
       (quote do: @type simple_type() :: integer()),
       (quote do: @type param_type(p) :: [p]),
       (quote do: @type union_type() :: integer() | binary() | boolean()),
@@ -567,16 +601,20 @@ defmodule Kernel.TypespecTest do
       (quote do: @type binary_type3() :: <<_::3, _::_*8>>),
       (quote do: @type tuple_type() :: {integer()}),
       (quote do: @type ftype() :: (() -> any()) | (() -> integer()) | ((integer() -> integer()))),
-      (quote do: @type cl() :: char_list()),
+      (quote do: @type cl() :: charlist()),
       (quote do: @type st() :: struct()),
       (quote do: @type ab() :: as_boolean(term())),
+      (quote do: @type kw() :: keyword()),
+      (quote do: @type kwt() :: keyword(term())),
       (quote do: @type vaf() :: (... -> any())),
-      (quote do: @type rng() :: 1 .. 10),
+      (quote do: @type rng() :: 1..10),
       (quote do: @type opts() :: [first: integer(), step: integer(), last: integer()]),
       (quote do: @type ops() :: {+1, -1}),
       (quote do: @type a_map() :: map()),
       (quote do: @type empty_map() :: %{}),
       (quote do: @type my_map() :: %{hello: :world}),
+      (quote do: @type my_req_map() :: %{required(0) => :foo}),
+      (quote do: @type my_opt_map() :: %{optional(0) => :foo}),
       (quote do: @type my_struct() :: %Kernel.TypespecTest{hello: :world}),
       (quote do: @type list1() :: list()),
       (quote do: @type list2() :: [0]),
@@ -640,13 +678,20 @@ defmodule Kernel.TypespecTest do
     @callback bar(External.hello, my_var :: binary) :: binary
     @callback guarded(my_var) :: my_var when my_var: binary
     @callback orr(atom | integer) :: atom
-    @callback literal(123, {atom}, :atom, [integer], true) :: atom
+    @callback literal(123, {atom}, :foo, [integer], true) :: atom
     @macrocallback last(integer) :: Macro.t
+    @macrocallback lastlast() :: atom
+    @optional_callbacks bar: 2, lastlast: 0
   end
 
   test "callbacks" do
     assert Sample.behaviour_info(:callbacks) ==
-           [first: 1, guarded: 1, "MACRO-last": 2, literal: 5, orr: 1, foo: 2, bar: 2]
+           ["MACRO-lastlast": 1, first: 1, guarded: 1, "MACRO-last": 2, literal: 5, orr: 1, foo: 2, bar: 2]
+  end
+
+  test "optional callbacks" do
+    assert Sample.behaviour_info(:optional_callbacks) ==
+           [bar: 2, "MACRO-lastlast": 1]
   end
 
   test "default is not supported" do
@@ -688,9 +733,9 @@ defmodule Kernel.TypespecTest do
   end
 
   test "@spec shows readable error message when return type is missing" do
-    assert_raise CompileError, ~r"type specification missing return type: myfun\(integer\)", fn ->
+    assert_raise CompileError, ~r"type specification missing return type: my_fun\(integer\)", fn ->
       test_module do
-        @spec myfun(integer)
+        @spec my_fun(integer)
       end
     end
   end

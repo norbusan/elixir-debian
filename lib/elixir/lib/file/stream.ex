@@ -38,7 +38,7 @@ defmodule File.Stream do
     def into(%{path: path, modes: modes, raw: raw} = stream) do
       modes = for mode <- modes, not mode in [:read], do: mode
 
-      case :file.open(path, [:write|modes]) do
+      case :file.open(path, [:write | modes]) do
         {:ok, device} ->
           {:ok, into(device, stream, raw)}
         {:error, reason} ->

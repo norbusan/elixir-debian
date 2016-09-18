@@ -1,34 +1,38 @@
 @if defined ELIXIR_CLI_ECHO (@echo on) else  (@echo off)
 setlocal
-if ""%1""==""""       goto :documentation
-if ""%1""==""--help"" goto :documentation
-if ""%1""==""-h""     goto :documentation
-if ""%1""==""/h""     goto :documentation
+if    ""%1""==""""       goto :documentation
+if /I ""%1""==""--help"" goto :documentation
+if /I ""%1""==""-h""     goto :documentation
+if /I ""%1""==""/h""     goto :documentation
+if    ""%1""==""/?""     goto :documentation
 goto parseopts
 
 :documentation
 echo Usage: %~nx0 [options] [.exs file] [data]
 echo.
-echo   -v                Prints version and exits
-echo   -e command        Evaluates the given command (*)
-echo   -r file           Requires the given files/patterns (*)
-echo   -S script         Finds and executes the given script
-echo   -pr file          Requires the given files/patterns in parallel (*)
-echo   -pa path          Prepends the given path to Erlang code path (*)
-echo   -pz path          Appends the given path to Erlang code path (*)
-echo   --app app         Start the given app and its dependencies (*)
-echo   --erl switches    Switches to be passed down to erlang (*)
-echo   --name name       Makes and assigns a name to the distributed node
-echo   --sname name      Makes and assigns a short name to the distributed node
-echo   --cookie cookie   Sets a cookie for this distributed node
-echo   --hidden          Makes a hidden node
-echo   --detached        Starts the Erlang VM detached from console
-echo   --werl            Uses Erlang's Windows shell GUI
-echo   --no-halt         Does not halt the Erlang VM after execution
+echo   -v                          Prints version and exits
+echo   -e COMMAND                  Evaluates the given command (*)
+echo   -r FILE                     Requires the given files/patterns (*)
+echo   -S SCRIPT                   Finds and executes the given script in PATH
+echo   -pr FILE                    Requires the given files/patterns in parallel (*)
+echo   -pa PATH                    Prepends the given path to Erlang code path (*)
+echo   -pz PATH                    Appends the given path to Erlang code path (*)
+echo.
+echo   --app APP                   Starts the given app and its dependencies (*)
+echo   --cookie COOKIE             Sets a cookie for this distributed node
+echo   --detached                  Starts the Erlang VM detached from console
+echo   --erl SWITCHES              Switches to be passed down to Erlang (*)
+echo   --hidden                    Makes a hidden node
+echo   --logger-otp-reports BOOL   Enables or disables OTP reporting
+echo   --logger-sasl-reports BOOL  Enables or disables SASL reporting
+echo   --name NAME                 Makes and assigns a name to the distributed node
+echo   --no-halt                   Does not halt the Erlang VM after execution
+echo   --sname NAME                Makes and assigns a short name to the distributed node
+echo   --werl                      Uses Erlang's Windows shell GUI
 echo.
 echo ** Options marked with (*) can be given more than once
 echo ** Options given after the .exs file or -- are passed down to the executed code
-echo ** Options can be passed to the erlang runtime using ELIXIR_ERL_OPTIONS or --erl
+echo ** Options can be passed to the Erlang runtime using ELIXIR_ERL_OPTIONS or --erl
 goto end
 
 :parseopts
@@ -66,7 +70,7 @@ if "%par%"=="""" (
 rem ******* EXECUTION OPTIONS **********************
 IF "%par%"==""--werl"" (Set useWerl=1)
 IF "%par%"==""+iex"" (Set runMode="iex")
-rem ******* elixir parameters **********************
+rem ******* ELIXIR PARAMETERS **********************
 rem Note: we don't have to do anything with options that don't take an argument
 IF """"=="%par:-e=%"      (shift) 
 IF """"=="%par:-r=%"      (shift) 
@@ -76,12 +80,14 @@ IF """"=="%par:-pz=%"     (shift)
 IF """"=="%par:--app=%"   (shift) 
 IF """"=="%par:--remsh=%" (shift) 
 rem ******* ERLANG PARAMETERS **********************
-IF """"=="%par:--detached=%" (Set parsErlang=%parsErlang% -detached) 
-IF """"=="%par:--hidden=%"   (Set parsErlang=%parsErlang% -hidden)
-IF """"=="%par:--cookie=%"   (Set parsErlang=%parsErlang% -setcookie %1 && shift)
-IF """"=="%par:--sname=%"    (Set parsErlang=%parsErlang% -sname %1 && shift) 
-IF """"=="%par:--name=%"     (Set parsErlang=%parsErlang% -name %1 && shift) 
-IF """"=="%par:--erl=%"      (Set beforeExtra=%beforeExtra% %~1 && shift) 
+IF """"=="%par:--detached=%"            (Set parsErlang=%parsErlang% -detached) 
+IF """"=="%par:--hidden=%"              (Set parsErlang=%parsErlang% -hidden)
+IF """"=="%par:--cookie=%"              (Set parsErlang=%parsErlang% -setcookie %1 && shift)
+IF """"=="%par:--sname=%"               (Set parsErlang=%parsErlang% -sname %1 && shift) 
+IF """"=="%par:--name=%"                (Set parsErlang=%parsErlang% -name %1 && shift) 
+IF """"=="%par:--logger-otp-reports=%"  (Set parsErlang=%parsErlang% -logger handle_otp_reports %1 && shift) 
+IF """"=="%par:--logger-sasl-reports=%" (Set parsErlang=%parsErlang% -logger handle_sasl_reports %1 && shift) 
+IF """"=="%par:--erl=%"                 (Set beforeExtra=%beforeExtra% %~1 && shift) 
 goto:startloop
 
 rem ******* assume all pre-params are parsed ********************

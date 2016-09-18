@@ -5,56 +5,64 @@ defmodule Mix.Tasks.EscriptTest do
 
   defmodule Escript do
     def project do
-      [ app: :escripttest,
-        version: "0.0.1",
-        escript: [
-          main_module: Escripttest,
-          name: "escriptest",
-          embed_elixir: true
-        ]
-      ]
+      [app: :escripttest,
+       version: "0.0.1",
+       escript: [
+         main_module: Escripttest,
+         name: "escriptest",
+         embed_elixir: true
+       ]]
     end
   end
 
   defmodule EscriptWithPath do
     def project do
-      [ app: :escripttestwithpath,
-        version: "0.0.1",
-        escript: [
-          app: nil,
-          embed_elixir: true,
-          main_module: Escripttest,
-          path: Path.join("ebin", "escripttestwithpath")
-        ]
-      ]
+      [app: :escripttestwithpath,
+       version: "0.0.1",
+       escript: [
+         app: nil,
+         embed_elixir: true,
+         main_module: Escripttest,
+         path: Path.join("ebin", "escripttestwithpath")
+       ]]
     end
   end
 
   defmodule EscriptWithDeps do
     def project do
-      [ app: :escripttestwithdeps,
-        version: "0.0.1",
-        escript: [main_module: Escripttest],
-        deps: [{:ok, path: fixture_path("deps_status/deps/ok")}] ]
+      [app: :escripttestwithdeps,
+       version: "0.0.1",
+       escript: [main_module: Escripttest],
+       deps: [{:ok, path: fixture_path("deps_status/deps/ok")}]]
     end
   end
 
   defmodule EscriptErlangWithDeps do
     def project do
-      [ app: :escripttesterlangwithdeps,
-        version: "0.0.1",
-        language: :erlang,
-        escript: [main_module: :escripttest],
-        deps: [{:ok, path: fixture_path("deps_status/deps/ok")}] ]
+      [app: :escripttesterlangwithdeps,
+       version: "0.0.1",
+       language: :erlang,
+       escript: [main_module: :escripttest],
+       deps: [{:ok, path: fixture_path("deps_status/deps/ok")}]]
+    end
+  end
+
+  defmodule EscriptWithUnknownMainModule do
+    def project do
+      [app: :escripttestwithunknownmainmodule,
+       version: "0.0.1",
+       escript: [
+         main_module: BogusEscripttest
+       ]]
     end
   end
 
   defmodule EscriptConsolidated do
     def project do
-      [ app: :escripttestconsolidated,
-        build_embedded: true,
-        version: "0.0.1",
-        escript: [main_module: Escripttest] ]
+      [app: :escripttestconsolidated,
+       build_embedded: true,
+       version: "0.0.1",
+       escript: [main_module: Escripttest]]
     end
   end
 
@@ -107,7 +115,7 @@ defmodule Mix.Tasks.EscriptTest do
     purge [Ok.Mixfile]
   end
 
-  test "generate escript with erlang and deps" do
+  test "generate escript with Erlang and deps" do
     Mix.Project.push EscriptErlangWithDeps
 
     in_fixture "escripttest", fn ->
@@ -126,6 +134,65 @@ defmodule Mix.Tasks.EscriptTest do
       Mix.Tasks.Escript.Build.run []
       assert_received {:mix_shell, :info, ["Generated escript escripttestconsolidated with MIX_ENV=dev"]}
       assert System.cmd("escript", ["escripttestconsolidated", "Enumerable"]) == {"true\n", 0}
+    end
+  end
+
+  test "escript install and uninstall" do
+    File.rm_rf! tmp_path(".mix/escripts")
+    Mix.Project.push Escript
+
+    in_fixture "escripttest", fn ->
+      # build the escript
+      Mix.Tasks.Escript.Build.run []
+      assert_received {:mix_shell, :info, ["Generated escript escriptest with MIX_ENV=dev"]}
+
+      # check that no escripts are installed
+      Mix.Tasks.Escript.run []
+      assert_received {:mix_shell, :info, ["No escripts currently installed."]}
+
+      # install our escript
+      send self, {:mix_shell_input, :yes?, true}
+      Mix.Tasks.Escript.Install.run []
+
+      # check that it shows in the list
+      Mix.Tasks.Escript.run []
+      assert_received {:mix_shell, :info, ["* escriptest"]}
+      refute_received {:mix_shell, :info, ["* escriptest.bat"]}
+
+      # check uninstall confirmation
+      send self, {:mix_shell_input, :yes?, false}
+      Mix.Tasks.Escript.Uninstall.run ["escriptest"]
+      assert File.regular? tmp_path(".mix/escripts/escriptest")
+
+      # uninstall the escript
+      send self, {:mix_shell_input, :yes?, true}
+      Mix.Tasks.Escript.Uninstall.run ["escriptest"]
+      refute File.regular? tmp_path(".mix/escripts/escriptest")
+      refute File.regular? tmp_path(".mix/escripts/escriptest.bat")
+
+      # check that no escripts remain
+      Mix.Tasks.Escript.run []
+      assert_received {:mix_shell, :info, ["No escripts currently installed."]}
+    end
+  end
+
+  test "escript invalid install" do
+    # Install our escript
+    send self, {:mix_shell_input, :yes?, true}
+    assert_raise Mix.Error,
+                 "The given path does not point to an escript, installation aborted", fn ->
+      Mix.Tasks.Escript.Install.run [__ENV__.file]
+    end
+  end
+
+  test "escript invalid main module" do
+    Mix.Project.push EscriptWithUnknownMainModule
+
+    in_fixture "escripttest", fn ->
+      assert_raise Mix.Error, "Could not generate escript, module Elixir.BogusEscripttest defined as " <>
+                ":main_module could not be loaded", fn ->
+        Mix.Tasks.Escript.Build.run []
+      end
     end
   end
 end

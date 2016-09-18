@@ -12,7 +12,7 @@ defmodule ExUnit.CaptureIOTest do
       case Enum.split_while(chars, fn(c) -> c != stop_char end) do
         {l, []} ->
           {:more, this_far ++ l}
-        {l, [stop_char|rest]} ->
+        {l, [stop_char | rest]} ->
           {:done, this_far ++ l ++ [stop_char], rest}
       end
     end
@@ -285,7 +285,7 @@ defmodule ExUnit.CaptureIOTest do
     end)
   end
 
-  test "with multiple io requests" do
+  test "with multiple IO requests" do
     assert capture_io(fn ->
       send_and_receive_io({:requests, [{:put_chars, :unicode, "a"},
                                         {:put_chars, :unicode, "b"}]})
@@ -297,7 +297,7 @@ defmodule ExUnit.CaptureIOTest do
     end)
   end
 
-  test "with unknown io request" do
+  test "with unknown IO request" do
     assert capture_io(fn ->
       send_and_receive_io(:unknown)
     end) == ""

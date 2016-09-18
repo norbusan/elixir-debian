@@ -14,7 +14,7 @@ defmodule GenEvent do
 
   There are many use cases for event handlers. For example, a logging
   system can be built using event handlers where each log message is
-  an event and different event handlers can be plugged to handle the
+  an event and different event handlers can be attached to handle the
   log messages. One handler may print error messages on the terminal,
   another can write it to a file, while a third one can keep the
   messages in memory (like a buffer) until they are read.
@@ -22,14 +22,14 @@ defmodule GenEvent do
   As an example, let's have a GenEvent that accumulates messages until
   they are collected by an explicit call.
 
-      # Define a Event Handler
+      # Define an Event Handler
       defmodule LoggerHandler do
         use GenEvent
 
         # Callbacks
 
         def handle_event({:log, x}, messages) do
-          {:ok, [x|messages]}
+          {:ok, [x | messages]}
         end
 
         def handle_call(:messages, messages) do
@@ -79,7 +79,7 @@ defmodule GenEvent do
 
   ## Modes
 
-  GenEvent stream supports three different notifications.
+  GenEvent supports three different notifications.
 
   On `GenEvent.ack_notify/2`, the manager acknowledges each event,
   providing backpressure, but processing of the message happens
@@ -100,7 +100,7 @@ defmodule GenEvent do
         stream = GenEvent.stream(pid)
 
         # Discard the next 3 events
-        _ = Enum.drop(stream, 3)
+        _ = Enum.take(stream, 3)
 
         # Print all remaining events
         for event <- stream do
@@ -114,11 +114,9 @@ defmodule GenEvent do
 
   ## Learn more and compatibility
 
-  If you wish to find out more about gen events, Elixir getting started
-  guides provide a tutorial-like introduction. The documentation and links
-  in Erlang can also provide extra insight.
+  If you wish to find out more about GenEvent, the documentation and links
+  in Erlang can provide extra insight.
 
-    * [Introduction to Mix – Elixir's Getting Started Guide](http://elixir-lang.org/getting-started/mix-otp/introduction-to-mix.html)
     * [`:gen_event` module documentation](http://www.erlang.org/doc/man/gen_event.html)
     * [Event Handlers – Learn You Some Erlang for Great Good!](http://learnyousomeerlang.com/event-handlers)
 
@@ -136,7 +134,7 @@ defmodule GenEvent do
   """
 
   @doc """
-  Invoked when the handler is added to the `GenEvent` process. `add_handler/3`,
+  Invoked when the handler is added to the `GenEvent` process. `add_handler/3`
   (and `add_mon_handler/3`) will block until it returns.
 
   `args` is the argument term (third argument) passed to `add_handler/3`.
@@ -197,7 +195,7 @@ defmodule GenEvent do
   `{:ok, reply, new_state}` except the process is hibernated. See
   `handle_event/2` for more information on hibernation.
 
-  Returning `{:remove_handler, reply}` sends `reply` as a reponse to the call,
+  Returning `{:remove_handler, reply}` sends `reply` as a response to the call,
   removes the handler from the `GenEvent` loop and calls `terminate/2` with
   reason `:remove_handler` and state `state`.
   """
@@ -253,7 +251,7 @@ defmodule GenEvent do
   exits or its node is disconnected. Therefore it is not guaranteed that
   `terminate/2` is called when a `GenEvent` exits.
 
-  Care should be taken to cleanup because the `GenEvent` can continue is loop
+  Care should be taken to cleanup because the `GenEvent` can continue to loop
   after removing the handler. This is different to most other OTP behaviours.
   For example if the handler controls a `port` (e.g. `:gen_tcp.socket`) or
   `File.io_device`, it will be need to be closed in `terminate/2` as the
@@ -264,13 +262,13 @@ defmodule GenEvent do
 
   @doc """
   Invoked to change the state of the handler when a different version of the
-  handler's module module is loaded (hot code swapping) and the state's term
+  handler's module is loaded (hot code swapping) and the state's term
   structure should be changed.
 
   `old_vsn` is the previous version of the module (defined by the `@vsn`
   attribute) when upgrading. When downgrading the previous version is wrapped in
   a 2-tuple with first element `:down`. `state` is the current state of the
-  handker and `extra` is any extra data required to change the state.
+  handler and `extra` is any extra data required to change the state.
 
   Returning `{:ok, new_state}` changes the state to `new_state` and the code
   change is successful.
@@ -314,7 +312,7 @@ defmodule GenEvent do
 
       @doc false
       def handle_call(msg, state) do
-        # We do this to trick dialyzer to not complain about non-local returns.
+        # We do this to trick Dialyzer to not complain about non-local returns.
         reason = {:bad_call, msg}
         case :erlang.phash2(1, 1) do
           0 -> exit(reason)
@@ -424,7 +422,7 @@ defmodule GenEvent do
   function returns `{:error, :already_present}`.
 
   For installing multiple instances of the same handler, `{Module, id}` instead
-  of `Module` must be used. The handler could be then referenced with 
+  of `Module` must be used. The handler could be then referenced with
   `{Module, id}` instead of just `Module`.
   """
   @spec add_handler(manager, handler, term) :: :ok | {:error, term}
@@ -458,7 +456,7 @@ defmodule GenEvent do
     * `{:swapped, new_handler, pid}` - if the process pid has replaced the
       event handler by another
 
-    * a term - if the event handler is removed due to an error. Which term
+    * `term` - if the event handler is removed due to an error. Which term
       depends on the error
 
   Keep in mind that the `{:gen_event_EXIT, handler, reason}` message is not
@@ -527,7 +525,7 @@ defmodule GenEvent do
   end
 
   @doc """
-  Sends a ack event notification to the event `manager`.
+  Sends an ack event notification to the event `manager`.
 
   In other words, this function only returns `:ok` as soon as the
   event manager starts processing this event, but it does not wait
@@ -906,13 +904,13 @@ defmodule GenEvent do
     {hib, server_collect_process_handlers(mode, event, streams, handlers, name)}
   end
 
-  defp server_split_process_handlers(mode, event, [handler|t], handlers, streams) do
+  defp server_split_process_handlers(mode, event, [handler | t], handlers, streams) do
     case handler(handler, :id) do
       {pid, _ref} when is_pid(pid) ->
         server_process_notify(mode, event, handler)
-        server_split_process_handlers(mode, event, t, handlers, [handler|streams])
+        server_split_process_handlers(mode, event, t, handlers, [handler | streams])
       _ ->
-        server_split_process_handlers(mode, event, t, [handler|handlers], streams)
+        server_split_process_handlers(mode, event, t, [handler | handlers], streams)
     end
   end
 
@@ -928,10 +926,10 @@ defmodule GenEvent do
   defp mode_to_tag(:sync),  do: :sync_notify
   defp mode_to_tag(:async), do: :notify
 
-  defp server_notify(event, fun, [handler|t], name, handlers, acc, hib) do
+  defp server_notify(event, fun, [handler | t], name, handlers, acc, hib) do
     case server_update(handler, fun, event, name, handlers) do
       {new_hib, handler} ->
-        server_notify(event, fun, t, name, handlers, [handler|acc], hib or new_hib)
+        server_notify(event, fun, t, name, handlers, [handler | acc], hib or new_hib)
       :error ->
         server_notify(event, fun, t, name, handlers, acc, hib)
     end
@@ -965,16 +963,16 @@ defmodule GenEvent do
     end
   end
 
-  defp server_collect_process_handlers(:async, event, [handler|t], handlers, name) do
-    server_collect_process_handlers(:async, event, t, [handler|handlers], name)
+  defp server_collect_process_handlers(:async, event, [handler | t], handlers, name) do
+    server_collect_process_handlers(:async, event, t, [handler | handlers], name)
   end
 
-  defp server_collect_process_handlers(mode, event, [handler|t], handlers, name) when mode in [:sync, :ack] do
+  defp server_collect_process_handlers(mode, event, [handler | t], handlers, name) when mode in [:sync, :ack] do
     handler(ref: ref, id: id) = handler
 
     receive do
       {^ref, :ok} ->
-        server_collect_process_handlers(mode, event, t, [handler|handlers], name)
+        server_collect_process_handlers(mode, event, t, [handler | handlers], name)
       {_from, tag, {:delete_handler, ^id, args}} ->
         do_terminate(handler, args, :remove, name, :normal)
         reply(tag, :ok)
@@ -1064,9 +1062,9 @@ defmodule GenEvent do
           {:ok, res} ->
             case res do
               {:ok, state} ->
-                {false, succ, [handler(handler, state: state)|handlers]}
+                {false, succ, [handler(handler, state: state) | handlers]}
               {:ok, state, :hibernate} ->
-                {true, succ, [handler(handler, state: state)|handlers]}
+                {true, succ, [handler(handler, state: state) | handlers]}
               {:error, _} = error ->
                 {false, error, handlers}
               other ->
@@ -1129,7 +1127,7 @@ defmodule GenEvent do
   defp report_error(handler, reason, state, last_in, name) do
     reason =
       case reason do
-        {:undef, [{m, f, a, _}|_]=mfas} ->
+        {:undef, [{m, f, a, _} | _]=mfas} ->
           cond do
             :code.is_loaded(m) === false ->
               {:"module could not be loaded", mfas}

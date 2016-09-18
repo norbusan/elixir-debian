@@ -25,6 +25,11 @@ defmodule Mix.SCM.Git do
   end
 
   def accepts_options(_app, opts) do
+    opts =
+      opts
+      |> Keyword.put(:checkout, opts[:dest])
+      |> sparse_opts()
+
     cond do
       gh = opts[:github] ->
         opts
@@ -40,34 +45,35 @@ defmodule Mix.SCM.Git do
   end
 
   def checked_out?(opts) do
-    # Are we inside a git repository?
-    File.regular?(Path.join(opts[:dest], ".git/HEAD"))
+    # Are we inside a Git repository?
+    opts[:checkout]
+    |> Path.join(".git/HEAD")
+    |> File.regular?
   end
 
   def lock_status(opts) do
-    assert_git
+    assert_git!()
+    lock = opts[:lock]
 
-    case opts[:lock] do
-      {:git, lock_repo, lock_rev, lock_opts} ->
-        File.cd!(opts[:dest], fn ->
-          rev_info = get_rev_info
-          cond do
-            not git_repos_match?(lock_repo, opts[:git]) -> :outdated
-            lock_opts != get_lock_opts(opts)            -> :outdated
-            lock_rev  != rev_info[:rev]                 -> :mismatch
-            lock_repo != rev_info[:origin]              -> :mismatch
-            true                                        -> :ok
+    cond do
+      lock_rev = get_lock_rev(lock, opts) ->
+        File.cd!(opts[:checkout], fn ->
+          %{origin: origin, rev: rev} = get_rev_info()
+          if get_lock_repo(lock) == origin and lock_rev == rev do
+            :ok
+          else
+            :mismatch
           end
         end)
-      nil ->
+      is_nil(lock) ->
         :mismatch
-      _ ->
+      true ->
         :outdated
     end
   end
 
   def equal?(opts1, opts2) do
-    git_repos_match?(opts1[:git], opts2[:git]) &&
+    opts1[:git] == opts2[:git] and
       get_lock_opts(opts1) == get_lock_opts(opts2)
   end
 
@@ -76,73 +82,118 @@ defmodule Mix.SCM.Git do
   end
 
   def checkout(opts) do
-    assert_git
-
-    path     = opts[:dest]
-    location = opts[:git]
-
-    _ = File.rm_rf!(path)
-    git!(~s(clone --no-checkout --progress "#{location}" "#{path}"))
-
-    File.cd! path, fn -> do_checkout(opts) end
+    assert_git!()
+    path = opts[:checkout]
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    File.cd!(path, fn ->
+      git!("init --quiet")
+      git!("--git-dir=.git remote add origin \"#{opts[:git]}\"")
+      checkout(path, opts)
+    end)
   end
 
   def update(opts) do
-    assert_git
-
-    File.cd! opts[:dest], fn ->
-      # Ensures origin is set the lock repo
-      location = opts[:git]
-      update_origin(location)
-
-      command = "--git-dir=.git fetch --force"
-
-      if {1, 7, 1} <= git_version() do
-        command = command <> " --progress"
-      end
-
-      if opts[:tag] do
-        command = command <> " --tags"
-      end
-
-      git!(command)
-      do_checkout(opts)
-    end
+    assert_git!()
+    path = opts[:checkout]
+    File.cd! path, fn -> checkout(path, opts) end
   end
 
-  ## Helpers
+  defp checkout(_path, opts) do
+    # Set configuration
+    sparse_toggle(opts)
+    update_origin(opts[:git])
 
-  # TODO: make it raise (at v2.0?)
-  defp validate_git_options(opts) do
-    if Enum.count(opts, fn({key, _}) -> key in [:branch, :ref, :tag] end) > 1 do
-      Mix.shell.error "warning: you should specify only one of branch, ref or tag, and only once. " <>
-                      "Error on git dependency: #{opts[:git]}"
-    end
-    opts
-  end
+    # Fetch external data
+    command = IO.iodata_to_binary(["--git-dir=.git fetch --force --quiet",
+                                   progress_switch(git_version()),
+                                   tags_switch(opts[:tag])])
+    git!(command)
 
-  defp do_checkout(opts) do
-    ref = get_lock_rev(opts[:lock]) || get_opts_rev(opts)
-    git!("--git-dir=.git checkout --quiet #{ref}")
+    # Migrate the git repo
+    rev = get_lock_rev(opts[:lock], opts) || get_opts_rev(opts)
+    git!("--git-dir=.git checkout --quiet #{rev}")
 
     if opts[:submodules] do
       git!("--git-dir=.git submodule update --init --recursive")
     end
 
+    # Get the new repo lock
     get_lock(opts)
   end
 
-  defp get_lock(opts) do
-    rev_info = get_rev_info()
-    {:git, opts[:git], rev_info[:rev], get_lock_opts(opts)}
+  defp sparse_opts(opts) do
+    if opts[:sparse] do
+      dest = Path.join(opts[:dest], opts[:sparse])
+      Keyword.put(opts, :dest, dest)
+    else
+      opts
+    end
   end
 
-  defp get_lock_rev({:git, _repo, lock, _opts}) when is_binary(lock), do: lock
-  defp get_lock_rev(_), do: nil
+  defp sparse_toggle(opts) do
+    cond do
+      sparse = opts[:sparse] ->
+        sparse_check(git_version())
+        git!("--git-dir=.git config core.sparsecheckout true")
+        File.write!(".git/info/sparse-checkout", sparse)
+      File.exists?(".git/info/sparse-checkout") ->
+        File.write!(".git/info/sparse-checkout", "*")
+        git!("--git-dir=.git read-tree -mu HEAD")
+        git!("--git-dir=.git config core.sparsecheckout false")
+        File.rm(".git/info/sparse-checkout")
+      true ->
+        :ok
+    end
+  end
+
+  defp sparse_check(version) do
+    unless {1, 7, 0} <= version do
+      version = version |> Tuple.to_list |> Enum.join(".")
+      Mix.raise "Git >= 1.7.0 is required to use sparse checkout. " <>
+                "You are running version #{version}"
+    end
+  end
+
+  defp progress_switch(version) when {1, 7, 1} <= version, do: " --progress"
+  defp progress_switch(_),                                 do: ""
+
+  defp tags_switch(nil), do: ""
+  defp tags_switch(_), do: " --tags"
+
+  ## Helpers
+
+  defp validate_git_options(opts) do
+    err = "You should specify only one of branch, ref or tag, and only once. " <>
+          "Error on Git dependency: #{opts[:git]}"
+    validate_single_uniq(opts, [:branch, :ref, :tag], err)
+  end
+
+  defp validate_single_uniq(opts, take, error) do
+    case Keyword.take(opts, take) do
+      []  -> opts
+      [_] -> opts
+      _   -> Mix.raise error
+    end
+  end
+
+  defp get_lock(opts) do
+    %{rev: rev} = get_rev_info()
+    {:git, opts[:git], rev, get_lock_opts(opts)}
+  end
+
+  defp get_lock_repo({:git, repo, _, _}), do: repo
+
+  defp get_lock_rev({:git, repo, lock, lock_opts}, opts) when is_binary(lock) do
+    if repo == opts[:git] and lock_opts == get_lock_opts(opts) do
+      lock
+    end
+  end
+  defp get_lock_rev(_, _), do: nil
 
   defp get_lock_opts(opts) do
-    lock_opts = Enum.find_value [:branch, :ref, :tag], &List.keyfind(opts, &1, 0)
-    lock_opts = List.wrap(lock_opts)
+    lock_opts = Keyword.take(opts, [:branch, :ref, :tag, :sparse])
+
     if opts[:submodules] do
       lock_opts ++ [submodules: true]
     else
@@ -163,7 +214,7 @@ defmodule Mix.SCM.Git do
       :os.cmd('git --git-dir=.git config remote.origin.url && git --git-dir=.git rev-parse --verify --quiet HEAD')
       |> IO.iodata_to_binary
       |> String.split("\n", trim: true)
-    [origin: origin, rev: rev]
+    %{origin: origin, rev: rev}
   end
 
   defp update_origin(location) do
@@ -178,7 +229,7 @@ defmodule Mix.SCM.Git do
     :ok
   end
 
-  defp assert_git do
+  defp assert_git! do
     case Mix.State.fetch(:git_available) do
       {:ok, true} ->
         :ok
@@ -208,14 +259,6 @@ defmodule Mix.SCM.Git do
         version
     end
   end
-
-  defp git_repos_match?(repo_a, repo_b) do
-    normalize_github_repo(repo_a) == normalize_github_repo(repo_b)
-  end
-
-  # TODO: Remove this on Elixir v2.0 to push everyone to https
-  defp normalize_github_repo("git://github.com/" <> rest), do: "https://github.com/#{rest}"
-  defp normalize_github_repo(repo), do: repo
 
   defp parse_version("git version " <> version) do
     String.split(version, ".")

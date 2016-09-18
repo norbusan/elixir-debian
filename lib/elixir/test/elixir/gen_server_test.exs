@@ -6,8 +6,12 @@ defmodule GenServerTest do
   defmodule Stack do
     use GenServer
 
-    def handle_call(:pop, _from, [h|t]) do
+    def handle_call(:pop, _from, [h | t]) do
       {:reply, h, t}
+    end
+
+    def handle_call(:noreply, _from, h) do
+      {:noreply, h}
     end
 
     def handle_call(request, from, state) do
@@ -15,7 +19,7 @@ defmodule GenServerTest do
     end
 
     def handle_cast({:push, item}, state) do
-      {:noreply, [item|state]}
+      {:noreply, [item | state]}
     end
 
     def handle_cast(request, state) do
@@ -47,9 +51,26 @@ defmodule GenServerTest do
 
     assert GenServer.cast({:global, :foo}, {:push, :world}) == :ok
     assert GenServer.cast({:via, :foo, :bar}, {:push, :world}) == :ok
-    assert_raise ArgumentError, fn ->
-      GenServer.cast(:foo, {:push, :world})
-    end
+    assert GenServer.cast(:foo, {:push, :world}) == :ok
+  end
+
+  @tag capture_log: true
+  test "call/3 exit messages" do
+    name = :self
+    Process.register self(), name
+    :global.register_name name, self()
+    {:ok, pid} = GenServer.start_link(Stack, [:hello])
+    {:ok, stopped_pid} = GenServer.start(Stack, [:hello])
+    GenServer.stop(stopped_pid)
+
+    assert catch_exit(GenServer.call(name, :pop, 5000)) == {:calling_self, {GenServer, :call, [name, :pop, 5000]}}
+    assert catch_exit(GenServer.call({:global, name}, :pop, 5000)) == {:calling_self, {GenServer, :call, [{:global, name}, :pop, 5000]}}
+    assert catch_exit(GenServer.call({:via, :global, name}, :pop, 5000)) == {:calling_self, {GenServer, :call, [{:via, :global, name}, :pop, 5000]}}
+    assert catch_exit(GenServer.call(self(), :pop, 5000)) == {:calling_self, {GenServer, :call, [self(), :pop, 5000]}}
+    assert catch_exit(GenServer.call(pid, :noreply, 1)) == {:timeout, {GenServer, :call, [pid, :noreply, 1]}}
+    assert catch_exit(GenServer.call(nil, :pop, 5000)) == {:noproc, {GenServer, :call, [nil, :pop, 5000]}}
+    assert catch_exit(GenServer.call(stopped_pid, :pop, 5000)) == {:noproc, {GenServer, :call, [stopped_pid, :pop, 5000]}}
+    assert catch_exit(GenServer.call({:stack, :bogus_node}, :pop, 5000)) == {{:nodedown, :bogus_node}, {GenServer, :call, [{:stack, :bogus_node}, :pop, 5000]}}
   end
 
   test "nil name" do

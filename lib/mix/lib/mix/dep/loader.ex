@@ -25,7 +25,7 @@ defmodule Mix.Dep.Loader do
   def partition_by_env(deps, env), do: Enum.partition(deps, &not skip?(&1, env))
 
   @doc """
-  Check if a dependency must be skipped according to the environment.
+  Checks if a dependency must be skipped according to the environment.
   """
   def skip?(_dep, nil), do: false
   def skip?(%Mix.Dep{status: {:divergedonly, _}}, _), do: false
@@ -54,8 +54,8 @@ defmodule Mix.Dep.Loader do
         mix?(dep) ->
           mix_dep(dep, children)
 
-        # If not an explicit rebar or Mix dependency
-        # but came from rebar, assume to be a rebar dep.
+        # If not an explicit Rebar or Mix dependency
+        # but came from Rebar, assume to be a Rebar dep.
         rebar?(dep) ->
           rebar_dep(dep, children, manager)
 
@@ -139,10 +139,13 @@ defmodule Mix.Dep.Loader do
 
     {scm, opts} = get_scm(app, opts)
 
-    if !scm && Mix.Hex.ensure_installed?(app) do
-      _ = Mix.Hex.start()
-      {scm, opts} = get_scm(app, opts)
-    end
+    {scm, opts} =
+      if !scm && Mix.Hex.ensure_installed?(app) do
+        _ = Mix.Hex.start()
+        get_scm(app, opts)
+      else
+        {scm, opts}
+      end
 
     unless scm do
       Mix.raise "Could not find an SCM for dependency #{inspect app} from #{inspect Mix.Project.get}"
@@ -153,7 +156,7 @@ defmodule Mix.Dep.Loader do
       app: app,
       requirement: req,
       status: scm_status(scm, opts),
-      opts: opts}
+      opts: Keyword.put_new(opts, :env, :prod)}
   end
 
   defp get_scm(app, opts) do
@@ -162,10 +165,9 @@ defmodule Mix.Dep.Loader do
     end
   end
 
-  # Notice we ignore make dependencies because the
+  # Notice we ignore Make dependencies because the
   # file based heuristic will always figure it out.
-  # TODO: In the future add rebar3 to the list.
-  @scm_managers ~w(mix rebar)a
+  @scm_managers ~w(mix rebar rebar3)a
 
   defp scm_manager(scm, opts) do
     managers = scm.managers(opts)
@@ -213,6 +215,7 @@ defmodule Mix.Dep.Loader do
         requirement :: String.t | Regex.t
         opts :: Keyword.t
 
+    If you want to skip the requirement (not recommended), use ">= 0.0.0".
     """
   end
 
@@ -223,7 +226,7 @@ defmodule Mix.Dep.Loader do
   defp attach_only(deps, opts) do
     if only = opts[:only] do
       Enum.map(deps, fn %{opts: opts} = dep ->
-        %{dep | opts: Keyword.put(opts, :only, only)}
+        %{dep | opts: Keyword.put_new(opts, :only, only)}
       end)
     else
       deps
@@ -232,18 +235,18 @@ defmodule Mix.Dep.Loader do
 
   defp mix_dep(%Mix.Dep{opts: opts} = dep, nil) do
     Mix.Dep.in_dependency(dep, fn _ ->
-      if Mix.Project.umbrella? do
-        opts = Keyword.put_new(opts, :app, false)
-      end
+      opts =
+        if Mix.Project.umbrella? do
+          Keyword.put_new(opts, :app, false)
+        else
+          opts
+        end
 
       child_opts =
-        cond do
-          opts[:from_umbrella] ->
-            []
-          env = opts[:env] ->
-            [env: env]
-          true ->
-            [env: :prod]
+        if opts[:from_umbrella] do
+          []
+        else
+          [env: Keyword.fetch!(opts, :env)]
         end
 
       deps = mix_children(child_opts) ++ Mix.Dep.Umbrella.unloaded
@@ -265,15 +268,16 @@ defmodule Mix.Dep.Loader do
     Mix.Dep.in_dependency(dep, fn _ ->
       config = Mix.Rebar.load_config(".")
       extra = Mix.Rebar.merge_config(dep.extra, config)
-      deps   = if children do
-        from = Path.absname("rebar.config")
-        # Pass the manager because deps of a rebar project need
-        # to default to rebar if we cannot chose a manager from
-        # files in the dependency
-        Enum.map(children, &to_dep(&1, from, manager))
-      else
-        rebar_children(app, config, extra, manager)
-      end
+      deps =
+        if children do
+          from = Path.absname("rebar.config")
+          # Pass the manager because deps of a Rebar project need
+          # to default to Rebar if we cannot chose a manager from
+          # files in the dependency
+          Enum.map(children, &to_dep(&1, from, manager))
+        else
+          rebar_children(app, config, extra, manager)
+        end
       {%{dep | extra: extra}, deps}
     end)
   end
@@ -300,12 +304,14 @@ defmodule Mix.Dep.Loader do
   defp rebar_children(app, root_config, extra, manager) do
     from = Path.absname("rebar.config")
     Mix.Rebar.recur(root_config, fn config ->
-      deps = Mix.Rebar.deps(app, config, extra[:overrides] || [])
-      Enum.map(deps, fn dep ->
-        %{to_dep(dep, from, manager) | extra: extra}
-      end)
+      app
+      |> Mix.Rebar.deps(config, overrides(manager, extra))
+      |> Enum.map(fn dep -> %{to_dep(dep, from, manager) | extra: extra} end)
     end) |> Enum.concat
   end
+
+  defp overrides(:rebar3, extra), do: extra[:overrides] || []
+  defp overrides(_, _extra), do: []
 
   defp validate_app(%Mix.Dep{opts: opts, requirement: req, app: app} = dep) do
     opts_app = opts[:app]

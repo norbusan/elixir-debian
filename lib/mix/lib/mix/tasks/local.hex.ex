@@ -1,7 +1,6 @@
 defmodule Mix.Tasks.Local.Hex do
   use Mix.Task
 
-  @hex_s3           "http://s3.amazonaws.com/s3.hex.pm"
   @hex_list_path    "/installs/hex-1.x.csv"
   @hex_archive_path "/installs/[ELIXIR_VERSION]/hex-[HEX_VERSION].ez"
 
@@ -19,12 +18,12 @@ defmodule Mix.Tasks.Local.Hex do
 
   ## Mirrors
 
-  If you want to change the [default mirror](http://s3.amazonaws.com/s3.hex.pm)
-  to use for fetching Hex please set the `HEX_CDN` environment variable.
+  If you want to change the [default mirror](https://repo.hex.pm)
+  to use for fetching Hex please set the `HEX_MIRROR` environment variable.
   """
   @spec run(OptionParser.argv) :: boolean
   def run(args) do
-    hex_mirror = System.get_env("HEX_CDN") || @hex_s3
+    hex_mirror = Mix.Hex.mirror
 
     {elixir_version, hex_version, sha512} =
       Mix.Local.find_matching_versions_from_signed_csv!("Hex", hex_mirror <> @hex_list_path)
