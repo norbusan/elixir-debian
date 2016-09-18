@@ -1,6 +1,7 @@
 defmodule Mix.Hex do
   @moduledoc false
   @hex_requirement  ">= 0.5.0"
+  @hex_mirror       "https://repo.hex.pm"
 
   @doc """
   Returns `true` if `Hex` is loaded or installed. Otherwise returns `false`.
@@ -13,7 +14,7 @@ defmodule Mix.Hex do
       shell = Mix.shell
       shell.info "Could not find Hex, which is needed to build dependency #{inspect app}"
 
-      if shell.yes?("Shall I install Hex?") do
+      if shell.yes?("Shall I install Hex? (if running non-interactively, use: \"mix local.hex --force\")") do
         Mix.Tasks.Local.Hex.run ["--force"]
       else
         false
@@ -23,7 +24,7 @@ defmodule Mix.Hex do
 
   @doc """
   Returns `true` if it has the required `Hex`. If an update is performed, it then exits.
-  Otherwise returns `false` without updating anything. 
+  Otherwise returns `false` without updating anything.
   """
   @spec ensure_updated?() :: boolean
   def ensure_updated?() do
@@ -56,6 +57,22 @@ defmodule Mix.Hex do
         Mix.shell.error "Could not start Hex. Try fetching a new version with " <>
                         "\"mix local.hex\" or uninstalling it with \"mix archive.uninstall hex.ez\""
         :erlang.raise(kind, reason, stacktrace)
+    end
+  end
+
+  @doc """
+  Returns the URL to the Hex mirror.
+  """
+  def mirror do
+    System.get_env("HEX_MIRROR") || cdn() || @hex_mirror
+  end
+
+  # TODO: Remove by 1.4
+  defp cdn do
+    if cdn = System.get_env("HEX_CDN") do
+      Mix.shell.error "warning: the HEX_CDN environment variable has been deprecated " <>
+                      "in favor of HEX_MIRROR"
+      cdn
     end
   end
 end

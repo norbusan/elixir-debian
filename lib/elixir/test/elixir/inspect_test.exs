@@ -115,6 +115,13 @@ defmodule Inspect.BitStringTest do
     assert inspect(<<"john", 193, "doe">>, binaries: :as_binaries) == "<<106, 111, 104, 110, 193, 100, 111, 101>>"
     assert inspect(<<"john">>, binaries: :as_binaries) == "<<106, 111, 104, 110>>"
     assert inspect(<<193>>, binaries: :as_binaries) == "<<193>>"
+    # base: :hex is recognized
+    assert inspect("abc", binaries: :as_binary, base: :hex) == "<<0x61, 0x62, 0x63>>"
+    # any base other than :decimal implies binaries: :as_binaries
+    assert inspect("abc", base: :hex) == "<<0x61, 0x62, 0x63>>"
+    assert inspect("abc", base: :octal) == "<<0o141, 0o142, 0o143>>"
+    # size is still represented as decimal
+    assert inspect(<<10, 11, 12::4>>, base: :hex) == "<<0xA, 0xB, 0xC::size(4)>>"
   end
 
   test "unprintable with opts" do
@@ -193,21 +200,21 @@ defmodule Inspect.ListTest do
   end
 
   test "opt infer" do
-    assert inspect('john' ++ [0] ++ 'doe', char_lists: :infer) == "[106, 111, 104, 110, 0, 100, 111, 101]"
-    assert inspect('john', char_lists: :infer) == "'john'"
-    assert inspect([0], char_lists: :infer) == "[0]"
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :infer) == "[106, 111, 104, 110, 0, 100, 111, 101]"
+    assert inspect('john', charlists: :infer) == "'john'"
+    assert inspect([0], charlists: :infer) == "[0]"
   end
 
   test "opt as strings" do
-    assert inspect('john' ++ [0] ++ 'doe', char_lists: :as_char_lists) == "'john\\0doe'"
-    assert inspect('john', char_lists: :as_char_lists) == "'john'"
-    assert inspect([0], char_lists: :as_char_lists) == "'\\0'"
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :as_charlists) == "'john\\0doe'"
+    assert inspect('john', charlists: :as_charlists) == "'john'"
+    assert inspect([0], charlists: :as_charlists) == "'\\0'"
   end
 
   test "opt as lists" do
-    assert inspect('john' ++ [0] ++ 'doe', char_lists: :as_lists) == "[106, 111, 104, 110, 0, 100, 111, 101]"
-    assert inspect('john', char_lists: :as_lists) == "[106, 111, 104, 110]"
-    assert inspect([0], char_lists: :as_lists) == "[0]"
+    assert inspect('john' ++ [0] ++ 'doe', charlists: :as_lists) == "[106, 111, 104, 110, 0, 100, 111, 101]"
+    assert inspect('john', charlists: :as_lists) == "[106, 111, 104, 110]"
+    assert inspect([0], charlists: :as_lists) == "[0]"
   end
 
   test "non printable" do
@@ -217,7 +224,7 @@ defmodule Inspect.ListTest do
   test "improper" do
     assert inspect([:foo | :bar]) == "[:foo | :bar]"
 
-    assert inspect([1, 2, 3, 4, 5|42], [pretty: true, width: 1]) == "[1,\n 2,\n 3,\n 4,\n 5 |\n 42]"
+    assert inspect([1, 2, 3, 4, 5 | 42], [pretty: true, width: 1]) == "[1,\n 2,\n 3,\n 4,\n 5 |\n 42]"
   end
 
   test "nested" do
@@ -259,9 +266,7 @@ defmodule Inspect.MapTest do
   end
 
   defmodule Public do
-    def __struct__ do
-      %{key: 0, __struct__: Public}
-    end
+    defstruct key: 0
   end
 
   defmodule Private do
@@ -282,9 +287,7 @@ defmodule Inspect.MapTest do
   end
 
   defmodule Failing do
-    def __struct__ do
-      %{key: 0}
-    end
+    defstruct key: 0
 
     defimpl Inspect do
       def inspect(struct, _) do
@@ -302,7 +305,7 @@ defmodule Inspect.MapTest do
       inspect(%Failing{}, safe: false)
     end
 
-    assert [{Inspect.Inspect.MapTest.Failing, :inspect, 2, _}|_] = System.stacktrace
+    assert [{Inspect.Inspect.MapTest.Failing, :inspect, 2, _} | _] = System.stacktrace
   end
 
   test "bad implementation safe" do
@@ -332,7 +335,7 @@ defmodule Inspect.OthersTest do
     assert bin == "&Enum.map/2"
   end
 
-  test "external erlang funs" do
+  test "external Erlang funs" do
     bin = inspect(&:lists.map/2)
     assert bin == "&:lists.map/2"
   end

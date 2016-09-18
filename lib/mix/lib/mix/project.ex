@@ -113,7 +113,7 @@ defmodule Mix.Project do
   """
   @spec get!() :: module | no_return
   def get! do
-    get || Mix.raise Mix.NoProjectError, []
+    get || raise Mix.NoProjectError, []
   end
 
   @doc """
@@ -159,7 +159,7 @@ defmodule Mix.Project do
             |> Path.join("**/*.*")
             |> Path.wildcard
             |> Enum.reject(&String.starts_with?(Path.basename(&1), "."))
-          [file|configs]
+          [file | configs]
         _ ->
           []
       end
@@ -245,9 +245,9 @@ defmodule Mix.Project do
       #=> %{foo: "deps/foo", bar: "custom/path/dep"}
 
   """
-  @spec deps_paths() :: %{atom => Path.t}
+  @spec deps_paths() :: %{optional(atom) => Path.t}
   def deps_paths do
-    Enum.reduce Mix.Dep.loaded(env: Mix.env), %{}, fn
+    Enum.reduce Mix.Dep.cached(), %{}, fn
       %{app: app, opts: opts}, acc -> Map.put acc, app, opts[:dest]
     end
   end
@@ -329,7 +329,7 @@ defmodule Mix.Project do
       app = config[:app] ->
         Path.join([build_path(config), "lib", Atom.to_string(app)])
       config[:apps_path] ->
-        raise "Trying to access Mix.Project.app_path for an umbrella project but umbrellas have no app"
+        raise "trying to access Mix.Project.app_path for an umbrella project but umbrellas have no app"
       true ->
         Mix.raise "Cannot access build without an application name, " <>
           "please ensure you are in a directory with a mix.exs file and it defines " <>
@@ -354,10 +354,17 @@ defmodule Mix.Project do
   end
 
   @doc """
+  The path where protocol consolidations are stored.
+  """
+  def consolidation_path(config \\ config()) do
+    Path.join(build_path(config), "consolidated")
+  end
+
+  @doc """
   Compiles the given project.
 
   It will run the compile task unless the project
-  is in build embedded mode, which may fail as a
+  is in build embedded mode, which may fail as an
   explicit command to `mix compile` is required.
   """
   @spec compile([term], Keyword.t) :: term
@@ -450,7 +457,7 @@ defmodule Mix.Project do
   defp load_project(app, post_config) do
     Mix.ProjectStack.post_config(post_config)
 
-    if cached = Mix.ProjectStack.read_cache(app) do
+    if cached = Mix.ProjectStack.read_cache({:app, app}) do
       {project, file} = cached
       push(project, file, app)
       project
@@ -458,20 +465,19 @@ defmodule Mix.Project do
       file = Path.expand("mix.exs")
       old_proj = get()
 
-      new_proj =
+      {new_proj, file} =
         if File.regular?(file) do
           _ = Code.load_file(file)
           case get() do
             ^old_proj -> Mix.raise "Could not find a Mix project at #{file}"
-            new_proj  -> new_proj
+            new_proj  -> {new_proj, file}
           end
         else
-          file = "nofile"
           push(nil, file, app)
-          nil
+          {nil, "nofile"}
         end
 
-      Mix.ProjectStack.write_cache(app, {new_proj, file})
+      Mix.ProjectStack.write_cache({:app, app}, {new_proj, file})
       new_proj
     end
   end

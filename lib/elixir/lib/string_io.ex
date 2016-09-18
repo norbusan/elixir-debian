@@ -1,6 +1,9 @@
 defmodule StringIO do
   @moduledoc """
-  This module provides an IO device that wraps a string.
+  Controls an IO device process that wraps a string.
+
+  A `StringIO` IO device can be passed as a "device" to
+  most of the functions in the `IO` module.
 
   ## Examples
 
@@ -14,6 +17,9 @@ defmodule StringIO do
 
   @doc """
   Creates an IO device.
+
+  `string` will be the initial input of the newly created
+  device.
 
   If the `:capture_prompt` option is set to `true`,
   prompts (specified as arguments to `IO.get*` functions)
@@ -40,7 +46,8 @@ defmodule StringIO do
   end
 
   @doc """
-  Returns current buffers.
+  Returns the current input/output buffers for the given IO
+  device.
 
   ## Examples
 
@@ -56,7 +63,7 @@ defmodule StringIO do
   end
 
   @doc """
-  Flushes output buffer.
+  Flushes the output buffer and returns its current contents.
 
   ## Examples
 
@@ -74,7 +81,8 @@ defmodule StringIO do
   end
 
   @doc """
-  Stops the IO device and returns remaining buffers.
+  Stops the IO device and returns the remaining input/output
+  buffers.
 
   ## Examples
 
@@ -127,21 +135,20 @@ defmodule StringIO do
     s
   end
 
-  defp io_request({:put_chars, chars}, %{output: output} = s) do
-    {:ok, %{s | output: <<output::binary, IO.chardata_to_string(chars)::binary>>}}
+  defp io_request({:put_chars, chars} = req, s) do
+    put_chars(:latin1, chars, req, s)
   end
 
-  defp io_request({:put_chars, m, f, as}, %{output: output} = s) do
-    chars = apply(m, f, as)
-    {:ok, %{s | output: <<output::binary, IO.chardata_to_string(chars)::binary>>}}
+  defp io_request({:put_chars, m, f, as} = req, s) do
+    put_chars(:latin1, apply(m, f, as), req, s)
   end
 
-  defp io_request({:put_chars, _encoding, chars}, s) do
-    io_request({:put_chars, chars}, s)
+  defp io_request({:put_chars, encoding, chars} = req, s) do
+    put_chars(encoding, chars, req, s)
   end
 
-  defp io_request({:put_chars, _encoding, mod, func, args}, s) do
-    io_request({:put_chars, mod, func, args}, s)
+  defp io_request({:put_chars, encoding, mod, func, args} = req, s) do
+    put_chars(encoding, apply(mod, func, args), req, s)
   end
 
   defp io_request({:get_chars, prompt, n}, s) when n >= 0 do
@@ -196,6 +203,17 @@ defmodule StringIO do
     {{:error, :request}, s}
   end
 
+  ## put_chars
+
+  defp put_chars(encoding, chars, req, %{output: output} = s) do
+    case :unicode.characters_to_binary(chars, encoding, :unicode) do
+      string when is_binary(string) ->
+        {:ok, %{s | output: output <> string}}
+      {_, _, _} ->
+        {{:error, req}, s}
+    end
+  end
+
   ## get_chars
 
   defp get_chars(encoding, prompt, n,
@@ -204,11 +222,14 @@ defmodule StringIO do
       {:error, _} = error ->
         {error, s}
       {result, input} ->
-        if capture_prompt do
-          output = <<output::binary, IO.chardata_to_string(prompt)::binary>>
-        end
+        s =
+          if capture_prompt do
+            %{s | output: <<output::binary, IO.chardata_to_string(prompt)::binary>>}
+          else
+            s
+          end
 
-        {result, %{s | input: input, output: output}}
+        {result, %{s | input: input}}
     end
   end
 
@@ -252,11 +273,14 @@ defmodule StringIO do
       chars ->
         {result, input} = do_get_line(chars, encoding)
 
-        if capture_prompt do
-          output = <<output::binary, IO.chardata_to_string(prompt)::binary>>
-        end
+        s =
+          if capture_prompt do
+            %{s | output: <<output::binary, IO.chardata_to_string(prompt)::binary>>}
+          else
+            s
+          end
 
-        {result, %{s | input: input, output: output}}
+        {result, %{s | input: input}}
     end
   end
 
@@ -282,17 +306,20 @@ defmodule StringIO do
       chars ->
         {result, input, count} = do_get_until(chars, encoding, mod, fun, args)
 
-        if capture_prompt do
-          output = <<output::binary, :binary.copy(IO.chardata_to_string(prompt), count)::binary>>
-        end
-
         input =
           case input do
             :eof -> ""
             _ -> :unicode.characters_to_binary(input, encoding)
           end
 
-        {result, %{s | input: input, output: output}}
+        s =
+          if capture_prompt do
+            %{s | output: <<output::binary, :binary.copy(IO.chardata_to_string(prompt), count)::binary>>}
+          else
+            s
+          end
+
+        {result, %{s | input: input}}
     end
   end
 
@@ -311,11 +338,10 @@ defmodule StringIO do
     {line, rest} = collect_line(chars)
 
     case apply(mod, fun, [continuation, line | args]) do
-      {:done, result, rest1} ->
-        unless rest1 == :eof do
-          rest = rest1 ++ rest
-        end
+      {:done, result, :eof} ->
         {result, rest, count + 1}
+      {:done, result, extra} ->
+        {result, extra ++ rest, count + 1}
       {:more, next_continuation} ->
         do_get_until(rest, encoding, mod, fun, args, next_continuation, count + 1)
     end
@@ -323,7 +349,7 @@ defmodule StringIO do
 
   ## io_requests
 
-  defp io_requests([r|rs], {:ok, s}) do
+  defp io_requests([r | rs], {:ok, s}) do
     io_requests(rs, io_request(r, s))
   end
 
@@ -342,15 +368,15 @@ defmodule StringIO do
   end
 
   defp collect_line([?\r, ?\n | rest], stack) do
-    {:lists.reverse([?\n|stack]), rest}
+    {:lists.reverse([?\n | stack]), rest}
   end
 
   defp collect_line([?\n | rest], stack) do
-    {:lists.reverse([?\n|stack]), rest}
+    {:lists.reverse([?\n | stack]), rest}
   end
 
-  defp collect_line([h|t], stack) do
-    collect_line(t, [h|stack])
+  defp collect_line([h | t], stack) do
+    collect_line(t, [h | stack])
   end
 
   defp io_reply(from, reply_as, reply) do

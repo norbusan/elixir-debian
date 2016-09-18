@@ -55,7 +55,7 @@ defprotocol Inspect do
   # Handle structs in Any
   @fallback_to_any true
 
-  def inspect(thing, opts)
+  def inspect(term, opts)
 end
 
 defimpl Inspect, for: Atom do
@@ -141,16 +141,16 @@ defimpl Inspect, for: Atom do
 end
 
 defimpl Inspect, for: BitString do
-  def inspect(thing, %Inspect.Opts{binaries: bins} = opts) when is_binary(thing) do
-    if bins == :as_strings or (bins == :infer and String.printable?(thing)) do
-      <<?", escape(thing, ?")::binary, ?">>
+  def inspect(term, %Inspect.Opts{binaries: bins, base: base} = opts) when is_binary(term) do
+    if base == :decimal and (bins == :as_strings or (bins == :infer and String.printable?(term))) do
+      <<?", escape(term, ?")::binary, ?">>
     else
-      inspect_bitstring(thing, opts)
+      inspect_bitstring(term, opts)
     end
   end
 
-  def inspect(thing, opts) do
-    inspect_bitstring(thing, opts)
+  def inspect(term, opts) do
+    inspect_bitstring(term, opts)
   end
 
   ## Escaping
@@ -160,7 +160,7 @@ defimpl Inspect, for: BitString do
     escape(other, char, <<>>)
   end
 
-  defp escape(<<char, t::binary >>, char, binary) do
+  defp escape(<<char, t::binary>>, char, binary) do
     escape(t, char, <<binary::binary, ?\\, char>>)
   end
   defp escape(<<?#, ?{, t::binary>>, char, binary) do
@@ -197,11 +197,11 @@ defimpl Inspect, for: BitString do
     escape(t, char, <<binary::binary, ?\\, ?v>>)
   end
   defp escape(<<h::utf8, t::binary>>, char, binary) do
-    head = <<h::utf8 >>
+    head = <<h::utf8>>
     if String.printable?(head) do
       escape(t, char, append(head, binary))
     else
-      <<byte::8, h::binary >> = head
+      <<byte::8, h::binary>> = head
       t = <<h::binary, t::binary>>
       escape(t, char, <<binary::binary, escape_char(byte)::binary>>)
     end
@@ -241,30 +241,35 @@ defimpl Inspect, for: BitString do
 
   ## Bitstrings
 
+  defp inspect_bitstring("", _opts) do
+    "<<>>"
+  end
+
   defp inspect_bitstring(bitstring, opts) do
-    each_bit(bitstring, opts.limit, "<<") <> ">>"
+    nest surround("<<", each_bit(bitstring, opts.limit, opts), ">>"), 1
   end
 
-  defp each_bit(_, 0, acc) do
-    acc <> "..."
+  defp each_bit(_, 0, _) do
+    "..."
   end
 
-  defp each_bit(<<h, t::bitstring>>, counter, acc) when t != <<>> do
-    each_bit(t, decrement(counter), acc <> Integer.to_string(h) <> ", ")
+  defp each_bit(<<>>, _counter, _opts) do
+    :doc_nil
   end
 
-  defp each_bit(<<h::8>>, _counter, acc) do
-    acc <> Integer.to_string(h)
+  defp each_bit(<<h::8>>, _counter, opts) do
+    Inspect.Integer.inspect(h, opts)
   end
 
-  defp each_bit(<<>>, _counter, acc) do
-    acc
+  defp each_bit(<<h, t::bitstring>>, counter, opts) do
+    glue(concat(Inspect.Integer.inspect(h, opts), ","),
+         each_bit(t, decrement(counter), opts))
   end
 
-  defp each_bit(bitstring, _counter, acc) do
+  defp each_bit(bitstring, _counter, opts) do
     size = bit_size(bitstring)
     <<h::size(size)>> = bitstring
-    acc <> Integer.to_string(h) <> "::size(" <> Integer.to_string(size) <> ")"
+    Inspect.Integer.inspect(h, opts) <> "::size(" <> Integer.to_string(size) <> ")"
   end
 
   defp decrement(:infinity), do: :infinity
@@ -274,14 +279,27 @@ end
 defimpl Inspect, for: List do
   def inspect([], _opts), do: "[]"
 
-  def inspect(thing, %Inspect.Opts{char_lists: lists} = opts) do
+  # TODO: Deprecate :char_lists and :as_char_lists keys in v1.5
+  def inspect(term, %Inspect.Opts{charlists: lists, char_lists: lists_deprecated} = opts) do
+    lists =
+      if lists == :infer and lists_deprecated != :infer do
+        case lists_deprecated do
+          :as_char_lists ->
+            :as_charlists
+          _ ->
+            lists_deprecated
+        end
+      else
+        lists
+      end
+
     cond do
-      lists == :as_char_lists or (lists == :infer and printable?(thing)) ->
-        <<?', Inspect.BitString.escape(IO.chardata_to_string(thing), ?')::binary, ?'>>
-      keyword?(thing) ->
-        surround_many("[", thing, "]", opts, &keyword/2)
+      lists == :as_charlists or (lists == :infer and printable?(term)) ->
+        <<?', Inspect.BitString.escape(IO.chardata_to_string(term), ?')::binary, ?'>>
+      keyword?(term) ->
+        surround_many("[", term, "]", opts, &keyword/2)
       true ->
-        surround_many("[", thing, "]", opts, &to_doc/2)
+        surround_many("[", term, "]", opts, &to_doc/2)
     end
   end
 
@@ -295,7 +313,7 @@ defimpl Inspect, for: List do
 
   @doc false
   def keyword?([{key, _value} | rest]) when is_atom(key) do
-    case Atom.to_char_list(key) do
+    case Atom.to_charlist(key) do
       'Elixir.' ++ _ -> false
       _ -> keyword?(rest)
     end
@@ -305,15 +323,15 @@ defimpl Inspect, for: List do
   def keyword?(_other), do: false
 
   @doc false
-  def printable?([c|cs]) when is_integer(c) and c in 32..126, do: printable?(cs)
-  def printable?([?\n|cs]), do: printable?(cs)
-  def printable?([?\r|cs]), do: printable?(cs)
-  def printable?([?\t|cs]), do: printable?(cs)
-  def printable?([?\v|cs]), do: printable?(cs)
-  def printable?([?\b|cs]), do: printable?(cs)
-  def printable?([?\f|cs]), do: printable?(cs)
-  def printable?([?\e|cs]), do: printable?(cs)
-  def printable?([?\a|cs]), do: printable?(cs)
+  def printable?([c | cs]) when c in 32..126, do: printable?(cs)
+  def printable?([?\n | cs]), do: printable?(cs)
+  def printable?([?\r | cs]), do: printable?(cs)
+  def printable?([?\t | cs]), do: printable?(cs)
+  def printable?([?\v | cs]), do: printable?(cs)
+  def printable?([?\b | cs]), do: printable?(cs)
+  def printable?([?\f | cs]), do: printable?(cs)
+  def printable?([?\e | cs]), do: printable?(cs)
+  def printable?([?\a | cs]), do: printable?(cs)
   def printable?([]), do: true
   def printable?(_), do: false
 
@@ -362,8 +380,8 @@ defimpl Inspect, for: Map do
 end
 
 defimpl Inspect, for: Integer do
-  def inspect(thing, %Inspect.Opts{base: base}) do
-    Integer.to_string(thing, base_to_value(base))
+  def inspect(term, %Inspect.Opts{base: base}) do
+    Integer.to_string(term, base_to_value(base))
     |> prepend_prefix(base)
   end
 
@@ -388,8 +406,8 @@ defimpl Inspect, for: Integer do
 end
 
 defimpl Inspect, for: Float do
-  def inspect(thing, _opts) do
-    IO.iodata_to_binary(:io_lib_format.fwrite_g(thing))
+  def inspect(term, _opts) do
+    IO.iodata_to_binary(:io_lib_format.fwrite_g(term))
   end
 end
 
@@ -454,7 +472,7 @@ defimpl Inspect, for: Function do
     if fun_info[:type] == :external and fun_info[:env] == [] do
       "&#{Inspect.Atom.inspect(mod)}.#{fun_info[:name]}/#{fun_info[:arity]}"
     else
-      case Atom.to_char_list(mod) do
+      case Atom.to_charlist(mod) do
         'elixir_compiler_' ++ _ ->
           if function_exported?(mod, :__RELATIVE__, 0) do
             "#Function<#{uniq(fun_info)} in file:#{mod.__RELATIVE__}>"

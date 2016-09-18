@@ -27,6 +27,7 @@ defmodule IEx.Case do
   using do
     quote do
       import ExUnit.CaptureIO
+      import ExUnit.CaptureLog
       import unquote(__MODULE__)
     end
   end
@@ -37,7 +38,7 @@ defmodule IEx.Case do
   setup do
     on_exit fn ->
       env = @iex_env
-      Enum.each(env, fn {k,_} -> Application.delete_env(:iex, k) end)
+      Enum.each(env, fn {k, _} -> Application.delete_env(:iex, k) end)
       IEx.configure(env)
     end
     :ok
@@ -64,12 +65,8 @@ defmodule IEx.Case do
 
   defp strip_iex(string) do
     string
-    |> strip_line   # strip the greeting
-    |> String.strip
-  end
-
-  defp strip_line(string) do
-    Regex.replace ~r/\A.+?$/ms, string, ""
+    |> String.split("\n", parts: 2) # trim the greeting
+    |> Enum.at(1)
+    |> String.trim
   end
 end
-

@@ -1,7 +1,5 @@
 defmodule Mix.Utils do
-  @moduledoc """
-  Utilities used throughout Mix and tasks.
-  """
+  @moduledoc false
 
   @doc """
   Gets the Mix home.
@@ -24,7 +22,7 @@ defmodule Mix.Utils do
   Gets all paths defined in the MIX_PATH env variable.
 
   `MIX_PATH` may contain multiple paths. If on Windows, those
-  paths should be separated by `;`, if on unix systems, use `:`.
+  paths should be separated by `;`, if on Unix systems, use `:`.
   """
   def mix_paths do
     if path = System.get_env("MIX_PATH") do
@@ -89,7 +87,7 @@ defmodule Mix.Utils do
   @doc """
   Returns the date the given path was last modified.
 
-  If the path does not exist, it returns the unix epoch
+  If the path does not exist, it returns the Unix epoch
   (1970-01-01 00:00:00).
   """
   def last_modified(path)
@@ -101,17 +99,25 @@ defmodule Mix.Utils do
   def last_modified(path) do
     now = :calendar.universal_time
 
-    case File.stat(path) do
-      {:ok, %File.Stat{mtime: mtime}} when mtime > now ->
+    case :elixir_utils.read_mtime(path) do
+      {:ok, mtime} when mtime > now ->
         Mix.shell.error("warning: mtime (modified time) for \"#{path}\" was set to the future, resetting to now")
         File.touch!(path, now)
         mtime
-      {:ok, %File.Stat{mtime: mtime}} ->
+      {:ok, mtime} ->
         mtime
       {:error, _} ->
         {{1970, 1, 1}, {0, 0, 0}}
     end
   end
+
+  @doc """
+  Prints n files are being compiled with the given extension.
+  """
+  def compiling_n(1, ext),
+    do: Mix.shell.info "Compiling 1 file (.#{ext})"
+  def compiling_n(n, ext),
+    do: Mix.shell.info "Compiling #{n} files (.#{ext})"
 
   @doc """
   Extracts files from a list of paths.
@@ -136,50 +142,107 @@ defmodule Mix.Utils do
     end) |> Enum.uniq
   end
 
+  @type tree_node :: {name :: String.Chars.t, edge_info :: String.Chars.t}
+
   @doc """
-  Converts the given atom or binary to underscore format.
+  Prints the given tree according to the callback.
 
-  If an atom is given, it is assumed to be an Elixir module,
-  so it is converted to a binary and then processed.
-
-  ## Examples
-
-      iex> Mix.Utils.underscore "FooBar"
-      "foo_bar"
-
-      iex> Mix.Utils.underscore "Foo.Bar"
-      "foo/bar"
-
-      iex> Mix.Utils.underscore Foo.Bar
-      "foo/bar"
-
-  In general, `underscore` can be thought of as the reverse of
-  `camelize`, however, in some cases formatting may be lost:
-
-      iex> Mix.Utils.underscore "SAPExample"
-      "sap_example"
-
-      iex> Mix.Utils.camelize "sap_example"
-      "SapExample"
-
+  The callback will be invoked for each node and it
+  must return a `{printed, children}` tuple.
   """
-  # TODO: Deprecate by 1.3
-  # TODO: Remove by 1.4
+  @spec print_tree([tree_node], (tree_node -> {tree_node, [tree_node]}), Keyword.t) :: :ok
+  def print_tree(nodes, callback, opts \\ []) do
+    pretty =
+      case Keyword.get(opts, :format) do
+        "pretty" -> true
+        "plain" -> false
+        _ -> elem(:os.type, 0) != :win32
+      end
+    print_tree(nodes, [], nil, MapSet.new(), pretty, callback)
+
+    :ok
+  end
+
+  defp print_tree([], _depth, _parent, seen, _pretty, _callback), do: seen
+  defp print_tree([node | nodes], depth, parent, seen, pretty, callback) do
+    {{name, info}, children} = callback.(node)
+    key = {parent, name}
+
+    if MapSet.member?(seen, key) do
+      seen
+    else
+      space = if info, do: " ", else: ""
+      Mix.shell.info("#{depth(pretty, depth)}#{prefix(pretty, depth, nodes)}#{name}#{space}#{info}")
+      seen = print_tree(children, [(nodes != []) | depth], name, MapSet.put(seen, key), pretty, callback)
+      print_tree(nodes, depth, parent, seen, pretty, callback)
+    end
+  end
+
+  defp depth(_pretty, []),    do: ""
+  defp depth(pretty, depth), do: Enum.reverse(depth) |> tl |> Enum.map(&entry(pretty, &1))
+
+  defp entry(false, true),  do: "|   "
+  defp entry(false, false), do: "    "
+  defp entry(true, true),   do: "│   "
+  defp entry(true, false),  do: "    "
+
+  defp prefix(false, [], _), do: ""
+  defp prefix(false, _, []), do: "`-- "
+  defp prefix(false, _, _),  do: "|-- "
+  defp prefix(true, [], _),  do: ""
+  defp prefix(true, _, []),  do: "└── "
+  defp prefix(true, _, _),   do: "├── "
+
+  @doc """
+  Outputs the given tree according to the callback as a DOT graph.
+
+  The callback will be invoked for each node and it
+  must return a `{printed, children}` tuple.
+  """
+  @spec write_dot_graph!(Path.t, String.t, [tree_node], (tree_node -> {tree_node, [tree_node]}), Keyword.t) :: :ok
+  def write_dot_graph!(path, title, nodes, callback, _opts \\ []) do
+    {dot, _} = build_dot_graph(make_ref(), nodes, MapSet.new(), callback)
+    File.write! path, "digraph \"#{title}\" {\n#{dot}}\n"
+  end
+
+  defp build_dot_graph(_parent, [], seen, _callback), do: {"", seen}
+  defp build_dot_graph(parent, [node | nodes], seen, callback) do
+    {{name, edge_info}, children} = callback.(node)
+    key = {parent, name}
+
+    if MapSet.member?(seen, key) do
+      {"", seen}
+    else
+      seen = MapSet.put(seen, key)
+      current = build_dot_current(parent, name, edge_info)
+      {children, seen} = build_dot_graph(name, children, seen, callback)
+      {siblings, seen} = build_dot_graph(parent, nodes, seen, callback)
+      {current <> children <> siblings, seen}
+    end
+  end
+
+  defp build_dot_current(parent, name, edge_info) do
+    edge_info =
+      if edge_info do
+         ~s( [label="#{edge_info}"])
+      end
+
+    parent =
+      unless is_reference(parent) do
+        ~s("#{parent}" -> )
+      end
+
+    ~s(  #{parent}"#{name}"#{edge_info}\n)
+  end
+
+  @doc false
+  # TODO: Deprecate by 1.4
   def underscore(value) do
     Macro.underscore(value)
   end
 
-  @doc """
-  Converts the given string to CamelCase format.
-
-  ## Examples
-
-      iex> Mix.Utils.camelize "foo_bar"
-      "FooBar"
-
-  """
-  # TODO: Deprecate by 1.3
-  # TODO: Remove by 1.4
+  @doc false
+  # TODO: Deprecate by 1.4
   def camelize(value) do
     Macro.camelize(value)
   end
@@ -236,11 +299,11 @@ defmodule Mix.Utils do
   """
   def symlink_or_copy(source, target) do
     if File.exists?(source) do
-      # Relative symbolic links on windows are broken
+      # Relative symbolic links on Windows are broken
       link = case :os.type do
         {:win32, _} -> source
         _           -> make_relative_path(source, target)
-      end |> String.to_char_list
+      end |> String.to_charlist
 
       case :file.read_link(target) do
         {:ok, ^link} ->
@@ -272,7 +335,7 @@ defmodule Mix.Utils do
     do_make_relative_path(Path.split(source), Path.split(target))
   end
 
-  defp do_make_relative_path([h|t1], [h|t2]) do
+  defp do_make_relative_path([h | t1], [h | t2]) do
     do_make_relative_path(t1, t2)
   end
 
@@ -289,7 +352,7 @@ defmodule Mix.Utils do
 
   ## Options
 
-    * `:sha512` - checks against the given sha512 checksum. Returns
+    * `:sha512` - checks against the given SHA-512 checksum. Returns
       `{:checksum, message}` in case it fails
   """
   @spec read_path(String.t, Keyword.t) ::
@@ -310,15 +373,16 @@ defmodule Mix.Utils do
 
   defp checksum({:ok, binary} = return, opts) do
     Enum.find_value @checksums, return, fn hash ->
-      if (expected = Keyword.get(opts, hash)) &&
-         (actual = hexhash(binary, hash)) &&
-         expected != actual do
-          {:checksum, """
-            Data does not match the given sha512 checksum.
+      with expected when expected != nil  <- opts[hash],
+           actual when actual != expected <- hexhash(binary, hash) do
+        {:checksum, """
+          Data does not match the given SHA-512 checksum.
 
-            Expected: #{expected}
-              Actual: #{actual}
-            """}
+          Expected: #{expected}
+            Actual: #{actual}
+          """}
+      else
+        _ -> nil
       end
     end
   end
@@ -356,8 +420,8 @@ defmodule Mix.Utils do
     {:ok, _} = Application.ensure_all_started(:ssl)
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    # Starting an http client profile allows us to scope
-    # the effects of using an http proxy to this function
+    # Starting an HTTP client profile allows us to scope
+    # the effects of using an HTTP proxy to this function
     {:ok, _pid} = :inets.start(:httpc, [{:profile, :mix}])
 
     headers = [{'user-agent', 'Mix/#{System.version}'}]
@@ -408,7 +472,7 @@ defmodule Mix.Utils do
     uri = URI.parse(proxy || "")
 
     if uri.host && uri.port do
-      host = String.to_char_list(uri.host)
+      host = String.to_charlist(uri.host)
       :httpc.set_options([{proxy_scheme(scheme), {{host, uri.port}, []}}], :mix)
     end
 
@@ -434,8 +498,8 @@ defmodule Mix.Utils do
   defp proxy_auth(%URI{userinfo: auth}) do
     destructure [user, pass], String.split(auth, ":", parts: 2)
 
-    user = String.to_char_list(user)
-    pass = String.to_char_list(pass || "")
+    user = String.to_charlist(user)
+    pass = String.to_charlist(pass || "")
 
     [proxy_auth: {user, pass}]
   end

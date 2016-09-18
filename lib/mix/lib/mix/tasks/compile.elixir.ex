@@ -22,8 +22,8 @@ defmodule Mix.Tasks.Compile.Elixir do
     * `--debug-info` (`--no-debug-info`) - attach (or not) debug info to compiled modules
     * `--ignore-module-conflict` - do not emit warnings if a module was previously defined
     * `--warnings-as-errors` - treat warnings as errors and return a non-zero exit code
-    * `--elixirc-paths` - restrict the original `elixirc` paths to
-      a subset of the ones specified. Can be given multiple times.
+    * `--long-compilation-threshold N` - sets the "long compilation" threshold
+      (in seconds) to `N` (see the docs for `Kernel.ParallelCompiler.files/2`)
 
   ## Configuration
 
@@ -40,7 +40,8 @@ defmodule Mix.Tasks.Compile.Elixir do
 
   @switches [force: :boolean, docs: :boolean, warnings_as_errors: :boolean,
              ignore_module_conflict: :boolean, debug_info: :boolean,
-             elixirc_paths: :keep]
+             elixirc_paths: :keep, verbose: :boolean,
+             long_compilation_threshold: :integer]
 
   @doc """
   Runs this task.
@@ -52,19 +53,12 @@ defmodule Mix.Tasks.Compile.Elixir do
     project = Mix.Project.config
     dest = Mix.Project.compile_path(project)
     srcs = project[:elixirc_paths]
-    skip =
-      case Keyword.get_values(opts, :elixirc_paths) do
-        [] -> []
-        ep -> srcs -- ep
-      end
 
     manifest = manifest()
     configs  = Mix.Project.config_files ++ Mix.Tasks.Compile.Erlang.manifests
     force    = opts[:force] || Mix.Utils.stale?(configs, [manifest])
 
-    Mix.Compilers.Elixir.compile(manifest, srcs, skip, [:ex], dest, force, fn ->
-      set_compiler_opts(project, opts, [])
-    end)
+    Mix.Compilers.Elixir.compile(manifest, srcs, dest, force, opts)
   end
 
   @doc """
@@ -77,17 +71,7 @@ defmodule Mix.Tasks.Compile.Elixir do
   Cleans up compilation artifacts.
   """
   def clean do
-    Mix.Compilers.Elixir.clean(manifest())
-  end
-
-  @doc false
-  def protocols_and_impls do
-    Mix.Compilers.Elixir.protocols_and_impls(manifest())
-  end
-
-  defp set_compiler_opts(project, opts, extra) do
-    opts = Keyword.take(opts, Code.available_compiler_options)
-    opts = Keyword.merge(project[:elixirc_options] || [], opts)
-    Code.compiler_options Keyword.merge(opts, extra)
+    dest = Mix.Project.compile_path
+    Mix.Compilers.Elixir.clean(manifest(), dest)
   end
 end

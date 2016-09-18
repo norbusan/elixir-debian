@@ -4,7 +4,7 @@
 -include("elixir.hrl").
 
 expand_map(Meta, [{'|', UpdateMeta, [Left, Right]}], E) ->
-  {[ELeft|ERight], EA} = elixir_exp:expand_args([Left|Right], E),
+  {[ELeft | ERight], EA} = elixir_exp:expand_args([Left | Right], E),
   validate_kv(Meta, ERight, Right, E),
   {{'%{}', Meta, [{'|', UpdateMeta, [ELeft, ERight]}]}, EA};
 expand_map(Meta, Args, E) ->
@@ -12,22 +12,29 @@ expand_map(Meta, Args, E) ->
   validate_kv(Meta, EArgs, Args, E),
   {{'%{}', Meta, EArgs}, EA}.
 
-expand_struct(Meta, Left, Right, E) ->
+expand_struct(Meta, Left, Right, #{context := Context} = E) ->
   {[ELeft, ERight], EE} = elixir_exp:expand_args([Left, Right], E),
 
-  case is_atom(ELeft) of
-    true ->
+  case validate_struct(ELeft, Context) of
+    true when is_atom(ELeft) ->
       %% We always record structs when they are expanded
       %% as they expect the reference at compile time.
-      elixir_lexical:record_remote(ELeft, nil, ?m(E, lexical_tracker));
+      elixir_lexical:record_remote(ELeft, '__struct__', 1, nil, ?line(Meta), ?m(E, lexical_tracker));
+    true ->
+      ok;
+    false when Context == match ->
+      compile_error(Meta, ?m(E, file), "expected struct name in a match to be a compile "
+        "time atom, alias or a variable, got: ~ts", ['Elixir.Macro':to_string(ELeft)]);
     false ->
       compile_error(Meta, ?m(E, file), "expected struct name to be a compile "
         "time atom or alias, got: ~ts", ['Elixir.Macro':to_string(ELeft)])
   end,
 
   EMeta =
-    case lists:member(ELeft, ?m(E, context_modules)) of
-      true  -> [{struct, context}|Meta];
+    %% We also include the current module because it won't be present
+    %% in context module in case the module name is defined dynamically.
+    case lists:member(ELeft, [?m(E, module) | ?m(E, context_modules)]) of
+      true  -> [{struct, context} | Meta];
       false -> Meta
     end,
 
@@ -39,6 +46,11 @@ expand_struct(Meta, Left, Right, E) ->
   end,
 
   {{'%', EMeta, [ELeft, ERight]}, EE}.
+
+validate_struct({'^', _, [{Var, _, Ctx}]}, match) when is_atom(Var), is_atom(Ctx) -> true;
+validate_struct({Var, _Meta, Ctx}, match) when is_atom(Var), is_atom(Ctx) -> true;
+validate_struct(Atom, _) when is_atom(Atom) -> true;
+validate_struct(_, _) -> false.
 
 validate_kv(Meta, KV, Original, E) ->
   lists:foldl(fun
@@ -53,20 +65,22 @@ translate_map(Meta, Args, S) ->
   {Assocs, TUpdate, US} = extract_assoc_update(Args, S),
   translate_map(Meta, Assocs, TUpdate, US).
 
+translate_struct(_Meta, Name, {'%{}', MapMeta, Assocs}, S) when is_tuple(Name) ->
+  translate_map(MapMeta, Assocs ++ [{'__struct__', Name}], nil, S);
+
 translate_struct(Meta, Name, {'%{}', MapMeta, Args}, S) ->
   {Assocs, TUpdate, US} = extract_assoc_update(Args, S),
-  Struct = load_struct(Meta, Name, S),
+  Operation = operation(TUpdate, S),
 
-  case is_map(Struct) of
-    true  ->
-      assert_struct_keys(Meta, Name, Struct, Assocs, S);
-    false ->
-      compile_error(Meta, S#elixir_scope.file, "expected ~ts.__struct__/0 to "
-        "return a map, got: ~ts", [elixir_aliases:inspect(Name), 'Elixir.Kernel':inspect(Struct)])
+  Struct = case Operation of
+    expand -> load_struct(Meta, Name, [Args], S);
+    _ -> load_struct(Meta, Name, [], S)
   end,
 
-  if
-    TUpdate /= nil ->
+  assert_struct_keys(Meta, Name, Struct, Assocs, S),
+
+  case Operation of
+    update ->
       Ann = ?ann(Meta),
       {VarName, _, VS} = elixir_scope:build_var('_', US),
 
@@ -78,13 +92,13 @@ translate_struct(Meta, Name, {'%{}', MapMeta, Args}, S) ->
 
       {TMap, TS} = translate_map(MapMeta, Assocs, Var, VS),
 
-      {{'case', Ann, TUpdate, [
+      {{'case', ?generated, TUpdate, [
         {clause, Ann, [Match], [], [TMap]},
-        {clause, Ann, [Var], [], [elixir_utils:erl_call(Ann, erlang, error, [Error])]}
+        {clause, ?generated, [Var], [], [elixir_utils:erl_call(Ann, erlang, error, [Error])]}
       ]}, TS};
-    S#elixir_scope.context == match ->
+    match ->
       translate_map(MapMeta, Assocs ++ [{'__struct__', Name}], nil, US);
-    true ->
+    expand ->
       Keys = [K || {K, _} <- Assocs],
       {StructAssocs, _} = elixir_quote:escape(maps:to_list(maps:without(Keys, Struct)), false),
       translate_map(MapMeta, StructAssocs ++ Assocs ++ [{'__struct__', Name}], nil, US)
@@ -92,8 +106,13 @@ translate_struct(Meta, Name, {'%{}', MapMeta, Args}, S) ->
 
 %% Helpers
 
-load_struct(Meta, Name, S) ->
+operation(nil, #elixir_scope{context=match}) -> match;
+operation(nil, _) -> expand;
+operation(_, _) -> update.
+
+load_struct(Meta, Name, Args, S) ->
   Context = lists:keyfind(struct, 1, Meta) == {struct, context},
+  Arity = length(Args),
 
   Local =
     not(ensure_loaded(Name)) andalso
@@ -103,14 +122,20 @@ load_struct(Meta, Name, S) ->
     case Local of
       true ->
         try
-          (elixir_locals:local_for(Name, '__struct__', 0, def))()
+          apply(elixir_locals:local_for(Name, '__struct__', Arity, def), Args)
         catch
-          error:undef  -> Name:'__struct__'();
-          error:badarg -> Name:'__struct__'()
+          error:undef  -> apply(Name, '__struct__', Args);
+          error:badarg -> apply(Name, '__struct__', Args)
         end;
       false ->
-        Name:'__struct__'()
+        apply(Name, '__struct__', Args)
     end
+  of
+    #{} = Struct ->
+      Struct;
+    Other ->
+      compile_error(Meta, S#elixir_scope.file, "expected ~ts.__struct__/~p to "
+        "return a map, got: ~ts", [elixir_aliases:inspect(Name), Arity, 'Elixir.Kernel':inspect(Other)])
   catch
     error:undef ->
       Inspected = elixir_aliases:inspect(Name),
@@ -121,32 +146,30 @@ load_struct(Meta, Name, S) ->
             "cannot access struct ~ts, the struct was not yet defined or the struct is being "
             "accessed in the same context that defines it", [Inspected]);
         false ->
-          compile_error(Meta, S#elixir_scope.file, "~ts.__struct__/0 is undefined, "
-            "cannot expand struct ~ts", [Inspected, Inspected])
-      end
+          compile_error(Meta, S#elixir_scope.file, "~ts.__struct__/~p is undefined, "
+            "cannot expand struct ~ts", [Inspected, Arity, Inspected])
+      end;
+
+    Kind:Reason ->
+      Info = [{Name, '__struct__', Arity, [{file, "expanding struct"}]},
+              elixir_utils:caller(?line(Meta), S#elixir_scope.file,
+                                  S#elixir_scope.module, S#elixir_scope.function)],
+      erlang:raise(Kind, Reason, prune_stacktrace(erlang:get_stacktrace(), Name, Arity) ++ Info)
   end.
+
+prune_stacktrace([{Module, '__struct__', Arity, _} | _], Module, Arity) ->
+  [];
+prune_stacktrace([H | T], Module, Arity) ->
+  [H | prune_stacktrace(T, Module, Arity)];
+prune_stacktrace([], _Module, _Arity) ->
+  [].
 
 ensure_loaded(Module) ->
-  case code:ensure_loaded(Module) of
-    {module, Module} -> true;
-    {error, _} -> false
-  end.
+  code:ensure_loaded(Module) == {module, Module}.
 
 wait_for_struct(Module) ->
-  case erlang:get(elixir_compiler_pid) of
-    undefined ->
-      false;
-    Pid ->
-      Ref = erlang:make_ref(),
-      Pid ! {waiting, struct, self(), Ref, Module},
-      receive
-        {Ref, ready} ->
-          true;
-        {Ref, release} ->
-          'Elixir.Kernel.ErrorHandler':release(),
-          false
-      end
-  end.
+  is_pid(erlang:get(elixir_compiler_pid)) andalso
+    'Elixir.Kernel.ErrorHandler':ensure_compiled(Module, struct).
 
 translate_map(Meta, Assocs, TUpdate, #elixir_scope{extra=Extra} = S) ->
   {Op, KeyFun, ValFun} = extract_key_val_op(TUpdate, S),

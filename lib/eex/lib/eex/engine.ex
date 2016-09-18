@@ -4,6 +4,8 @@ defmodule EEx.Engine do
 
   An engine needs to implement three functions:
 
+    * `init(opts)` - returns the initial buffer
+
     * `handle_body(quoted)` - receives the final built quoted
       expression, should do final post-processing and return a
       quoted expression.
@@ -25,6 +27,7 @@ defmodule EEx.Engine do
   default implementations for the functions above.
   """
 
+  @callback init(Keyword.t) :: Macro.t
   @callback handle_body(Macro.t) :: Macro.t
   @callback handle_text(Macro.t, String.t) :: Macro.t
   @callback handle_expr(Macro.t, String.t, Macro.t) :: Macro.t
@@ -33,6 +36,10 @@ defmodule EEx.Engine do
   defmacro __using__(_) do
     quote do
       @behaviour EEx.Engine
+
+      def init(opts) do
+        EEx.Engine.init(opts)
+      end
 
       def handle_body(body) do
         EEx.Engine.handle_body(body)
@@ -46,7 +53,7 @@ defmodule EEx.Engine do
         EEx.Engine.handle_expr(buffer, marker, expr)
       end
 
-      defoverridable [handle_body: 1, handle_expr: 3, handle_text: 2]
+      defoverridable [handle_body: 1, handle_expr: 3, handle_text: 2, init: 1]
     end
   end
 
@@ -74,19 +81,25 @@ defmodule EEx.Engine do
   end
 
   @doc false
-  # TODO: raise on 1.3 or 1.4
+  # TODO: Raise on 2.0
   def fetch_assign!(assigns, key) do
     case Access.fetch(assigns, key) do
       {:ok, val} ->
         val
       :error ->
         keys = Enum.map(assigns, &elem(&1, 0))
-        IO.write :stderr, "warning: assign @#{key} not available in eex template. " <>
-                          "Please ensure all assigns are given as options. " <>
-                          "Available assigns: #{inspect keys}\n" <>
-                          Exception.format_stacktrace
+        IO.warn "assign @#{key} not available in EEx template. " <>
+                "Please ensure all assigns are given as options. " <>
+                "Available assigns: #{inspect keys}"
         nil
     end
+  end
+
+  @doc """
+  Returns an empty string as initial buffer.
+  """
+  def init(_opts) do
+    ""
   end
 
   @doc """

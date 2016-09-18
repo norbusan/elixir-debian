@@ -1,4 +1,10 @@
-ExUnit.start [trace: "--trace" in System.argv]
+exclude =
+  case :erlang.system_info(:otp_release) do
+    '19' -> [otp19: false]
+    _    -> []
+  end
+
+ExUnit.start [exclude: exclude, trace: "--trace" in System.argv]
 
 # Beam files compiled on demand
 path = Path.expand("../../tmp/beams", __DIR__)
@@ -94,7 +100,7 @@ defmodule CompileAssertion do
 
   defp format_rescue(expr) do
     result = try do
-      :elixir.eval(to_char_list(expr), [])
+      :elixir.eval(to_charlist(expr), [])
       nil
     rescue
       error -> {error.__struct__, Exception.message(error)}

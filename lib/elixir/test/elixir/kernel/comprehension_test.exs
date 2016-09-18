@@ -3,6 +3,7 @@ Code.require_file "../test_helper.exs", __DIR__
 defmodule Kernel.ComprehensionTest do
   use ExUnit.Case, async: true
 
+  import CompileAssertion
   import ExUnit.CaptureIO
   require Integer
 
@@ -13,7 +14,7 @@ defmodule Kernel.ComprehensionTest do
       def into(struct) do
         {struct,
          fn
-           _, {:cont, x} -> Process.put(:into_cont, [x|Process.get(:into_cont)])
+           _, {:cont, x} -> Process.put(:into_cont, [x | Process.get(:into_cont)])
            _, :done -> Process.put(:into_done, true)
            _, :halt -> Process.put(:into_halt, true)
          end}
@@ -43,6 +44,11 @@ defmodule Kernel.ComprehensionTest do
     assert for({:x, v} <- maps, do: v * 2) == [2, 6]
     x = :x
     assert for({^x, v} <- maps, do: v * 2) == [2, 6]
+  end
+
+  test "for comprehensions with guards" do
+    assert for(x when x < 4 <- 1..10, do: x) == [1, 2, 3]
+    assert for(x when x == 3 when x == 7 <- 1..10, do: x) == [3, 7]
   end
 
   test "for comprehensions with map key matching" do
@@ -196,6 +202,11 @@ defmodule Kernel.ComprehensionTest do
     assert for(x <- enum, into: "", do: to_bin(x * 2)) == <<2, 4, 6>>
   end
 
+  test "map for comprehensions into map" do
+    enum = %{a: 2, b: 3}
+    assert for({k, v} <- enum, into: %{}, do: {k, v * v}) == %{a: 4, b: 9}
+  end
+
   test "list for comprehensions where value is not used" do
     enum = [1, 2, 3]
 
@@ -245,5 +256,11 @@ defmodule Kernel.ComprehensionTest do
       for(<<x <- bin>>, do: IO.puts x)
       nil
     end) == "1\n2\n3\n"
+  end
+
+  test "failure on missing do" do
+    assert_compile_fail CompileError,
+      "nofile:1: missing do keyword in for comprehension",
+      "for x <- 1..2"
   end
 end

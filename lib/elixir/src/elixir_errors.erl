@@ -2,7 +2,7 @@
 % This is not exposed in the Elixir language.
 -module(elixir_errors).
 -export([compile_error/3, compile_error/4,
-  form_error/4, form_warn/4, parse_error/4, warn/2, warn/3,
+  form_error/4, form_warn/4, parse_error/4, warn/1, warn/3,
   handle_file_warning/2, handle_file_warning/3, handle_file_error/2]).
 -include("elixir.hrl").
 
@@ -13,12 +13,24 @@
 warn(none, File, Warning) ->
   warn(0, File, Warning);
 warn(Line, File, Warning) when is_integer(Line), is_binary(File) ->
-  warn(file_format(Line, File), Warning).
+  warn([Warning, "\n  ", file_format(Line, File), $\n]).
 
--spec warn(unicode:chardata(), unicode:chardata()) -> ok.
+-spec warn(unicode:chardata()) -> ok.
+warn(Message) ->
+  CompilerPid = get(elixir_compiler_pid),
+  if
+    CompilerPid =/= undefined ->
+      elixir_code_server:cast({register_warning, CompilerPid});
+    true -> ok
+  end,
+  io:put_chars(standard_error, [warning_prefix(), Message, $\n]),
+  ok.
 
-warn(Caller, Warning) ->
-  do_warn([Caller, "warning: ", Warning, $\n]).
+warning_prefix() ->
+  case application:get_env(elixir, ansi_enabled) of
+    {ok, true} -> <<"\e[33mwarning: \e[0m">>;
+    _ -> <<"warning: ">>
+  end.
 
 %% General forms handling.
 
@@ -61,12 +73,12 @@ parse_error(Line, File, <<"syntax error before: ">>, <<"'end'">>) ->
 
 %% Produce a human-readable message for errors before a sigil
 parse_error(Line, File, <<"syntax error before: ">>, <<"{sigil,", _Rest/binary>> = Full) ->
-  {sigil, _, Sigil, [Content|_], _} = parse_erl_term(Full),
+  {sigil, _, Sigil, [Content | _], _} = parse_erl_term(Full),
   Content2 = case is_binary(Content) of
     true -> Content;
     false -> <<>>
   end,
-  Message = <<"syntax error before: sigil ~", Sigil," starting with content '", Content2/binary, "'">>,
+  Message = <<"syntax error before: sigil ~", Sigil, " starting with content '", Content2/binary, "'">>,
   do_raise(Line, File, 'Elixir.SyntaxError', Message);
 
 %% Aliases are wrapped in ['']
@@ -78,7 +90,7 @@ parse_error(Line, File, Error, <<"['", _/binary>> = Full) when is_binary(Error) 
 %% Binaries (and interpolation) are wrapped in [<<...>>]
 parse_error(Line, File, Error, <<"[", _/binary>> = Full) when is_binary(Error) ->
   Term = case parse_erl_term(Full) of
-    [H|_] when is_binary(H) -> <<$", H/binary, $">>;
+    [H | _] when is_binary(H) -> <<$", H/binary, $">>;
     _ -> <<$">>
   end,
   do_raise(Line, File, 'Elixir.SyntaxError', <<Error/binary, Term/binary>>);
@@ -86,6 +98,15 @@ parse_error(Line, File, Error, <<"[", _/binary>> = Full) when is_binary(Error) -
 %% Given a string prefix and suffix to insert the token inside the error message rather than append it
 parse_error(Line, File, {ErrorPrefix, ErrorSuffix}, Token) when is_binary(ErrorPrefix), is_binary(ErrorSuffix), is_binary(Token) ->
   Message = <<ErrorPrefix/binary, Token/binary, ErrorSuffix/binary >>,
+  do_raise(Line, File, 'Elixir.SyntaxError', Message);
+
+%% Misplaced char tokens (e.g., {char, _, 97}) are translated by Erlang into
+%% the char literal (i.e., the token in the previous example becomes $a),
+%% because {char, _, _} is a valid Erlang token for an Erlang char literal. We
+%% want to represent that token as ?a in the error, according to the Elixir
+%% syntax.
+parse_error(Line, File, <<"syntax error before: ">>, <<$$, Char/binary>>) ->
+  Message = <<"syntax error before: ?", Char/binary>>,
   do_raise(Line, File, 'Elixir.SyntaxError', Message);
 
 %% Everything else is fine as is
@@ -200,6 +221,10 @@ handle_file_error(File, {Line, erl_lint, {spec_fun_undefined, {M, F, A}}}) ->
   Message = io_lib:format("spec for undefined function ~ts.~ts/~B", [elixir_aliases:inspect(M), F, A]),
   do_raise(Line, File, 'Elixir.CompileError', elixir_utils:characters_to_binary(Message));
 
+handle_file_error(File, {beam_validator, Rest}) ->
+  Message = beam_validator:format_error(Rest),
+  do_raise(0, File, 'Elixir.CompileError', elixir_utils:characters_to_binary(Message));
+
 handle_file_error(File, {Line, Module, Desc}) ->
   Message = format_error(Module, Desc),
   do_raise(Line, File, 'Elixir.CompileError', elixir_utils:characters_to_binary(Message)).
@@ -211,10 +236,10 @@ raise(Meta, File, Kind, Message) when is_list(Meta) ->
   do_raise(MetaLine, MetaFile, Kind, Message).
 
 file_format(0, File) ->
-  io_lib:format("~ts: ", [elixir_utils:relative_to_cwd(File)]);
+  io_lib:format("~ts", [elixir_utils:relative_to_cwd(File)]);
 
 file_format(Line, File) ->
-  io_lib:format("~ts:~w: ", [elixir_utils:relative_to_cwd(File), Line]).
+  io_lib:format("~ts:~w", [elixir_utils:relative_to_cwd(File), Line]).
 
 format_var(Var) ->
   list_to_atom(lists:takewhile(fun(X) -> X /= $@ end, atom_to_list(Var))).
@@ -256,16 +281,6 @@ meta_location(Meta, File) ->
     {F, L} -> {F, L};
     nil    -> {File, ?line(Meta)}
   end.
-
-do_warn(Warning) ->
-  CompilerPid = get(elixir_compiler_pid),
-  if
-    CompilerPid =/= undefined ->
-      elixir_code_server:cast({register_warning, CompilerPid});
-    true -> false
-  end,
-  io:put_chars(standard_error, Warning),
-  ok.
 
 do_raise(none, File, Kind, Message) ->
   do_raise(0, File, Kind, Message);

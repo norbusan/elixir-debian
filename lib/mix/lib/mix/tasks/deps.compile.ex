@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Deps.Compile do
   Compiles dependencies.
 
   By default, compile all dependencies. A list of dependencies
-  can be given to force the compilation of specific dependencies.
+  can be given compile multiple dependencies in order.
 
   This task attempts to detect if the project contains one of
   the following files and act accordingly:
@@ -31,9 +31,9 @@ defmodule Mix.Tasks.Deps.Compile do
   """
 
   import Mix.Dep, only: [loaded: 1, available?: 1, loaded_by_name: 2,
-                         format_dep: 1, make?: 1, mix?: 1]
+                         make?: 1, mix?: 1]
 
-  @switches [include_children: :boolean]
+  @switches [include_children: :boolean, force: :boolean]
 
   @spec run(OptionParser.argv) :: :ok
   def run(args) do
@@ -44,18 +44,18 @@ defmodule Mix.Tasks.Deps.Compile do
     Mix.Project.get!
 
     case OptionParser.parse(args, switches: @switches) do
-      {_, [], _} ->
+      {opts, [], _} ->
         # Because this command may be invoked explicitly with
         # deps.compile, we simply try to compile any available
         # dependency.
-        compile(Enum.filter(loaded(env: Mix.env), &available?/1))
+        compile(Enum.filter(loaded(env: Mix.env), &available?/1), opts)
       {opts, tail, _} ->
-        compile(loaded_by_name(tail, [env: Mix.env] ++ opts))
+        compile(loaded_by_name(tail, [env: Mix.env] ++ opts), opts)
     end
   end
 
   @doc false
-  def compile(deps) do
+  def compile(deps, options \\ []) do
     shell  = Mix.shell
     config = Mix.Project.deps_config
 
@@ -65,7 +65,9 @@ defmodule Mix.Tasks.Deps.Compile do
       Enum.map(deps, fn %Mix.Dep{app: app, status: status, opts: opts, scm: scm} = dep ->
         check_unavailable!(app, status)
 
-        compiled = cond do
+        clean(app, options)
+
+        compiled? = cond do
           not is_nil(opts[:compile]) ->
             do_compile dep, config
           mix?(dep) ->
@@ -79,20 +81,33 @@ defmodule Mix.Tasks.Deps.Compile do
           true ->
             shell.error "Could not compile #{inspect app}, no \"mix.exs\", \"rebar.config\" or \"Makefile\" " <>
               "(pass :compile as an option to customize compilation, set it to \"false\" to do nothing)"
+            false
         end
 
         unless mix?(dep), do: build_structure(dep, config)
-        touch_fetchable(scm, opts[:build])
-        compiled
+        # We should touch fetchable dependencies even if they
+        # did not compile otherwise they will always be marked
+        # as stale, even when there is nothing to do.
+        fetchable? = touch_fetchable(scm, opts[:build])
+        compiled? and fetchable?
       end)
 
-    if Enum.any?(compiled), do: Mix.Dep.Lock.touch_manifest, else: :ok
+    if true in compiled, do: Mix.Dep.Lock.touch_manifest, else: :ok
+  end
+
+  defp clean(app, opts) do
+    if Keyword.get(opts, :force, false) do
+      File.rm_rf! Path.join [Mix.Project.build_path, "lib", Atom.to_string(app)]
+    end
   end
 
   defp touch_fetchable(scm, path) do
     if scm.fetchable? do
       File.mkdir_p!(path)
       File.touch!(Path.join(path, ".compile.fetch"))
+      true
+    else
+      false
     end
   end
 
@@ -118,7 +133,8 @@ defmodule Mix.Tasks.Deps.Compile do
       end
 
       try do
-        res = Mix.Task.run("compile", ["--no-deps", "--no-elixir-version-check"])
+        res = Mix.Task.run("compile", ["--no-deps", "--no-archives-check",
+                                       "--no-elixir-version-check", "--no-warnings-as-errors"])
         :ok in List.wrap(res)
       catch
         kind, reason ->
@@ -143,7 +159,7 @@ defmodule Mix.Tasks.Deps.Compile do
     config_path = Path.join(dep_path, "mix.rebar.config")
     lib_path    = Path.join(config[:env_path], "lib/*/ebin")
 
-    env = [{"REBAR_CONFIG", config_path}]
+    env = [{"REBAR_CONFIG", config_path}, {"TERM", "dumb"}]
     cmd = "#{rebar_cmd(dep)} bare compile --paths #{inspect lib_path}"
 
     File.mkdir_p!(dep_path)
@@ -160,7 +176,7 @@ defmodule Mix.Tasks.Deps.Compile do
     shell.info "Could not find \"#{manager}\", which is needed to build dependency #{inspect app}"
     shell.info "I can install a local copy which is just used by Mix"
 
-    unless shell.yes?("Shall I install #{manager}?") do
+    unless shell.yes?("Shall I install #{manager}? (if running non-interactively, use: \"mix local.rebar --force\")") do
       Mix.raise "Could not find \"#{manager}\" to compile " <>
         "dependency #{inspect app}, please ensure \"#{manager}\" is available"
     end
@@ -169,13 +185,14 @@ defmodule Mix.Tasks.Deps.Compile do
       Mix.raise "\"#{manager}\" installation failed"
   end
 
-  defp do_make(dep, config) do
-    command = if match?({:win32, _}, :os.type) and File.regular?("Makefile.win") do
-      "nmake /F Makefile.win"
-    else
-      "make"
-    end
-    do_command(dep, config, command, true)
+  defp do_make(%{opts: opts} = dep, config) do
+    command =
+      if match?({:win32, _}, :os.type) and File.regular?(Path.join(opts[:dest], "Makefile.win")) do
+        "nmake /F Makefile.win"
+      else
+        "make"
+      end
+    do_command(dep, config, command, true, [{"IS_DEP", "1"}])
   end
 
   defp do_compile(%Mix.Dep{opts: opts} = dep, config) do

@@ -45,7 +45,9 @@ defmodule ModuleTest do
   @register_example :it_works
   @register_example :still_works
 
-  contents = quote do: (def eval_quoted_info, do: {__MODULE__, __ENV__.file, __ENV__.line})
+  contents = quote do
+    def eval_quoted_info, do: {__MODULE__, __ENV__.file, __ENV__.line}
+  end
   Module.eval_quoted __MODULE__, contents, [], file: "sample.ex", line: 13
 
   defmacrop in_module(block) do
@@ -81,6 +83,16 @@ defmodule ModuleTest do
     assert ModuleTest.ToUse.before_compile == []
   end
 
+  def __on_definition__(env, kind, name, args, guards, expr) do
+    Process.put(env.module, :called)
+    assert env.module == ModuleTest.OnDefinition
+    assert kind == :def
+    assert name == :hello
+    assert [{:foo, _, _}, {:bar, _, _}] = args
+    assert [] = guards
+    assert {:+, _, [{:foo, _, nil}, {:bar, _, nil}]} = expr
+  end
+
   test "on definition" do
     defmodule OnDefinition do
       @on_definition ModuleTest
@@ -93,14 +105,11 @@ defmodule ModuleTest do
     assert Process.get(ModuleTest.OnDefinition) == :called
   end
 
-  def __on_definition__(env, kind, name, args, guards, expr) do
-    Process.put(env.module, :called)
-    assert env.module == ModuleTest.OnDefinition
-    assert kind == :def
-    assert name == :hello
-    assert [{:foo, _, _}, {:bar, _, _}] = args
-    assert [] = guards
-    assert {:+, _, [{:foo, _, nil}, {:bar, _, nil}]} = expr
+  defmacro __before_compile__(_) do
+    quote do
+      def constant, do: 1
+      defoverridable constant: 0
+    end
   end
 
   test "overridable inside before compile" do
@@ -110,25 +119,10 @@ defmodule ModuleTest do
     assert OverridableWithBeforeCompile.constant == 1
   end
 
-  test "alias with raw atom" do
-    defmodule :"Elixir.ModuleTest.RawModule" do
-      def hello, do: :world
-    end
-
-    assert RawModule.hello == :world
-  end
-
-  defmacro __before_compile__(_) do
-    quote do
-      def constant, do: 1
-      defoverridable constant: 0
-    end
-  end
-
   ## Attributes
 
   test "reserved attributes" do
-    assert List.keyfind(ExUnit.Server.__info__(:attributes), :behaviour, 0) == {:behaviour, [:gen_server]}
+    assert List.keyfind(ExUnit.Server.__info__(:attributes), :behaviour, 0) == {:behaviour, [GenServer]}
   end
 
   test "registered attributes" do
@@ -209,6 +203,14 @@ defmodule ModuleTest do
     end)
   end
 
+  test "defmodule with alias as atom" do
+    defmodule :"Elixir.ModuleTest.RawModule" do
+      def hello, do: :world
+    end
+
+    assert RawModule.hello == :world
+  end
+
   test "create" do
     contents =
       quote do
@@ -227,6 +229,43 @@ defmodule ModuleTest do
     assert_raise CompileError, fn ->
       {:module, Elixir, _, _} =
         Module.create(Elixir, contents, __ENV__)
+    end
+  end
+
+  test "create with aliases/var hygiene" do
+    contents =
+      quote do
+        alias List, as: L
+        def test do
+          L.flatten([1, [2], 3])
+        end
+      end
+
+    Module.create ModuleHygiene, contents, __ENV__
+    assert ModuleHygiene.test == [1, 2, 3]
+  end
+
+  test "ensure function clauses are ordered" do
+    {_, _, binary, _} =
+      defmodule Ordered do
+        def foo(:foo), do: :bar
+        def baz(:baz), do: :bat
+      end
+    atoms = :beam_lib.chunks(binary, [:atoms])
+    assert :erlang.phash2(atoms) == 53987778
+  end
+
+  # TODO: Remove this check once we depend only on 19
+  if :erlang.system_info(:otp_release) >= '19' do
+    test "create with generated true does not emit warnings" do
+      contents =
+        quote generated: true do
+          def world, do: true
+          def world, do: false
+        end
+      {:module, ModuleCreateGenerated, _, _} =
+        Module.create(ModuleCreateGenerated, contents, __ENV__)
+      assert ModuleCreateGenerated.world
     end
   end
 

@@ -2,7 +2,7 @@ defmodule Mix.Tasks.New do
   use Mix.Task
 
   import Mix.Generator
-  import Mix.Utils, only: [camelize: 1, underscore: 1]
+  import Mix.Utils, only: [camelize: 1]
 
   @shortdoc "Creates a new Elixir project"
 
@@ -43,14 +43,16 @@ defmodule Mix.Tasks.New do
 
   """
 
+  @switches [sup: :boolean, umbrella: :boolean, app: :string, module: :string]
+
   @spec run(OptionParser.argv) :: :ok
   def run(argv) do
-    {opts, argv, _} = OptionParser.parse(argv, switches: [sup: :boolean, umbrella: :boolean])
+    {opts, argv} = OptionParser.parse!(argv, strict: @switches)
 
     case argv do
       [] ->
         Mix.raise "Expected PATH to be given, please use \"mix new PATH\""
-      [path|_] ->
+      [path | _] ->
         app = opts[:app] || Path.basename(Path.expand(path))
         check_application_name!(app, !!opts[:app])
         mod = opts[:module] || camelize(app)
@@ -174,8 +176,8 @@ defmodule Mix.Tasks.New do
     {:ok, version} = Version.parse(version)
     "#{version.major}.#{version.minor}" <>
       case version.pre do
-        [h|_] -> "-#{h}"
-        []    -> ""
+        [h | _] -> "-#{h}"
+        []      -> ""
       end
   end
 
@@ -201,25 +203,41 @@ defmodule Mix.Tasks.New do
 
   If [available in Hex](https://hex.pm/docs/publish), the package can be installed as:
 
-    1. Add <%= @app %> to your list of dependencies in `mix.exs`:
+    1. Add `<%= @app %>` to your list of dependencies in `mix.exs`:
 
-          def deps do
-            [{:<%= @app %>, "~> 0.0.1"}]
-          end
+      ```elixir
+      def deps do
+        [{:<%= @app %>, "~> 0.1.0"}]
+      end
+      ```
 
-    2. Ensure <%= @app %> is started before your application:
+    2. Ensure `<%= @app %>` is started before your application:
 
-          def application do
-            [applications: [:<%= @app %>]]
-          end
+      ```elixir
+      def application do
+        [applications: [:<%= @app %>]]
+      end
+      ```
   <% end %>
   """
 
   embed_text :gitignore, """
+  # The directory Mix will write compiled artifacts to.
   /_build
+
+  # If you run "mix test --cover", coverage assets end up here.
   /cover
+
+  # The directory Mix downloads your dependencies sources to.
   /deps
+
+  # Where 3rd-party dependencies like ExDoc output generated docs.
+  /doc
+
+  # If the VM crashes, it generates a dump, let's ignore it too.
   erl_crash.dump
+
+  # Also ignore archive artifacts (built via "mix archive.build").
   *.ez
   """
 
@@ -229,11 +247,11 @@ defmodule Mix.Tasks.New do
 
     def project do
       [app: :<%= @app %>,
-       version: "0.0.1",
+       version: "0.1.0",
        elixir: "~> <%= @version %>",
        build_embedded: Mix.env == :prod,
        start_permanent: Mix.env == :prod,
-       deps: deps]
+       deps: deps()]
     end
 
     # Configuration for the OTP application
@@ -264,7 +282,7 @@ defmodule Mix.Tasks.New do
 
     def project do
       [app: :<%= @app %>,
-       version: "0.0.1",
+       version: "0.1.0",
        build_path: "../../_build",
        config_path: "../../config/config.exs",
        deps_path: "../../deps",
@@ -397,8 +415,9 @@ defmodule Mix.Tasks.New do
     def start(_type, _args) do
       import Supervisor.Spec, warn: false
 
+      # Define workers and child supervisors to be supervised
       children = [
-        # Define workers and child supervisors to be supervised
+        # Starts a worker by calling: <%= @mod %>.Worker.start_link(arg1, arg2, arg3)
         # worker(<%= @mod %>.Worker, [arg1, arg2, arg3]),
       ]
 

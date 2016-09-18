@@ -1,6 +1,6 @@
 REBAR ?= "$(CURDIR)/rebar"
 PREFIX ?= /usr/local
-DOCS := v1.2
+DOCS := v1.3
 CANONICAL := stable
 ELIXIRC := bin/elixirc --verbose --ignore-module-conflict
 ERLC := erlc -I lib/elixir/include
@@ -12,6 +12,8 @@ INSTALL = install
 INSTALL_DIR = $(INSTALL) -m755 -d
 INSTALL_DATA = $(INSTALL) -m644
 INSTALL_PROGRAM = $(INSTALL) -m755
+GIT_REVISION = $(strip $(shell git rev-parse HEAD 2> /dev/null ))
+GIT_TAG = $(strip $(shell head="$(call GIT_REVISION)"; git tag --points-at $$head 2> /dev/null | tail -1) )
 
 .PHONY: install compile erlang elixir build_plt clean_plt dialyze test clean install_man clean_man docs Docs.zip Precompiled.zip publish_zips publish_docs publish_mix
 .NOTPARALLEL: compile
@@ -20,9 +22,9 @@ INSTALL_PROGRAM = $(INSTALL) -m755
 
 define CHECK_ERLANG_RELEASE
 	$(Q) erl -noshell -eval 'io:fwrite("~s", [erlang:system_info(otp_release) >= "18"])' -s erlang halt | grep -q '^true'; \
-		if [ $$? != 0 ]; then                                                                                                \
-		   echo "At least Erlang 18.0 is required to build Elixir";                                                          \
-		   exit 1;                                                                                                           \
+		if [ $$? != 0 ]; then \
+		   echo "At least Erlang 18.0 is required to build Elixir"; \
+		   exit 1; \
 		fi;
 endef
 
@@ -72,7 +74,7 @@ elixir: stdlib lib/eex/ebin/Elixir.EEx.beam mix ex_unit logger eex iex
 
 stdlib: $(KERNEL) VERSION
 $(KERNEL): lib/elixir/lib/*.ex lib/elixir/lib/*/*.ex lib/elixir/lib/*/*/*.ex
-	$(Q) if [ ! -f $(KERNEL) ]; then                    \
+	$(Q) if [ ! -f $(KERNEL) ]; then                  \
 		echo "==> bootstrap (compile)";                 \
 		$(ERL) -s elixir_compiler core -s erlang halt;  \
 	fi
@@ -86,7 +88,6 @@ $(KERNEL): lib/elixir/lib/*.ex lib/elixir/lib/*/*.ex lib/elixir/lib/*/*/*.ex
 unicode: $(UNICODE)
 $(UNICODE): lib/elixir/unicode/*
 	@ echo "==> unicode (compile)";
-	@ echo "Embedding the Unicode database... (this may take a while)"
 	$(Q) cd lib/elixir && ../../$(ELIXIRC) unicode/unicode.ex -o ebin;
 
 $(eval $(call APP_TEMPLATE,ex_unit,ExUnit))
@@ -125,18 +126,18 @@ clean:
 clean_exbeam:
 	$(Q) rm -f lib/*/ebin/Elixir.*.beam
 
-#==>  Create Documentation
+#==> Create Documentation
 
 LOGO_PATH = $(shell test -f ../docs/logo.png && echo "--logo ../docs/logo.png")
-SOURCE_REF = $(shell head="$$(git rev-parse HEAD)" tag="$$(git tag --points-at $$head | tail -1)" ; echo "$${tag:-$$head}\c")
-COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" -m "$(3)" -u "https://github.com/elixir-lang/elixir" --source-ref "v$(VERSION)" $(call LOGO_PATH) -o doc/$(2) -a http://elixir-lang.org/docs/$(CANONICAL)/$(2)/ -p http://elixir-lang.org/docs.html $(4)
+SOURCE_REF = $(shell tag="$(call GIT_TAG)" revision="$(call GIT_REVISION)"; echo "$${tag:-$$revision}\c")
+COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" -m "$(3)" -u "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) -o doc/$(2) -a http://elixir-lang.org/docs/$(CANONICAL)/$(2)/ -p http://elixir-lang.org/docs.html $(4)
 
 docs: compile ../ex_doc/bin/ex_doc docs_elixir docs_eex docs_mix docs_iex docs_ex_unit docs_logger
 
 docs_elixir: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (elixir)"
 	$(Q) rm -rf doc/elixir
-	$(call COMPILE_DOCS,Elixir,elixir,Kernel,-e "lib/elixir/pages/Typespecs.md" -e "lib/elixir/pages/Writing Documentation.md")
+	$(call COMPILE_DOCS,Elixir,elixir,Kernel,-e "lib/elixir/pages/Behaviours.md" -e "lib/elixir/pages/Naming Conventions.md" -e "lib/elixir/pages/Typespecs.md" -e "lib/elixir/pages/Writing Documentation.md")
 
 docs_eex: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (eex)"

@@ -9,11 +9,11 @@
 -define(atom, 'Elixir.Atom').
 -define(access, 'Elixir.Access').
 -define(enum, 'Elixir.Enum').
--define(float, 'Elixir.Float').
 -define(io, 'Elixir.IO').
 -define(integer, 'Elixir.Integer').
 -define(kernel, 'Elixir.Kernel').
 -define(list, 'Elixir.List').
+-define(list_chars, 'Elixir.List.Chars').
 -define(map, 'Elixir.Map').
 -define(node, 'Elixir.Node').
 -define(port, 'Elixir.Port').
@@ -28,15 +28,18 @@
 %% Inline rules are straight-forward, they keep the same
 %% number and order of arguments and show up on captures.
 
+inline(?atom, to_charlist, 1) -> {erlang, atom_to_list};
+%% TODO: Deprecate to_char_list function by v1.5
 inline(?atom, to_char_list, 1) -> {erlang, atom_to_list};
 inline(?io, iodata_length, 1) -> {erlang, iolist_size};
 inline(?io, iodata_to_binary, 1) -> {erlang, iolist_to_binary};
 inline(?integer, to_string, 1) -> {erlang, integer_to_binary};
 inline(?integer, to_string, 2) -> {erlang, integer_to_binary};
+inline(?integer, to_charlist, 1) -> {erlang, integer_to_list};
+inline(?integer, to_charlist, 2) -> {erlang, integer_to_list};
+%% TODO: Deprecate to_char_list function by v1.5
 inline(?integer, to_char_list, 1) -> {erlang, integer_to_list};
 inline(?integer, to_char_list, 2) -> {erlang, integer_to_list};
-inline(?float, to_string, 1) -> {erlang, float_to_binary};
-inline(?float, to_char_list, 1) -> {erlang, float_to_list};
 inline(?list, to_atom, 1) -> {erlang, list_to_atom};
 inline(?list, to_existing_atom, 1) -> {erlang, list_to_existing_atom};
 inline(?list, to_float, 1) -> {erlang, list_to_float};
@@ -149,13 +152,10 @@ inline(?string, to_integer, 1) -> {erlang, binary_to_integer};
 inline(?string, to_integer, 2) -> {erlang, binary_to_integer};
 
 inline(?system, stacktrace, 0) -> {erlang, get_stacktrace};
-inline(?system, convert_time_unit, 3) -> {erlang, convert_time_unit};
 inline(?system, monotonic_time, 0) -> {erlang, monotonic_time};
-inline(?system, monotonic_time, 1) -> {erlang, monotonic_time};
+inline(?system, os_time, 0) -> {os, system_time};
 inline(?system, system_time, 0) -> {erlang, system_time};
-inline(?system, system_time, 1) -> {erlang, system_time};
 inline(?system, time_offset, 0) -> {erlang, time_offset};
-inline(?system, time_offset, 1) -> {erlang, time_offset};
 inline(?system, unique_integer, 0) -> {erlang, unique_integer};
 inline(?system, unique_integer, 1) -> {erlang, unique_integer};
 
@@ -184,15 +184,22 @@ rewrite(?access, _DotMeta, 'get', Meta, [Arg, _], Env)
   elixir_errors:compile_error(Meta, ?m(Env, file),
     "the Access syntax and calls to Access.get/2 are not available for the value: ~ts",
     ['Elixir.Macro':to_string(Arg)]);
-rewrite(?string_chars, _DotMeta, 'to_string', _Meta, [String], _File) when is_binary(String) ->
+rewrite(?list_chars, _DotMeta, 'to_charlist', _Meta, [List], _Env) when is_list(List) ->
+  List;
+%% TODO: Deprecate to_char_list function by v1.5
+rewrite(?list_chars, _DotMeta, 'to_char_list', _Meta, [List], _Env) when is_list(List) ->
+  List;
+rewrite(?string_chars, _DotMeta, 'to_string', _Meta, [String], _Env) when is_binary(String) ->
   String;
-rewrite(?string_chars, DotMeta, 'to_string', Meta, [String], _Env) ->
+rewrite(?string_chars, _, 'to_string', _, [{{'.', _, [?kernel, inspect]}, _, _} = Call], _Env) ->
+  Call;
+rewrite(?string_chars, DotMeta, 'to_string', Meta, [Call], _Env) ->
   Var   = {'rewrite', Meta, 'Elixir'},
   Guard = {{'.', ?generated, [erlang, is_binary]}, ?generated, [Var]},
   Slow  = remote(?string_chars, DotMeta, 'to_string', Meta, [Var]),
   Fast  = Var,
 
-  {'case', ?generated, [String, [{do,
+  {'case', ?generated, [Call, [{do,
     [{'->', ?generated, [[{'when', Meta, [Var, Guard]}], Fast]},
      {'->', ?generated, [[Var], Slow]}]
   }]]};

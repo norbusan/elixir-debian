@@ -14,14 +14,20 @@ defmodule Kernel.DialyzerTest do
     plt =
       dir
       |> Path.join("base_plt")
-      |> String.to_char_list()
+      |> String.to_charlist()
 
-    # Add a few key elixir modules for types
-    files = Enum.map([Kernel, String, Keyword, Exception], &:code.which/1)
+    # Some OSs (like Windows) do not provide the HOME environment variable.
+    unless System.get_env("HOME") do
+      System.put_env("HOME", System.user_home())
+    end
+
+    # Add a few key elixir modules for types and macro functions
+    mods = [Kernel, String, Keyword, Exception, Macro, Macro.Env, :elixir_env]
+    files = Enum.map(mods, &:code.which/1)
     :dialyzer.run([analysis_type: :plt_build, output_plt: plt,
                    apps: [:erts], files: files])
 
-    # Compile dialyzer fixtures
+    # Compile Dialyzer fixtures
     assert '' = elixirc("#{fixture_path("dialyzer")} -o #{dir}")
 
     {:ok, [base_dir: dir, base_plt: plt]}
@@ -33,13 +39,13 @@ defmodule Kernel.DialyzerTest do
     dir =
       context[:base_dir]
       |> Path.join("line#{context[:line]}")
-      |> String.to_char_list()
+      |> String.to_charlist()
     File.mkdir_p!(dir)
 
     plt =
       dir
       |> Path.join("plt")
-      |> String.to_char_list()
+      |> String.to_charlist()
     File.cp!(context[:base_plt], plt)
 
     dialyzer = [analysis_type: :succ_typings, check_plt: false,
@@ -48,6 +54,7 @@ defmodule Kernel.DialyzerTest do
     {:ok, [outdir: dir, dialyzer: dialyzer]}
   end
 
+  @tag otp19: false
   test "no warnings on valid remote calls", context do
     copy_beam! context, Dialyzer.RemoteCall
     assert_dialyze_no_warnings! context
@@ -60,6 +67,17 @@ defmodule Kernel.DialyzerTest do
 
   test "no warnings on raise", context do
     copy_beam! context, Dialyzer.Raise
+    assert_dialyze_no_warnings! context
+  end
+
+  test "no warnings on macrocallback", context do
+    copy_beam! context, Dialyzer.Macrocallback
+    copy_beam! context, Dialyzer.Macrocallback.Impl
+    assert_dialyze_no_warnings! context
+  end
+
+  test "no warnings on struct update", context do
+    copy_beam! context, Dialyzer.StructUpdate
     assert_dialyze_no_warnings! context
   end
 

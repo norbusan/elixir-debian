@@ -26,8 +26,8 @@ defmodule Task.Supervisor do
 
   * `:restart` - the restart strategy, may be `:temporary` (the default),
     `:transient` or `:permanent`. Check `Supervisor.Spec` for more info.
-    Defaults to `:temporary` as most tasks can't be effectively restarted after
-    a crash;
+    Defaults to `:temporary` so tasks aren't automatically restarted when
+    they complete nor in case of crashes;
 
   * `:shutdown` - `:brutal_kill` if the tasks must be killed directly on shutdown
     or an integer indicating the timeout value, defaults to 5000 milliseconds;
@@ -65,13 +65,7 @@ defmodule Task.Supervisor do
   """
   @spec async(Supervisor.supervisor, module, atom, [term]) :: Task.t
   def async(supervisor, module, fun, args) do
-    owner = self()
-    args = [owner, :link, get_info(owner), {module, fun, args}]
-    {:ok, pid} = Supervisor.start_child(supervisor, args)
-    Process.link(pid)
-    ref = Process.monitor(pid)
-    send pid, {owner, ref}
-    %Task{pid: pid, ref: ref, owner: owner}
+    do_async(supervisor, module, fun, args, :link)
   end
 
   @doc """
@@ -80,6 +74,21 @@ defmodule Task.Supervisor do
   The `supervisor` must be a reference as defined in `Task.Supervisor`.
   The task won't be linked to the caller, see `Task.async/3` for
   more information.
+
+  ## Compatibility with OTP behaviours
+
+  If you create a task using `async_nolink` inside an OTP behaviour
+  like `GenServer`, you should match on the message coming from the
+  task inside your `handle_info` callback.
+
+  The reply sent by the task will be in the format `{ref, result}`,
+  where `ref` is the monitor reference held by the task struct
+  and `result` is the return value of the task function.
+
+  Keep in mind that, regardless of how the task created with `async_nolink`
+  terminates, the caller's process will always receive a `:DOWN` message
+  with the same `ref` value that is held by the task struct. If the task
+  terminates normally, the reason in the `:DOWN` message will be `:normal`.
   """
   @spec async_nolink(Supervisor.supervisor, fun) :: Task.t
   def async_nolink(supervisor, fun) do
@@ -95,12 +104,7 @@ defmodule Task.Supervisor do
   """
   @spec async_nolink(Supervisor.supervisor, module, atom, [term]) :: Task.t
   def async_nolink(supervisor, module, fun, args) do
-    owner = self()
-    args = [owner, :monitor, get_info(owner), {module, fun, args}]
-    {:ok, pid} = Supervisor.start_child(supervisor, args)
-    ref = Process.monitor(pid)
-    send pid, {owner, ref}
-    %Task{pid: pid, ref: ref, owner: owner}
+    do_async(supervisor, module, fun, args, :monitor)
   end
 
   @doc """
@@ -116,11 +120,11 @@ defmodule Task.Supervisor do
   """
   @spec children(Supervisor.supervisor) :: [pid]
   def children(supervisor) do
-    Supervisor.which_children(supervisor) |> Enum.map(&elem(&1, 1))
+    for {_, pid, _, _} <- Supervisor.which_children(supervisor), is_pid(pid), do: pid
   end
 
   @doc """
-  Starts a task as child of the given `supervisor`.
+  Starts a task as a child of the given `supervisor`.
 
   Note that the spawned process is not linked to the caller, but
   only to the supervisor. This command is useful in case the
@@ -133,7 +137,7 @@ defmodule Task.Supervisor do
   end
 
   @doc """
-  Starts a task as child of the given `supervisor`.
+  Starts a task as a child of the given `supervisor`.
 
   Similar to `start_child/2` except the task is specified
   by the given `module`, `fun` and `args`.
@@ -149,5 +153,15 @@ defmodule Task.Supervisor do
        {:registered_name, []} -> self()
        {:registered_name, name} -> name
      end}
+  end
+
+  defp do_async(supervisor, module, fun, args, link_type) do
+    owner = self()
+    args = [owner, link_type, get_info(owner), {module, fun, args}]
+    {:ok, pid} = Supervisor.start_child(supervisor, args)
+    if link_type == :link, do: Process.link(pid)
+    ref = Process.monitor(pid)
+    send pid, {owner, ref}
+    %Task{pid: pid, ref: ref, owner: owner}
   end
 end

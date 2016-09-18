@@ -11,9 +11,8 @@ defmodule Mix.CLITest do
         def project, do: [app: :p, version: "0.1.0"]
       end
       """
-      output = mix ~w[]
+      mix ~w[]
       assert File.regular?("_build/dev/lib/p/ebin/Elixir.A.beam")
-      assert output =~ "Compiled lib/a.ex"
     end
   end
 
@@ -44,23 +43,26 @@ defmodule Mix.CLITest do
         def run(_) do
           IO.puts Mix.Project.get!.hello_world
           Mix.shell.info("This won't appear")
+          Mix.raise("oops")
         end
       end
       """
 
       contents = mix ~w[my_hello], [{"MIX_QUIET", "1"}]
-
       assert contents =~ "Hello from MyProject!\n"
       refute contents =~ "This won't appear"
 
       contents = mix ~w[my_hello], [{"MIX_QUIET", "0"}]
+      assert contents =~ "Hello from MyProject!\n"
       assert contents =~ "This won't appear"
 
       contents = mix ~w[my_hello], [{"MIX_DEBUG", "1"}]
       assert contents =~ "** Running mix my_hello (inside MyProject)"
+      assert contents =~ "** (Mix.Error) oops"
 
       contents = mix ~w[my_hello], [{"MIX_DEBUG", "0"}]
       refute contents =~ "** Running mix my_hello (inside MyProject)"
+      refute contents =~ "** (Mix.Error) oops"
     end
   end
 
@@ -89,7 +91,7 @@ defmodule Mix.CLITest do
   test "--version smoke test", context do
     in_tmp context.test, fn ->
       output = mix ~w[--version]
-      assert output =~ ~r/Mix [0-9\.a-z]+/
+      assert output =~ ~r/Erlang.+\n\nMix [0-9\.a-z]+/
     end
   end
 
@@ -111,6 +113,33 @@ defmodule Mix.CLITest do
     end
   after
     System.delete_env("MIX_ENV")
+    System.delete_env("MIX_EXS")
+  end
+
+  test "env config defaults to the tasks's preferred cli environment", context do
+    in_tmp context.test, fn ->
+      File.write! "custom.exs", """
+      defmodule P do
+        use Mix.Project
+        def project, do: [app: :p, version: "0.1.0"]
+      end
+
+      defmodule Mix.Tasks.TestTask do
+        use Mix.Task
+        @preferred_cli_env :prod
+
+        def run(args) do
+          IO.inspect {Mix.env, args}
+        end
+      end
+      """
+
+      System.put_env("MIX_EXS", "custom.exs")
+
+      output = mix ["test_task", "a", "b", "c"]
+      assert output =~ ~s({:prod, ["a", "b", "c"]})
+    end
+  after
     System.delete_env("MIX_EXS")
   end
 
@@ -136,20 +165,5 @@ defmodule Mix.CLITest do
       assert File.regular?("_build/test/lib/sup_with_tests/ebin/Elixir.SupWithTests.beam")
       assert output =~ "1 test, 0 failures"
     end
-  end
-
-  defp mix(args, envs \\ []) when is_list(args) do
-    System.cmd(elixir_executable,
-               ["-r", mix_executable, "--"|args],
-               stderr_to_stdout: true,
-               env: envs) |> elem(0)
-  end
-
-  defp mix_executable do
-    Path.expand("../../../../bin/mix", __DIR__)
-  end
-
-  defp elixir_executable do
-    Path.expand("../../../../bin/elixir", __DIR__)
   end
 end

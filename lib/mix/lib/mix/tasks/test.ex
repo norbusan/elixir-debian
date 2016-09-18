@@ -3,10 +3,10 @@ defmodule Mix.Tasks.Test do
     @moduledoc false
 
     def start(compile_path, opts) do
-      Mix.shell.info "Cover compiling modules ... "
+      Mix.shell.info "Cover compiling modules ..."
       _ = :cover.start
 
-      case :cover.compile_beam_directory(compile_path |> to_char_list) do
+      case :cover.compile_beam_directory(compile_path |> to_charlist) do
         results when is_list(results) ->
           :ok
         {:error, _} ->
@@ -16,7 +16,7 @@ defmodule Mix.Tasks.Test do
       output = opts[:output]
 
       fn() ->
-        Mix.shell.info "\nGenerating cover results ... "
+        Mix.shell.info "\nGenerating cover results ..."
         File.mkdir_p!(output)
         Enum.each :cover.modules, fn(mod) ->
           {:ok, _} = :cover.analyse_to_file(mod, '#{output}/#{mod}.html', [:html])
@@ -27,8 +27,11 @@ defmodule Mix.Tasks.Test do
 
   use Mix.Task
 
+  alias Mix.Compilers.Test, as: CT
+
   @shortdoc "Runs a project's tests"
   @recursive true
+  @preferred_cli_env :test
 
   @moduledoc """
   Runs the tests for a project.
@@ -47,6 +50,7 @@ defmodule Mix.Tasks.Test do
     * `--trace`      - run tests with detailed reporting; automatically sets `--max-cases` to 1
     * `--max-cases`  - set the maximum number of cases running async
     * `--cover`      - the directory to include coverage results
+    * `--raise`      - raise if the test suit failed
     * `--force`      - forces compilation regardless of modification times
     * `--no-compile` - do not compile, even if files require compilation
     * `--no-start`   - do not start applications after compilation
@@ -55,8 +59,17 @@ defmodule Mix.Tasks.Test do
     * `--include`    - include tests that match the filter
     * `--exclude`    - exclude tests that match the filter
     * `--only`       - run only tests that match the filter
-    * `--seed`       - seeds the random number generator used to randomize tests order
+    * `--seed`       - seeds the random number generator used to randomize tests order;
+      `--seed 0` disables randomization
     * `--timeout`    - set the timeout for the tests
+    * `--no-deps-check` - do not check dependencies
+    * `--no-archives-check` - do not check archives
+    * `--no-elixir-version-check` - do not check the Elixir version from mix.exs
+    * `--stale` - run only tests which reference modules that changed since the
+      last `test --stale`. You can read more about this option in the "Stale" section below.
+    * `--listen-on-stdin` - run tests, and then listen on stdin. Receiving a newline will
+      result in the tests being run again. Very useful when combined with `--stale` and
+      external commands which produce output on stdout upon file system modification.
 
   ## Filters
 
@@ -113,7 +126,7 @@ defmodule Mix.Tasks.Test do
 
     * `:test_pattern` - a pattern to load test files, defaults to `*_test.exs`.
 
-    * `:warn_test_pattern` - a pattern to match potentially missed test files 
+    * `:warn_test_pattern` - a pattern to match potentially missed test files
       and display a warning, defaults to `*_test.ex`.
 
     * `:test_coverage` - a set of options to be passed down to the coverage
@@ -135,18 +148,41 @@ defmodule Mix.Tasks.Test do
   compilation path and the `test_coverage` options as arguments. It must
   return an anonymous function of zero arity that will be run after the
   test suite is done or `nil`.
+
+  ## "Stale"
+
+  The `--stale` command line option attempts to run only those test files which
+  reference modules that have changed since the last time you ran this task with
+  `--stale`.
+
+  The first time this task is run with `--stale`, all tests are run and a manifest
+  is generated. On subsequent runs, a test file is marked "stale" if any modules it
+  references (and any modules those modules reference, recursively) were modified
+  since the last run with `--stale`. A test file is also marked "stale" if it has
+  been changed since the last run with `--stale`.
   """
 
   @switches [force: :boolean, color: :boolean, cover: :boolean,
              trace: :boolean, max_cases: :integer, include: :keep,
              exclude: :keep, seed: :integer, only: :keep, compile: :boolean,
-             start: :boolean, timeout: :integer]
+             start: :boolean, timeout: :integer, raise: :boolean,
+             deps_check: :boolean, archives_check: :boolean, elixir_version_check: :boolean,
+             stale: :boolean, listen_on_stdin: :boolean]
 
   @cover [output: "cover", tool: Cover]
 
   @spec run(OptionParser.argv) :: :ok
   def run(args) do
-    {opts, files, _} = OptionParser.parse(args, switches: @switches)
+    {opts, files} = OptionParser.parse!(args, strict: @switches)
+
+    if opts[:listen_on_stdin] do
+      System.at_exit fn _ ->
+        IO.gets(:stdio, "")
+        Mix.shell.info "Restarting..."
+        :init.restart()
+        :timer.sleep(:infinity)
+      end
+    end
 
     unless System.get_env("MIX_ENV") || Mix.env == :test do
       Mix.raise "\"mix test\" is running on environment \"#{Mix.env}\". If you are " <>
@@ -160,12 +196,13 @@ defmodule Mix.Tasks.Test do
     end
 
     project = Mix.Project.config
-    cover   = Keyword.merge(@cover, project[:test_coverage] || [])
 
     # Start cover after we load deps but before we start the app.
     cover =
       if opts[:cover] do
-        cover[:tool].start(Mix.Project.compile_path(project), cover)
+        compile_path = Mix.Project.compile_path(project)
+        cover = Keyword.merge(@cover, project[:test_coverage] || [])
+        cover[:tool].start(compile_path, cover)
       end
 
     # Start the app and configure exunit with command line options
@@ -184,12 +221,12 @@ defmodule Mix.Tasks.Test do
     # Configure ExUnit with command line options before requiring
     # test helpers so that the configuration is available in helpers.
     # Then configure ExUnit again so command line options override
-    opts = ex_unit_opts(opts)
-    ExUnit.configure(opts)
+    ex_unit_opts = ex_unit_opts(opts)
+    ExUnit.configure(ex_unit_opts)
 
     test_paths = project[:test_paths] || ["test"]
     Enum.each(test_paths, &require_test_helper(&1))
-    ExUnit.configure(merge_helper_opts(opts))
+    ExUnit.configure(merge_helper_opts(ex_unit_opts))
 
     # Finally parse, require and load the files
     test_files = parse_files(files, test_paths)
@@ -197,24 +234,26 @@ defmodule Mix.Tasks.Test do
     warn_test_pattern = project[:warn_test_pattern] || "*_test.ex"
 
     matched_test_files = Mix.Utils.extract_files(test_files, test_pattern)
-    matched_warn_test_files = 
+    matched_warn_test_files =
       Mix.Utils.extract_files(test_files, warn_test_pattern) -- matched_test_files
-    
+
     display_warn_test_pattern(matched_warn_test_files, test_pattern)
-    
-    case matched_test_files do
-      [] ->
-        Mix.shell.error "Test patterns did not match any file: " <> Enum.join(files, ", ")
-      test_files ->
-        _ = Kernel.ParallelRequire.files(test_files)
 
-        # Run the test suite, coverage tools and register an exit hook
-        %{failures: failures} = ExUnit.run
-        if cover, do: cover.()
+    case CT.require_and_run(files, matched_test_files, test_paths, opts) do
+      {:ok, %{failures: failures}} ->
+        cover && cover.()
 
-        System.at_exit fn _ ->
-          if failures > 0, do: exit({:shutdown, 1})
+        cond do
+          failures > 0 and opts[:raise] ->
+            Mix.raise "mix test failed"
+          failures > 0 ->
+            System.at_exit fn _ -> exit({:shutdown, 1}) end
+          true ->
+            :ok
         end
+
+      :noop ->
+        :ok
     end
   end
 
@@ -226,10 +265,11 @@ defmodule Mix.Tasks.Test do
 
   @doc false
   def ex_unit_opts(opts) do
-    opts = opts
-           |> filter_opts(:include)
-           |> filter_opts(:exclude)
-           |> filter_only_opts()
+    opts =
+      opts
+      |> filter_opts(:include)
+      |> filter_opts(:exclude)
+      |> filter_only_opts()
 
     default_opts(opts) ++
       Keyword.take(opts, [:trace, :max_cases, :include, :exclude, :seed, :timeout])
@@ -290,7 +330,7 @@ defmodule Mix.Tasks.Test do
       |> Keyword.put_new(:include, [])
       |> Keyword.put_new(:exclude, [])
       |> Keyword.update!(:include, &(filters ++ &1))
-      |> Keyword.update!(:exclude, &[:test|&1])
+      |> Keyword.update!(:exclude, &[:test | &1])
     else
       opts
     end

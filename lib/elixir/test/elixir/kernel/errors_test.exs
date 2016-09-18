@@ -203,8 +203,7 @@ defmodule Kernel.ErrorsTest do
 
   test "clause with defaults" do
     assert_compile_fail CompileError,
-      "nofile:3: def hello/1 has default values and multiple clauses, " <>
-      "define a function head with the defaults",
+      "nofile:3: definitions with multiple clauses and default values require a function head",
       ~C'''
       defmodule Kernel.ErrorsTest.ClauseWithDefaults1 do
         def hello(arg \\ 0), do: nil
@@ -319,18 +318,22 @@ defmodule Kernel.ErrorsTest do
 
   test "unbound map key var" do
     assert_compile_fail CompileError,
-      ~r"nofile:1: illegal use of variable x as map key inside match,",
+      ~r"nofile:1: illegal use of variable x inside map key match,",
       '%{x => 1} = %{}'
 
     assert_compile_fail CompileError,
-      ~r"nofile:1: illegal use of variable x as map key inside match,",
+      ~r"nofile:1: illegal use of variable x inside map key match,",
       '%{x = 1 => 1}'
   end
 
   test "struct errors" do
     assert_compile_fail CompileError,
-      "nofile:1: BadStruct.__struct__/0 is undefined, cannot expand struct BadStruct",
+      "nofile:1: BadStruct.__struct__/1 is undefined, cannot expand struct BadStruct",
       '%BadStruct{}'
+
+    assert_compile_fail CompileError,
+      "nofile:1: BadStruct.__struct__/0 is undefined, cannot expand struct BadStruct",
+      '%BadStruct{} = %{}'
 
     defmodule BadStruct do
       def __struct__ do
@@ -340,17 +343,19 @@ defmodule Kernel.ErrorsTest do
 
     assert_compile_fail CompileError,
       "nofile:1: expected Kernel.ErrorsTest.BadStruct.__struct__/0 to return a map, got: []",
-      '%#{BadStruct}{}'
+      '%#{BadStruct}{} = %{}'
 
     defmodule GoodStruct do
-      def __struct__ do
-        %{name: "john"}
-      end
+      defstruct name: "john"
     end
+
+    assert_compile_fail KeyError,
+      "key :age not found in: %Kernel.ErrorsTest.GoodStruct{name: \"john\"}",
+      '%#{GoodStruct}{age: 27}'
 
     assert_compile_fail CompileError,
       "nofile:1: unknown key :age for struct Kernel.ErrorsTest.GoodStruct",
-      '%#{GoodStruct}{age: 27}'
+      '%#{GoodStruct}{age: 27} = %{}'
   end
 
   test "name for defmodule" do
@@ -491,8 +496,8 @@ defmodule Kernel.ErrorsTest do
 
   test "macro with undefined local" do
     assert_compile_fail UndefinedFunctionError,
-      "undefined function Kernel.ErrorsTest.MacroWithUndefinedLocal.unknown/1 " <>
-      "(function unknown/1 is not available)",
+      "function Kernel.ErrorsTest.MacroWithUndefinedLocal.unknown/1" <>
+      " is undefined (function unknown/1 is not available)",
       '''
       defmodule Kernel.ErrorsTest.MacroWithUndefinedLocal do
         defmacrop bar, do: unknown(1)
@@ -503,7 +508,7 @@ defmodule Kernel.ErrorsTest do
 
   test "private macro" do
     assert_compile_fail UndefinedFunctionError,
-      "undefined function Kernel.ErrorsTest.PrivateMacro.foo/0 (function foo/0 is not available)",
+      "function Kernel.ErrorsTest.PrivateMacro.foo/0 is undefined (function foo/0 is not available)",
       '''
       defmodule Kernel.ErrorsTest.PrivateMacro do
         defmacrop foo, do: 1
@@ -664,6 +669,17 @@ defmodule Kernel.ErrorsTest do
       'Module.eval_quoted Record, quote(do: 1), [], file: __ENV__.file'
   end
 
+  test "doc attributes format" do
+    message = "expected moduledoc attribute given in the {line, doc} format, got: \"Other\""
+    assert_raise ArgumentError, message, fn ->
+      defmodule DocAttributesFormat do
+        @moduledoc "ModuleTest"
+        {676, "ModuleTest"} = Module.get_attribute(__MODULE__, :moduledoc)
+        Module.put_attribute(__MODULE__, :moduledoc, "Other")
+      end
+    end
+  end
+
   test "interpolation error" do
     assert_compile_fail SyntaxError,
       "nofile:1: unexpected token: \")\". \"do\" starting at line 1 is missing terminator \"end\"",
@@ -819,6 +835,20 @@ defmodule Kernel.ErrorsTest do
       'if true do\n  foo = [],\n  baz\nend'
   end
 
+  # As reported and discussed in
+  # https://github.com/elixir-lang/elixir/issues/4419.
+  test "characters literal are printed correctly in syntax errors" do
+    assert_compile_fail SyntaxError,
+      "nofile:1: syntax error before: ?a",
+      ':ok ?a'
+    assert_compile_fail SyntaxError,
+      "nofile:1: syntax error before: ?\\s",
+      ':ok ?\\s'
+    assert_compile_fail SyntaxError,
+      "nofile:1: syntax error before: ?す"
+      ':ok ?す'
+  end
+
   test "invalid var or function on guard" do
     assert_compile_fail CompileError,
       "nofile:4: unknown variable something_that_does_not_exist or " <>
@@ -846,7 +876,7 @@ defmodule Kernel.ErrorsTest do
 
   test "invalid args for bodyless clause" do
     assert_compile_fail CompileError,
-      "nofile:2: can use only variables and \\\\ as arguments of bodyless clause",
+      "nofile:2: can use only variables and \\\\ as arguments in function heads",
       '''
       defmodule Kernel.ErrorsTest.InvalidArgsForBodylessClause do
         def foo(arg // nil)
@@ -857,11 +887,12 @@ defmodule Kernel.ErrorsTest do
 
   test "invalid function on match" do
     assert_compile_fail CompileError,
-      "nofile:3: cannot invoke local something_that_does_not_exist/0 inside match",
+      "nofile:3: cannot invoke local something_that_does_not_exist/1 inside match," <>
+      " called as: something_that_does_not_exist(:foo)",
       '''
       defmodule Kernel.ErrorsTest.InvalidFunctionOnMatch do
         def fun do
-          case [] do; something_that_does_not_exist() -> :ok; end
+          case [] do; something_that_does_not_exist(:foo) -> :ok; end
         end
       end
       '''
@@ -917,13 +948,13 @@ defmodule Kernel.ErrorsTest do
       'alias Elixir.{Map}, as: Dict'
 
     assert_compile_fail UndefinedFunctionError,
-      "undefined function List.{}/1",
+      "function List.{}/1 is undefined or private",
       '[List.{Chars}, "one"]'
   end
 
   test "macros error stacktrace" do
     assert [{:erlang, :+, [1, :foo], _},
-            {Kernel.ErrorsTest.MacrosErrorStacktrace, :sample, 1, _}|_] =
+            {Kernel.ErrorsTest.MacrosErrorStacktrace, :sample, 1, _} | _] =
       rescue_stacktrace("""
       defmodule Kernel.ErrorsTest.MacrosErrorStacktrace do
         defmacro sample(num), do: num + :foo
@@ -933,7 +964,7 @@ defmodule Kernel.ErrorsTest do
   end
 
   test "macros function clause stacktrace" do
-    assert [{__MODULE__, :sample, 1, _}|_] =
+    assert [{__MODULE__, :sample, 1, _} | _] =
       rescue_stacktrace("""
       defmodule Kernel.ErrorsTest.MacrosFunctionClauseStacktrace do
         import Kernel.ErrorsTest
@@ -943,7 +974,7 @@ defmodule Kernel.ErrorsTest do
   end
 
   test "macros interpreted function clause stacktrace" do
-    assert [{Kernel.ErrorsTest.MacrosInterpretedFunctionClauseStacktrace, :sample, 1, _}|_] =
+    assert [{Kernel.ErrorsTest.MacrosInterpretedFunctionClauseStacktrace, :sample, 1, _} | _] =
       rescue_stacktrace("""
       defmodule Kernel.ErrorsTest.MacrosInterpretedFunctionClauseStacktrace do
         defmacro sample(0), do: 0
@@ -953,7 +984,7 @@ defmodule Kernel.ErrorsTest do
   end
 
   test "macros compiled callback" do
-    assert [{Kernel.ErrorsTest, :__before_compile__, [%Macro.Env{module: Kernel.ErrorsTest.MacrosCompiledCallback}], _}|_] =
+    assert [{Kernel.ErrorsTest, :__before_compile__, [%Macro.Env{module: Kernel.ErrorsTest.MacrosCompiledCallback}], _} | _] =
       rescue_stacktrace("""
       defmodule Kernel.ErrorsTest.MacrosCompiledCallback do
         Module.put_attribute(__MODULE__, :before_compile, Kernel.ErrorsTest)
@@ -971,7 +1002,7 @@ defmodule Kernel.ErrorsTest do
 
   defp rescue_stacktrace(expr) do
     result = try do
-      :elixir.eval(to_char_list(expr), [])
+      :elixir.eval(to_charlist(expr), [])
       nil
     rescue
       _ -> System.stacktrace

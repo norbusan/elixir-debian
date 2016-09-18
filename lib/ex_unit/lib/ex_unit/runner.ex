@@ -3,7 +3,7 @@ defmodule ExUnit.Runner do
 
   alias ExUnit.EventManager, as: EM
 
-  def run(async, sync, opts, load_us) do
+  def run(opts, load_us) do
     {opts, config} = configure(opts)
 
     :erlang.system_flag(:backtrace_depth,
@@ -12,8 +12,7 @@ defmodule ExUnit.Runner do
     {run_us, _} =
       :timer.tc fn ->
         EM.suite_started(config.manager, opts)
-        loop %{config | sync_cases: shuffle(config, sync),
-                        async_cases: shuffle(config, async)}
+        loop(config, 0)
       end
 
     EM.suite_finished(config.manager, run_us, load_us)
@@ -24,22 +23,20 @@ defmodule ExUnit.Runner do
     opts = normalize_opts(opts)
 
     {:ok, pid} = EM.start_link
-    formatters = [ExUnit.RunnerStats|opts[:formatters]]
+    formatters = [ExUnit.RunnerStats | opts[:formatters]]
     Enum.each formatters, &(:ok = EM.add_handler(pid, &1, opts))
 
     config = %{
-      async_cases: [],
       capture_log: opts[:capture_log],
       exclude: opts[:exclude],
       include: opts[:include],
       manager: pid,
       max_cases: opts[:max_cases],
       seed: opts[:seed],
-      sync_cases: [],
-      taken_cases: 0,
+      cases: :async,
       timeout: opts[:timeout],
       trace: opts[:trace]
-     }
+    }
 
     {opts, config}
   end
@@ -58,34 +55,39 @@ defmodule ExUnit.Runner do
     cond do
       opts[:trace]           -> 1
       max = opts[:max_cases] -> max
-      true                   -> :erlang.system_info(:schedulers_online)
+      true                   -> :erlang.system_info(:schedulers_online) * 2
     end
   end
 
-  defp loop(config) do
-    available = config.max_cases - config.taken_cases
+  defp loop(%{cases: :async} = config, taken) do
+    available = config.max_cases - taken
 
     cond do
       # No cases available, wait for one
       available <= 0 ->
-        wait_until_available config
+        wait_until_available(config, taken)
 
       # Slots are available, start with async cases
-      tuple = take_async_cases(config, available) ->
-        {config, cases} = tuple
-        spawn_cases(config, cases)
+      cases = ExUnit.Server.take_async_cases(available) ->
+        spawn_cases(config, cases, taken)
 
-      # No more async cases, wait for them to finish
-      config.taken_cases > 0 ->
-        wait_until_available config
+      true ->
+        cases = ExUnit.Server.take_sync_cases()
+        loop(%{config | cases: cases}, taken)
+    end
+  end
+
+  defp loop(%{cases: cases} = config, taken) do
+    case cases do
+      _ when taken > 0 ->
+        wait_until_available(config, taken)
 
       # So we can start all sync cases
-      tuple = take_sync_cases(config) ->
-        {config, cases} = tuple
-        spawn_cases(config, cases)
+      [h | t] ->
+        spawn_cases(%{config | cases: t}, [h], taken)
 
       # No more cases, we are done!
-      true ->
+      [] ->
         config
     end
   end
@@ -93,14 +95,14 @@ defmodule ExUnit.Runner do
   # Loop expecting messages from the spawned cases. Whenever
   # a test case has finished executing, decrease the taken
   # cases counter and attempt to spawn new ones.
-  defp wait_until_available(config) do
+  defp wait_until_available(config, taken) do
     receive do
       {_pid, :case_finished, _test_case} ->
-        loop %{config | taken_cases: config.taken_cases - 1}
+        loop(config, taken - 1)
     end
   end
 
-  defp spawn_cases(config, cases) do
+  defp spawn_cases(config, cases, taken) do
     pid = self()
 
     Enum.each cases, fn case_name ->
@@ -109,7 +111,7 @@ defmodule ExUnit.Runner do
       end
     end
 
-    loop %{config | taken_cases: config.taken_cases + length(cases)}
+    loop(config, taken + length(cases))
   end
 
   defp run_case(config, pid, case_name) do
@@ -140,7 +142,7 @@ defmodule ExUnit.Runner do
     exclude = config.exclude
 
     for test <- tests do
-      tags = Map.put(test.tags, :test, test.name)
+      tags = Map.merge(test.tags, %{test: test.name, case: test.case})
       case ExUnit.Filters.eval(include, exclude, tags, tests) do
         :ok           -> %{test | tags: tags}
         {:error, msg} -> %{test | state: {:skip, msg}}
@@ -184,8 +186,7 @@ defmodule ExUnit.Runner do
   end
 
   defp exec_case_setup(%ExUnit.TestCase{name: case_name} = test_case) do
-    {:ok, context} = case_name.__ex_unit__(:setup_all, %{case: case_name})
-    {:ok, test_case, context}
+    {:ok, test_case, case_name.__ex_unit__(:setup_all, %{case: case_name})}
   catch
     kind, error ->
       failed = failed(kind, error, pruned_stacktrace())
@@ -223,10 +224,13 @@ defmodule ExUnit.Runner do
   defp run_test(config, %{tags: tags} = test, context) do
     EM.test_started(config.manager, test)
 
-    if is_nil(test.state) do
-      capture_log? = Map.get(tags, :capture_log, config.capture_log)
-      test = run_test(capture_log?, config, test, Map.merge(tags, context))
-    end
+    test =
+      if is_nil(test.state) do
+        capture_log? = Map.get(tags, :capture_log, config.capture_log)
+        run_test(capture_log?, config, test, Map.merge(tags, context))
+      else
+        test
+      end
 
     EM.test_finished(config.manager, test)
   end
@@ -282,8 +286,7 @@ defmodule ExUnit.Runner do
   end
 
   defp exec_test_setup(%ExUnit.Test{case: case} = test, context) do
-    {:ok, context} = case.__ex_unit__(:setup, context)
-    {:ok, %{test | tags: context}}
+    {:ok, %{test | tags: case.__ex_unit__(:setup, context)}}
   catch
     kind, error ->
       {:error, %{test | state: failed(kind, error, pruned_stacktrace())}}
@@ -326,22 +329,6 @@ defmodule ExUnit.Runner do
     Enum.shuffle(list)
   end
 
-  defp take_async_cases(config, count) do
-    case config.async_cases do
-      [] -> nil
-      cases ->
-        {response, remaining} = Enum.split(cases, count)
-        {%{config | async_cases: remaining}, response}
-    end
-  end
-
-  defp take_sync_cases(config) do
-    case config.sync_cases do
-      [h|t] -> {%{config | sync_cases: t}, [h]}
-      []    -> nil
-    end
-  end
-
   defp failed(:error, %ExUnit.MultiError{errors: errors}, _stack) do
     {:failed,
      Enum.map(errors, fn {kind, reason, stack} ->
@@ -356,12 +343,12 @@ defmodule ExUnit.Runner do
   defp pruned_stacktrace, do: prune_stacktrace(System.stacktrace)
 
   # Assertions can pop-up in the middle of the stack
-  defp prune_stacktrace([{ExUnit.Assertions, _, _, _}|t]), do: prune_stacktrace(t)
+  defp prune_stacktrace([{ExUnit.Assertions, _, _, _} | t]), do: prune_stacktrace(t)
 
   # As soon as we see a Runner, it is time to ignore the stacktrace
-  defp prune_stacktrace([{ExUnit.Runner, _, _, _}|_]), do: []
+  defp prune_stacktrace([{ExUnit.Runner, _, _, _} | _]), do: []
 
   # All other cases
-  defp prune_stacktrace([h|t]), do: [h|prune_stacktrace(t)]
+  defp prune_stacktrace([h | t]), do: [h | prune_stacktrace(t)]
   defp prune_stacktrace([]), do: []
 end

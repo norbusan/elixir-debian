@@ -4,8 +4,8 @@
 -export([elixir_to_erl/1, get_ann/1, get_line/1, split_last/1,
   characters_to_list/1, characters_to_binary/1, macro_name/1,
   convert_to_boolean/4, returns_boolean/1, atom_concat/1,
-  read_file_type/1, read_link_type/1, relative_to_cwd/1,
-  change_universal_time/2, erl_call/4, meta_location/1]).
+  read_file_type/1, read_link_type/1, relative_to_cwd/1, caller/4,
+  read_mtime/1, change_universal_time/2, erl_call/4, meta_location/1]).
 -include("elixir.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -30,16 +30,16 @@ get_line(Opts) when is_list(Opts) ->
 get_ann(Opts) when is_list(Opts) ->
   get_ann(Opts, [], 0).
 
-get_ann([{generated,Gen}|T], Acc, Line) -> get_ann(T, [{generated,Gen}|Acc], Line);
-get_ann([{line,Line}|T], Acc, _) -> get_ann(T, Acc, Line);
-get_ann([_|T], Acc, Line) -> get_ann(T, Acc, Line);
+get_ann([{generated, Gen} | T], Acc, Line) -> get_ann(T, [{generated, Gen} | Acc], Line);
+get_ann([{line, Line} | T], Acc, _) -> get_ann(T, Acc, Line);
+get_ann([_ | T], Acc, Line) -> get_ann(T, Acc, Line);
 get_ann([], [], Line) -> Line;
-get_ann([], Acc, Line) -> [{location,Line}|Acc].
+get_ann([], Acc, Line) -> [{location, Line} | Acc].
 
-split_last([])         -> {[], []};
-split_last(List)       -> split_last(List, []).
-split_last([H], Acc)   -> {lists:reverse(Acc), H};
-split_last([H|T], Acc) -> split_last(T, [H|Acc]).
+split_last([])           -> {[], []};
+split_last(List)         -> split_last(List, []).
+split_last([H], Acc)     -> {lists:reverse(Acc), H};
+split_last([H | T], Acc) -> split_last(T, [H | Acc]).
 
 read_file_type(File) ->
   case file:read_file_info(File) of
@@ -50,6 +50,12 @@ read_file_type(File) ->
 read_link_type(File) ->
   case file:read_link_info(File) of
     {ok, #file_info{type=Type}} -> {ok, Type};
+    {error, _} = Error -> Error
+  end.
+
+read_mtime(File) ->
+  case file:read_file_info(File, [{time, universal}]) of
+    {ok, #file_info{mtime=Mtime}} -> {ok, Mtime};
     {error, _} = Error -> Error
   end.
 
@@ -69,7 +75,7 @@ characters_to_list(Data) when is_list(Data) ->
 characters_to_list(Data) ->
   case elixir_compiler:get_opt(internal) of
     true  -> unicode:characters_to_list(Data);
-    false -> 'Elixir.String':to_char_list(Data)
+    false -> 'Elixir.String':to_charlist(Data)
   end.
 
 characters_to_binary(Data) when is_binary(Data) ->
@@ -79,6 +85,18 @@ characters_to_binary(Data) ->
     true  -> unicode:characters_to_binary(Data);
     false -> 'Elixir.List':to_string(Data)
   end.
+
+%% Returns the caller as a stacktrace entry.
+caller(Line, File, nil, _) ->
+  {elixir_compiler_0, '__FILE__', 1, stack_location(Line, File)};
+caller(Line, File, Module, nil) ->
+  {Module, '__MODULE__', 0, stack_location(Line, File)};
+caller(Line, File, Module, {Name, Arity}) ->
+  {Module, Name, Arity, stack_location(Line, File)}.
+
+stack_location(Line, File) ->
+  [{file, elixir_utils:characters_to_list(elixir_utils:relative_to_cwd(File))},
+   {line, Line}].
 
 %% Meta location.
 %%
@@ -156,10 +174,10 @@ elixir_to_erl(Pid) when is_pid(Pid) ->
 elixir_to_erl(_Other) ->
   error(badarg).
 
-elixir_to_erl_cons_1([H|T], Acc) -> elixir_to_erl_cons_1(T, [H|Acc]);
+elixir_to_erl_cons_1([H | T], Acc) -> elixir_to_erl_cons_1(T, [H | Acc]);
 elixir_to_erl_cons_1(Other, Acc) -> elixir_to_erl_cons_2(Acc, elixir_to_erl(Other)).
 
-elixir_to_erl_cons_2([H|T], Acc) ->
+elixir_to_erl_cons_2([H | T], Acc) ->
   elixir_to_erl_cons_2(T, {cons, 0, elixir_to_erl(H), Acc});
 elixir_to_erl_cons_2([], Acc) ->
   Acc.
@@ -212,9 +230,9 @@ convert_to_boolean(Line, Expr, Bool, S) when is_integer(Line) ->
     _               -> do_convert_to_boolean(Line, Expr, Bool, S)
   end.
 
-%% Notice we use a temporary var and bundle nil
+%% Notice we use a temporary var and include nil
 %% and false checks in the same clause since
-%% it makes dialyzer happy.
+%% it makes Dialyzer happy.
 do_convert_to_boolean(Line, Expr, Bool, S) ->
   {Name, _, TS} = elixir_scope:build_var('_', S),
   Var = {var, Line, Name},

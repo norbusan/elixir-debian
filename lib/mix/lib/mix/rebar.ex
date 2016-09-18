@@ -2,7 +2,7 @@ defmodule Mix.Rebar do
   @moduledoc false
 
   @doc """
-  Returns the path supposed to host the local copy of rebar.
+  Returns the path supposed to host the local copy of `rebar`.
   """
   def local_rebar_path(manager) do
     Path.join(Mix.Utils.mix_home, Atom.to_string(manager))
@@ -12,7 +12,9 @@ defmodule Mix.Rebar do
   Returns the path to the global copy of `rebar`, if one exists.
   """
   def global_rebar_cmd(manager) do
-    wrap_cmd System.find_executable(Atom.to_string(manager))
+    if cmd = System.find_executable(Atom.to_string(manager)) do
+      wrap_cmd(cmd)
+    end
   end
 
   @doc """
@@ -20,7 +22,9 @@ defmodule Mix.Rebar do
   """
   def local_rebar_cmd(manager) do
     cmd = local_rebar_path(manager)
-    wrap_cmd(if File.regular?(cmd), do: cmd)
+    if File.regular?(cmd) do
+      wrap_cmd(cmd)
+    end
   end
 
   @doc """
@@ -88,22 +92,22 @@ defmodule Mix.Rebar do
 
   defp do_tuple_merge(old, []),
     do: old
-  defp do_tuple_merge(olds, [new|news]),
+  defp do_tuple_merge(olds, [new | news]),
     do: do_tuple_umerge_dedup(umerge(:new, olds, [], news, new), [])
 
   defp umerge(_, [], [], acc, current),
-    do: [current|acc]
+    do: [current | acc]
   defp umerge(:new, [], news, acc, current),
-    do: Enum.reverse(news, [current|acc])
+    do: Enum.reverse(news, [current | acc])
   defp umerge(:old, olds, [], acc, current),
-    do: Enum.reverse(olds, [current|acc])
-  defp umerge(:new, [old|olds], news, acc, current) do
+    do: Enum.reverse(olds, [current | acc])
+  defp umerge(:new, [old | olds], news, acc, current) do
     {dir, merged, new_current} = compare({:new, current}, {:old, old})
-    umerge(dir, olds, news, [merged|acc], new_current)
+    umerge(dir, olds, news, [merged | acc], new_current)
   end
-  defp umerge(:old, olds, [new|news], acc, current) do
+  defp umerge(:old, olds, [new | news], acc, current) do
     {dir, merged, new_current} = compare({:new, new}, {:old, current})
-    umerge(dir, olds, news, [merged|acc], new_current)
+    umerge(dir, olds, news, [merged | acc], new_current)
   end
 
   defp compare({priority, a}, {secondary, b}) when is_tuple(a) and is_tuple(b) do
@@ -140,11 +144,11 @@ defmodule Mix.Rebar do
   end
 
   defp do_tuple_umerge_dedup([], acc), do: acc
-  defp do_tuple_umerge_dedup([h|t], acc) do
+  defp do_tuple_umerge_dedup([h | t], acc) do
     if h in t do
       do_tuple_umerge_dedup(t, acc)
     else
-      do_tuple_umerge_dedup(t, [h|acc])
+      do_tuple_umerge_dedup(t, [h | acc])
     end
   end
 
@@ -158,7 +162,7 @@ defmodule Mix.Rebar do
   end
 
   @doc """
-  Serializes a rebar config to a term file.
+  Serializes a Rebar config to a term file.
   """
   def serialize_config(config) do
     Enum.map(config, &[:io_lib.print(&1) | ".\n"])
@@ -180,7 +184,7 @@ defmodule Mix.Rebar do
 
   @doc """
   Runs `fun` for the given config and for each `sub_dirs` in the
-  given rebar config.
+  given Rebar config.
   """
   def recur(config, fun) when is_binary(config) do
     recur(load_config(config), fun)
@@ -195,15 +199,19 @@ defmodule Mix.Rebar do
       |> Enum.map(&recur(&1, fun))
       |> Enum.concat
 
-    [fun.(config)|subs]
+    [fun.(config) | subs]
   end
 
   defp parse_dep(app) when is_atom(app) do
-    parse_dep({app, nil})
+    {app, ">= 0.0.0"}
   end
 
   defp parse_dep({app, req}) when is_list(req) do
     {app, List.to_string(req)}
+  end
+
+  defp parse_dep({app, req, {:pkg, package}}) when is_list(req) do
+    {app, List.to_string(req), hex: package}
   end
 
   defp parse_dep({app, source}) when is_tuple(source) do
@@ -216,24 +224,23 @@ defmodule Mix.Rebar do
 
   defp parse_dep({app, req, source, opts}) do
     [scm, url | source] = Tuple.to_list(source)
-    mix_opts = [{scm, to_string(url)}]
 
     ref =
       case source do
-        [""|_]                -> [branch: "HEAD"]
-        [{:branch, branch}|_] -> [branch: to_string(branch)]
-        [{:tag, tag}|_]       -> [tag: to_string(tag)]
-        [{:ref, ref}|_]       -> [ref: to_string(ref)]
-        [ref|_]               -> [ref: to_string(ref)]
-        _                     -> []
+        ["" | _]                -> [branch: "HEAD"]
+        [{:branch, branch} | _] -> [branch: to_string(branch)]
+        [{:tag, tag} | _]       -> [tag: to_string(tag)]
+        [{:ref, ref} | _]       -> [ref: to_string(ref)]
+        [ref | _]               -> [ref: to_string(ref)]
+        _                       -> []
       end
 
-    mix_opts = mix_opts ++ ref
+    compile =
+      if :proplists.get_value(:raw, opts, false),
+        do: [compile: false],
+        else: []
 
-    if :proplists.get_value(:raw, opts, false) do
-      mix_opts = mix_opts ++ [compile: false]
-    end
-
+    mix_opts = [{scm, to_string(url)}] ++ ref ++ compile
     {app, compile_req(req), mix_opts}
   end
 
@@ -251,7 +258,7 @@ defmodule Mix.Rebar do
   end
 
   defp eval_script(script_path, config) do
-    script = Path.basename(script_path) |> String.to_char_list
+    script = Path.basename(script_path) |> String.to_charlist
 
     result = File.cd!(Path.dirname(script_path), fn ->
       :file.script(script, eval_binds(CONFIG: config, SCRIPT: script))
@@ -262,8 +269,8 @@ defmodule Mix.Rebar do
         config
       {:error, error} ->
         reason = :file.format_error(error)
-        Mix.shell.error("Error evaluating rebar config script #{script_path}:#{reason}")
-        Mix.shell.error("Any dependency defined in the script won't be available " <>
+        Mix.shell.error("Error evaluating Rebar config script #{script_path}:#{reason}")
+        Mix.shell.error("Any dependencies defined in the script won't be available " <>
                         "unless you add them to your Mix project")
         config
     end
@@ -275,12 +282,14 @@ defmodule Mix.Rebar do
     end)
   end
 
-  defp wrap_cmd(nil), do: nil
   defp wrap_cmd(rebar) do
-    if match?({:win32, _}, :os.type) and not String.ends_with?(rebar, ".cmd") do
-      "escript.exe \"#{rebar}\""
-    else
-      rebar
+    cond do
+      not match?({:win32, _}, :os.type) ->
+        rebar
+      String.ends_with?(rebar, ".cmd") ->
+        "\"#{String.replace(rebar, "/", "\\")}\""
+      true ->
+        "escript.exe \"#{rebar}\""
     end
   end
 
@@ -291,7 +300,7 @@ defmodule Mix.Rebar do
       Enum.reduce(overrides, config, fn
         {:override, overrides}, config ->
           Enum.reduce(overrides, config, fn {key, value}, config ->
-            Dict.put(config, key, value)
+            Keyword.put(config, key, value)
           end)
         _, config ->
           config
@@ -301,7 +310,7 @@ defmodule Mix.Rebar do
       Enum.reduce(overrides, config, fn
         {:override, oapp, overrides}, config when oapp == app ->
           Enum.reduce(overrides, config, fn {key, value}, config ->
-            Dict.put(config, key, value)
+            Keyword.put(config, key, value)
           end)
         _, config ->
           config
@@ -310,8 +319,8 @@ defmodule Mix.Rebar do
     Enum.reduce(overrides, config, fn
       {:add, oapp, overrides}, config when oapp == app ->
         Enum.reduce(overrides, config, fn {key, value}, config ->
-          old_value = Dict.get(config, key, [])
-          Dict.put(config, key, value ++ old_value)
+          old_value = Keyword.get(config, key, [])
+          Keyword.put(config, key, value ++ old_value)
       end)
       _, config ->
         config

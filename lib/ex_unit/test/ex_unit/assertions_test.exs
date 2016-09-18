@@ -85,6 +85,21 @@ defmodule ExUnit.AssertionsTest do
     {2, 1} = (assert {2, 1} = Value.tuple)
   end
 
+  test "assert match with pinned variable" do
+    a = 1
+    {2, 1} = (assert {2, ^a} = Value.tuple)
+
+    try do
+      assert {^a, 1} = Value.tuple
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "match (=) failed\n" <>
+        "The following variables were pinned:\n" <>
+        "  a = 1" = error.message
+        "{^a, 1} = Value.tuple()" = Macro.to_string(error.expr)
+    end
+  end
+
   test "assert match?" do
     true = assert match?({2, 1}, Value.tuple)
 
@@ -108,6 +123,32 @@ defmodule ExUnit.AssertionsTest do
         "match (match?) succeeded, but should have failed" = error.message
         "match?({:error, _}, error(true))" = Macro.to_string(error.expr)
         "{:error, true}" = Macro.to_string(error.right)
+    end
+  end
+
+  test "assert match? with pinned variable" do
+    a = 1
+    try do
+      "This should never be tested" = assert(match?({^a, 1}, Value.tuple))
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "match (match?) failed\n" <>
+        "The following variables were pinned:\n" <>
+        "  a = 1" = error.message
+        "match?({^a, 1}, Value.tuple())" = Macro.to_string(error.expr)
+    end
+  end
+
+  test "refute match? with pinned variable" do
+    a = 2
+    try do
+      "This should never be tested" = refute(match?({^a, 1}, Value.tuple))
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "match (match?) succeeded, but should have failed\n" <>
+        "The following variables were pinned:\n" <>
+        "  a = 2" = error.message
+        "match?({^a, 1}, Value.tuple())" = Macro.to_string(error.expr)
     end
   end
 
@@ -222,6 +263,13 @@ defmodule ExUnit.AssertionsTest do
   test "assert received leaks" do
     send self, {:hello, :world}
     assert_received {:hello, world}
+    :world = world
+  end
+
+  test "assert received does not leak external variables used in guards" do
+    send self(), {:hello, :world}
+    guard_world = :world
+    assert_received {:hello, world} when world == guard_world
     :world = world
   end
 
@@ -376,7 +424,7 @@ defmodule ExUnit.AssertionsTest do
   rescue
     error in [ExUnit.AssertionError] ->
       "Expected exception ArgumentError but got UndefinedFunctionError " <>
-      "(undefined function Not.Defined.function/3 (module Not.Defined is not available))" = error.message
+      "(function Not.Defined.function/3 is undefined (module Not.Defined is not available))" = error.message
   end
 
   test "assert raise with some other error includes stacktrace from original error" do
@@ -386,10 +434,10 @@ defmodule ExUnit.AssertionsTest do
   rescue
     ExUnit.AssertionError ->
       stacktrace = System.stacktrace
-      [{Not.Defined, :function, [1,2,3], _}|_] = stacktrace
+      [{Not.Defined, :function, [1, 2, 3], _} | _] = stacktrace
   end
 
-  test "assert raise with erlang error" do
+  test "assert raise with Erlang error" do
     assert_raise SyntaxError, fn ->
       List.flatten(1)
     end
@@ -550,6 +598,19 @@ defmodule ExUnit.AssertionsTest do
   rescue
     error ->
       "no function clause matching in ExUnit.Assertions.flunk/1" = FunctionClauseError.message error
+  end
+
+  test "AssertionError message should include nice formatting" do
+    assert :a = :b
+  rescue
+    error in [ExUnit.AssertionError] ->
+      """
+
+
+      match (=) failed
+      code: :a = :b
+      rhs:  :b
+      """ = Exception.message(error)
   end
 
   defp ok(val), do: {:ok, val}

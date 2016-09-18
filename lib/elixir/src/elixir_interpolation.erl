@@ -19,30 +19,30 @@ extract(Line, Column, _Scope, _Interpol, [], Buffer, Output, []) ->
 extract(Line, _Column, _Scope, _Interpol, [], _Buffer, _Output, Last) ->
   {error, {string, Line, io_lib:format("missing terminator: ~ts", [[Last]]), []}};
 
-extract(Line, Column, _Scope, _Interpol, [Last|Remaining], Buffer, Output, Last) ->
+extract(Line, Column, _Scope, _Interpol, [Last | Remaining], Buffer, Output, Last) ->
   finish_extraction(Line, Column + 1, Buffer, Output, Remaining);
 
 %% Going through the string
 
-extract(Line, _Column, Scope, Interpol, [$\\, $\n|Rest], Buffer, Output, Last) ->
-  extract(Line+1, 1, Scope, Interpol, Rest, Buffer, Output, Last);
+extract(Line, _Column, Scope, true, [$\\, $\n | Rest], Buffer, Output, Last) ->
+  extract(Line+1, 1, Scope, true, Rest, Buffer, Output, Last);
 
-extract(Line, _Column, Scope, Interpol, [$\\, $\r, $\n|Rest], Buffer, Output, Last) ->
-  extract(Line+1, 1, Scope, Interpol, Rest, Buffer, Output, Last);
+extract(Line, _Column, Scope, true, [$\\, $\r, $\n | Rest], Buffer, Output, Last) ->
+  extract(Line+1, 1, Scope, true, Rest, Buffer, Output, Last);
 
-extract(Line, _Column, Scope, Interpol, [$\n|Rest], Buffer, Output, Last) ->
-  extract(Line+1, 1, Scope, Interpol, Rest, [$\n|Buffer], Output, Last);
+extract(Line, _Column, Scope, Interpol, [$\n | Rest], Buffer, Output, Last) ->
+  extract(Line+1, 1, Scope, Interpol, Rest, [$\n | Buffer], Output, Last);
 
-extract(Line, Column, Scope, Interpol, [$\\, Last|Rest], Buffer, Output, Last) ->
-  extract(Line, Column+2, Scope, Interpol, Rest, [Last|Buffer], Output, Last);
+extract(Line, Column, Scope, Interpol, [$\\, Last | Rest], Buffer, Output, Last) ->
+  extract(Line, Column+2, Scope, Interpol, Rest, [Last | Buffer], Output, Last);
 
-extract(Line, Column, Scope, true, [$\\, $#, ${|Rest], Buffer, Output, Last) ->
-  extract(Line, Column+1, Scope, true, Rest, [${, $#|Buffer], Output, Last);
+extract(Line, Column, Scope, true, [$\\, $#, ${ | Rest], Buffer, Output, Last) ->
+  extract(Line, Column+1, Scope, true, Rest, [${, $# | Buffer], Output, Last);
 
-extract(Line, Column, Scope, true, [$#, ${|Rest], Buffer, Output, Last) ->
+extract(Line, Column, Scope, true, [$#, ${ | Rest], Buffer, Output, Last) ->
   Output1 = build_string(Line, Buffer, Output),
   case elixir_tokenizer:tokenize(Rest, Line, Column + 2, Scope) of
-    {error, {{EndLine, _, EndColumn}, _, "}"}, [$}|NewRest], Tokens} ->
+    {error, {{EndLine, _, EndColumn}, _, "}"}, [$} | NewRest], Tokens} ->
       Output2 = build_interpol(Line, Column, EndColumn, Tokens, Output1),
       extract(EndLine, EndColumn, Scope, true, NewRest, [], Output2, Last);
     {error, Reason, _, _} ->
@@ -51,13 +51,13 @@ extract(Line, Column, Scope, true, [$#, ${|Rest], Buffer, Output, Last) ->
       {error, {string, Line, "missing interpolation terminator:}", []}}
   end;
 
-extract(Line, Column, Scope, Interpol, [$\\, Char|Rest], Buffer, Output, Last) ->
-  extract(Line, Column+2, Scope, Interpol, Rest, [Char, $\\|Buffer], Output, Last);
+extract(Line, Column, Scope, Interpol, [$\\, Char | Rest], Buffer, Output, Last) ->
+  extract(Line, Column+2, Scope, Interpol, Rest, [Char, $\\ | Buffer], Output, Last);
 
 %% Catch all clause
 
-extract(Line, Column, Scope, Interpol, [Char|Rest], Buffer, Output, Last) ->
-  extract(Line, Column + 1, Scope, Interpol, Rest, [Char|Buffer], Output, Last).
+extract(Line, Column, Scope, Interpol, [Char | Rest], Buffer, Output, Last) ->
+  extract(Line, Column + 1, Scope, Interpol, Rest, [Char | Buffer], Output, Last).
 
 %% Unescape a series of tokens as returned by extract.
 
@@ -76,89 +76,107 @@ unescape_chars(String) ->
   unescape_chars(String, fun unescape_map/1).
 
 unescape_chars(String, Map) ->
-  unescape_chars(String, Map, Map($x) == true, <<>>).
+  unescape_chars(String, Map, <<>>).
 
-%% TODO: Deprecate all except \\x0-127 on 1.2
-%% TODO: Remove all except \\x0-127 on 1.3
-%% TODO: Support \\x127-255 as bytes on 1.4 (two digits always required)
+unescape_chars(<<$\\, $x, Rest/binary>>, Map, Acc) ->
+  case Map($x) of
+    true  -> unescape_hex(Rest, Map, Acc);
+    false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, $x>>)
+  end;
 
-unescape_chars(<<$\\, $x, A, B, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B) ->
-  append_escaped(Rest, Map, [A, B], true, Acc, 16);
+unescape_chars(<<$\\, $u, Rest/binary>>, Map, Acc) ->
+  case Map($u) of
+    true  -> unescape_unicode(Rest, Map, Acc);
+    false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, $u>>)
+  end;
 
-unescape_chars(<<$\\, $x, A, Rest/binary>>, Map, true, Acc) when ?is_hex(A) ->
-  append_escaped(Rest, Map, [A], true, Acc, 16);
+unescape_chars(<<$\\, Escaped, Rest/binary>>, Map, Acc) ->
+  case Map(Escaped) of
+    false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, Escaped>>);
+    Other -> unescape_chars(Rest, Map, <<Acc/binary, Other>>)
+  end;
 
-unescape_chars(<<$\\, $x, ${,A,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A) ->
-  append_escaped(Rest, Map, [A], true, Acc, 16);
+unescape_chars(<<Char, Rest/binary>>, Map, Acc) ->
+  unescape_chars(Rest, Map, <<Acc/binary, Char>>);
 
-unescape_chars(<<$\\, $x, ${,A,B,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B) ->
-  append_escaped(Rest, Map, [A, B], true, Acc, 16);
+unescape_chars(<<>>, _Map, Acc) -> Acc.
 
-unescape_chars(<<$\\, $x, ${,A,B,C,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
-  append_escaped(Rest, Map, [A, B, C], true, Acc, 16);
+% Unescape Helpers
 
-unescape_chars(<<$\\, $x, ${,A,B,C,D,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
-  append_escaped(Rest, Map, [A, B, C, D], true, Acc, 16);
+unescape_hex(<<A, B, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
+  Bytes = list_to_integer([A, B], 16),
+  unescape_chars(Rest, Map, <<Acc/binary, Bytes>>);
 
-unescape_chars(<<$\\, $x, ${,A,B,C,D,E,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
-  append_escaped(Rest, Map, [A, B, C, D, E], true, Acc, 16);
+%% TODO: Remove deprecated sequences on v2.0
 
-unescape_chars(<<$\\, $x, ${,A,B,C,D,E,F,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
-  append_escaped(Rest, Map, [A, B, C, D, E, F], true, Acc, 16);
+unescape_hex(<<A, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
+  io:format(standard_error, "warning: \\xH inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A], Acc, 16);
 
-unescape_chars(<<$\\, $x, _/binary>>, _Map, true, _Acc) ->
-  Msg = <<"missing hex sequence after \\x">>,
-  error('Elixir.ArgumentError':exception([{message, Msg}]));
+unescape_hex(<<${, A, $}, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A], Acc, 16);
+
+unescape_hex(<<${, A, B, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B], Acc, 16);
+
+unescape_hex(<<${, A, B, C, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, E, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D, E], Acc, 16);
+
+unescape_hex(<<${, A, B, C, D, E, F, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
+  io:format(standard_error, "warning: \\x{H*} inside strings/sigils/chars is deprecated, please use \\xHH (byte) or \\uHHHH (codepoint) instead~n", []),
+  append_codepoint(Rest, Map, [A, B, C, D, E, F], Acc, 16);
+
+unescape_hex(<<_/binary>>, _Map, _Acc) ->
+  Msg = <<"missing hex sequence after \\x, expected \\xHH">>,
+  error('Elixir.ArgumentError':exception([{message, Msg}])).
 
 %% Finish deprecated sequences
 
-unescape_chars(<<$\\, $u, A,B,C,D, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
-  append_escaped(Rest, Map, [A, B, C, D], true, Acc, 16);
+unescape_unicode(<<A, B, C, D, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A) ->
-  append_escaped(Rest, Map, [A], true, Acc, 16);
+unescape_unicode(<<${, A, $}, Rest/binary>>, Map, Acc) when ?is_hex(A) ->
+  append_codepoint(Rest, Map, [A], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,B,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B) ->
-  append_escaped(Rest, Map, [A, B], true, Acc, 16);
+unescape_unicode(<<${, A, B, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B) ->
+  append_codepoint(Rest, Map, [A, B], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,B,C,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
-  append_escaped(Rest, Map, [A, B, C], true, Acc, 16);
+unescape_unicode(<<${, A, B, C, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C) ->
+  append_codepoint(Rest, Map, [A, B, C], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,B,C,D,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
-  append_escaped(Rest, Map, [A, B, C, D], true, Acc, 16);
+unescape_unicode(<<${, A, B, C, D, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D) ->
+  append_codepoint(Rest, Map, [A, B, C, D], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,B,C,D,E,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
-  append_escaped(Rest, Map, [A, B, C, D, E], true, Acc, 16);
+unescape_unicode(<<${, A, B, C, D, E, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E) ->
+  append_codepoint(Rest, Map, [A, B, C, D, E], Acc, 16);
 
-unescape_chars(<<$\\, $u, ${,A,B,C,D,E,F,$}, Rest/binary>>, Map, true, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
-  append_escaped(Rest, Map, [A, B, C, D, E, F], true, Acc, 16);
+unescape_unicode(<<${, A, B, C, D, E, F, $}, Rest/binary>>, Map, Acc) when ?is_hex(A), ?is_hex(B), ?is_hex(C), ?is_hex(D), ?is_hex(E), ?is_hex(F) ->
+  append_codepoint(Rest, Map, [A, B, C, D, E, F], Acc, 16);
 
-unescape_chars(<<$\\, $u, _/binary>>, _Map, true, _Acc) ->
-  Msg = <<"invalid unicode sequence after \\u, expected \\uXXXX or \\u{X*}">>,
-  error('Elixir.ArgumentError':exception([{message, Msg}]));
+unescape_unicode(<<_/binary>>, _Map, _Acc) ->
+  Msg = <<"invalid Unicode sequence after \\u, expected \\uHHHH or \\u{H*}">>,
+  error('Elixir.ArgumentError':exception([{message, Msg}])).
 
-unescape_chars(<<$\\, Escaped, Rest/binary>>, Map, Hex, Acc) ->
-  case Map(Escaped) of
-    false -> unescape_chars(Rest, Map, Hex, <<Acc/binary, $\\, Escaped>>);
-    Other -> unescape_chars(Rest, Map, Hex, <<Acc/binary, Other>>)
-  end;
-
-unescape_chars(<<Char, Rest/binary>>, Map, Hex, Acc) ->
-  unescape_chars(Rest, Map, Hex, <<Acc/binary, Char>>);
-
-unescape_chars(<<>>, _Map, _Hex, Acc) -> Acc.
-
-append_escaped(Rest, Map, List, Hex, Acc, Base) ->
+append_codepoint(Rest, Map, List, Acc, Base) ->
   Codepoint = list_to_integer(List, Base),
   try <<Acc/binary, Codepoint/utf8>> of
-    Binary -> unescape_chars(Rest, Map, Hex, Binary)
+    Binary -> unescape_chars(Rest, Map, Binary)
   catch
     error:badarg ->
-      Msg = <<"invalid or reserved unicode codepoint ", (integer_to_binary(Codepoint))/binary>>,
+      Msg = <<"invalid or reserved Unicode codepoint ", (integer_to_binary(Codepoint))/binary>>,
       error('Elixir.ArgumentError':exception([{message, Msg}]))
   end.
-
-% Unescape Helpers
 
 unescape_map($0) -> 0;
 unescape_map($a) -> 7;
@@ -172,6 +190,7 @@ unescape_map($s) -> $\s;
 unescape_map($t) -> $\t;
 unescape_map($v) -> $\v;
 unescape_map($x) -> true;
+unescape_map($u) -> true;
 unescape_map(E)  -> E.
 
 % Extract Helpers
@@ -186,7 +205,7 @@ finish_extraction(Line, Column, Buffer, Output, Remaining) ->
 
 build_string(_Line, [], Output) -> Output;
 build_string(_Line, Buffer, Output) ->
-  [elixir_utils:characters_to_binary(lists:reverse(Buffer))|Output].
+  [elixir_utils:characters_to_binary(lists:reverse(Buffer)) | Output].
 
 build_interpol(Line, Column, EndColumn, Buffer, Output) ->
-  [{{Line, Column, EndColumn}, lists:reverse(Buffer)}|Output].
+  [{{Line, Column, EndColumn}, lists:reverse(Buffer)} | Output].

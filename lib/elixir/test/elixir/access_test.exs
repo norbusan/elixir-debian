@@ -44,6 +44,9 @@ defmodule AccessTest do
     assert Access.get([foo: :bar], :foo) == :bar
     assert Access.get_and_update([], :foo, fn nil -> {:ok, :baz} end) == {:ok, [foo: :baz]}
     assert Access.get_and_update([foo: :bar], :foo, fn :bar -> {:ok, :baz} end) == {:ok, [foo: :baz]}
+
+    assert Access.pop([foo: :bar], :foo) == {:bar, []}
+    assert Access.pop([], :foo) == {nil, []}
   end
 
   test "for maps" do
@@ -58,6 +61,9 @@ defmodule AccessTest do
     assert Access.get(%{foo: :bar}, :foo) == :bar
     assert Access.get_and_update(%{}, :foo, fn nil -> {:ok, :baz} end) == {:ok, %{foo: :baz}}
     assert Access.get_and_update(%{foo: :bar}, :foo, fn :bar -> {:ok, :baz} end) == {:ok, %{foo: :baz}}
+
+    assert Access.pop(%{foo: :bar}, :foo) == {:bar, %{}}
+    assert Access.pop(%{}, :foo) == {nil, %{}}
   end
 
   test "for struct" do
@@ -66,13 +72,18 @@ defmodule AccessTest do
     end
 
     assert_raise UndefinedFunctionError,
-                 "undefined function AccessTest.Sample.fetch/2 (AccessTest.Sample does not implement the Access behaviour)", fn ->
+                 "function AccessTest.Sample.fetch/2 is undefined (AccessTest.Sample does not implement the Access behaviour)", fn ->
       Access.fetch(struct(Sample, []), :name)
     end
 
     assert_raise UndefinedFunctionError,
-                 "undefined function AccessTest.Sample.get_and_update/3 (AccessTest.Sample does not implement the Access behaviour)", fn ->
+                 "function AccessTest.Sample.get_and_update/3 is undefined (AccessTest.Sample does not implement the Access behaviour)", fn ->
       Access.get_and_update(struct(Sample, []), :name, fn nil -> {:ok, :baz} end)
+    end
+
+    assert_raise UndefinedFunctionError,
+                "function AccessTest.Sample.pop/2 is undefined (AccessTest.Sample does not implement the Access behaviour)", fn ->
+      Access.pop(struct(Sample, []), :name)
     end
   end
 end

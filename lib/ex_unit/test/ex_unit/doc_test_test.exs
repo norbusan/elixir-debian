@@ -41,6 +41,13 @@ defmodule ExUnit.DocTestTest.GoodModule do
   """
   def exception_test, do: :ok
 
+  @doc ~S"""
+  iex> raise "foo\nbar"
+  ** (RuntimeError) foo
+  bar
+  """
+  def multiline_exception_test, do: :ok
+
   @doc """
   iex> Enum.into([:a, :b, :c], MapSet.new)
   #MapSet<[:a, :b, :c]>
@@ -67,20 +74,20 @@ end |> write_beam
 
 defmodule ExUnit.DocTestTest.SomewhatGoodModuleWithOnly do
   @doc """
-  iex> test_fun
+  iex> test_fun1
   1
-  iex> test_fun + 1
+  iex> test_fun1 + 1
   2
   """
-  def test_fun, do: 1
+  def test_fun1, do: 1
 
   @doc """
-  iex> test_fun
+  iex> test_fun2
   1
-  iex> test_fun + 1
+  iex> test_fun2 + 1
   1
   """
-  def test_fun1, do: 1
+  def test_fun2, do: 1
 end |> write_beam
 
 defmodule ExUnit.DocTestTest.SomewhatGoodModuleWithExcept do
@@ -90,20 +97,20 @@ defmodule ExUnit.DocTestTest.SomewhatGoodModuleWithExcept do
   """
 
   @doc """
-  iex> test_fun
+  iex> test_fun1
   1
-  iex> test_fun + 1
+  iex> test_fun1 + 1
   2
   """
-  def test_fun, do: 1
+  def test_fun1, do: 1
 
   @doc """
-  iex> test_fun
+  iex> test_fun2
   1
-  iex> test_fun + 1
+  iex> test_fun2 + 1
   1
   """
-  def test_fun1, do: 1
+  def test_fun2, do: 1
 end |> write_beam
 
 defmodule ExUnit.DocTestTest.NoImport do
@@ -190,7 +197,7 @@ defmodule ExUnit.DocTestTest.IndentationNotEnough do
       iex> 1 + 2
     3
   '''
-  def not_enough, do: :ok
+  def test_fun, do: :ok
 end |> write_beam
 
 defmodule ExUnit.DocTestTest.Incomplete do
@@ -198,8 +205,17 @@ defmodule ExUnit.DocTestTest.Incomplete do
       iex> 1 + 2
 
   '''
-  def not_enough, do: :ok
+  def test_fun, do: :ok
 end |> write_beam
+
+defmodule ExUnit.DocTestTest.Numbered do
+  @doc """
+  iex(1)> 1 +
+  ...(1)> 2
+  3
+  """
+  def test_fun(), do: :ok
+end |> write_beam()
 
 defmodule ExUnit.DocTestTest do
   use ExUnit.Case
@@ -209,8 +225,8 @@ defmodule ExUnit.DocTestTest do
   # doctest ExUnit.DocTest
 
   doctest ExUnit.DocTestTest.GoodModule, import: true
-  doctest ExUnit.DocTestTest.SomewhatGoodModuleWithOnly, only: [test_fun: 0], import: true
-  doctest ExUnit.DocTestTest.SomewhatGoodModuleWithExcept, except: [:moduledoc, test_fun1: 0], import: true
+  doctest ExUnit.DocTestTest.SomewhatGoodModuleWithOnly, only: [test_fun1: 0], import: true
+  doctest ExUnit.DocTestTest.SomewhatGoodModuleWithExcept, except: [:moduledoc, test_fun2: 0], import: true
   doctest ExUnit.DocTestTest.NoImport
   doctest ExUnit.DocTestTest.IndentationHeredocs
 
@@ -219,9 +235,10 @@ defmodule ExUnit.DocTestTest do
   test "multiple functions filtered with :only" do
     defmodule MultipleOnly do
       use ExUnit.Case
-      doctest ExUnit.DocTestTest.SomewhatGoodModuleWithOnly, only: [test_fun: 0, test_fun1: 0], import: true
+      doctest ExUnit.DocTestTest.SomewhatGoodModuleWithOnly, only: [test_fun1: 0, test_fun2: 0], import: true
     end
 
+    ExUnit.Server.cases_loaded()
     assert capture_io(fn -> ExUnit.run end) =~ "2 tests, 1 failure"
   end
 
@@ -232,6 +249,7 @@ defmodule ExUnit.DocTestTest do
     end
 
     ExUnit.configure(seed: 0, colors: [enabled: false])
+    ExUnit.Server.cases_loaded()
     output = capture_io(fn -> ExUnit.run end)
 
     # Test order is not guaranteed, we can't match this as a string for each failing doctest
@@ -239,79 +257,89 @@ defmodule ExUnit.DocTestTest do
 
     assert output =~ """
       1) test moduledoc at ExUnit.DocTestTest.Invalid (1) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
-         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:120: syntax error before: '*'
+         test/ex_unit/doc_test_test.exs:248
+         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:127: syntax error before: '*'
          code: 1 + * 1
          stacktrace:
-           test/ex_unit/doc_test_test.exs:120: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:127: ExUnit.DocTestTest.Invalid (module)
     """
 
     assert output =~ """
       2) test moduledoc at ExUnit.DocTestTest.Invalid (2) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
+         test/ex_unit/doc_test_test.exs:248
          Doctest failed
          code: 1 + hd(List.flatten([1])) === 3
          lhs:  2
          stacktrace:
-           test/ex_unit/doc_test_test.exs:123: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:130: ExUnit.DocTestTest.Invalid (module)
     """
 
     assert output =~ """
       3) test moduledoc at ExUnit.DocTestTest.Invalid (3) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
+         test/ex_unit/doc_test_test.exs:248
          Doctest failed
          code: inspect(:oops) === "#MapSet<[]>"
          lhs:  ":oops"
          stacktrace:
-           test/ex_unit/doc_test_test.exs:126: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:133: ExUnit.DocTestTest.Invalid (module)
     """
 
     # The stacktrace points to the cause of the error
     assert output =~ """
       4) test moduledoc at ExUnit.DocTestTest.Invalid (4) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
-         Doctest failed: got UndefinedFunctionError with message undefined function Hello.world/0 (module Hello is not available)
+         test/ex_unit/doc_test_test.exs:248
+         Doctest failed: got UndefinedFunctionError with message function Hello.world/0 is undefined (module Hello is not available)
          code:  Hello.world
          stacktrace:
            Hello.world()
-           (for doctest at) test/ex_unit/doc_test_test.exs:129
+           (for doctest at) test/ex_unit/doc_test_test.exs:136: (test)
     """
 
     assert output =~ """
       5) test moduledoc at ExUnit.DocTestTest.Invalid (5) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
+         test/ex_unit/doc_test_test.exs:248
          Doctest failed: expected exception WhatIsThis with message "oops" but got RuntimeError with message "oops"
          code: raise "oops"
          stacktrace:
-           test/ex_unit/doc_test_test.exs:132: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:139: ExUnit.DocTestTest.Invalid (module)
     """
 
     assert output =~ """
       6) test moduledoc at ExUnit.DocTestTest.Invalid (6) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
+         test/ex_unit/doc_test_test.exs:248
          Doctest failed: expected exception RuntimeError with message "hello" but got RuntimeError with message "oops"
          code: raise "oops"
          stacktrace:
-           test/ex_unit/doc_test_test.exs:135: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:142: ExUnit.DocTestTest.Invalid (module)
     """
 
     assert output =~ """
       7) test doc at ExUnit.DocTestTest.Invalid.a/0 (7) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
-         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:141: syntax error before: '*'
+         test/ex_unit/doc_test_test.exs:248
+         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:148: syntax error before: '*'
          code: 1 + * 1
          stacktrace:
-           test/ex_unit/doc_test_test.exs:141: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:148: ExUnit.DocTestTest.Invalid (module)
     """
 
     assert output =~ """
       8) test doc at ExUnit.DocTestTest.Invalid.b/0 (8) (ExUnit.DocTestTest.ActuallyCompiled)
-         test/ex_unit/doc_test_test.exs:231
-         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:147: syntax error before: '*'
+         test/ex_unit/doc_test_test.exs:248
+         Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:154: syntax error before: '*'
          code: 1 + * 1
          stacktrace:
-           test/ex_unit/doc_test_test.exs:147: ExUnit.DocTestTest.Invalid (module)
+           test/ex_unit/doc_test_test.exs:154: ExUnit.DocTestTest.Invalid (module)
     """
+  end
+
+  test "iex prefix contains a number" do
+    defmodule NumberedUsage do
+      use ExUnit.Case
+      doctest ExUnit.DocTestTest.Numbered
+    end
+
+    ExUnit.Server.cases_loaded()
+    assert capture_io(fn -> ExUnit.run end) =~ "1 test, 0 failures"
   end
 
   test "tags tests as doctests" do
@@ -325,6 +353,7 @@ defmodule ExUnit.DocTestTest do
       end
     end
 
+    ExUnit.Server.cases_loaded()
     assert capture_io(fn -> ExUnit.run end) =~ "1 test, 0 failures"
   end
 
@@ -391,7 +420,7 @@ defmodule ExUnit.DocTestTest do
 
   test "fails on invalid use" do
     assert_raise RuntimeError, ~r"cannot define test", fn ->
-      defmodule FunctionClashFail2 do
+      defmodule FunctionClashFail do
         import ExUnit.DocTest
         doctest ExUnit.DocTestTest.Invalid
       end

@@ -65,11 +65,14 @@ defimpl IEx.Info, for: Atom do
   end
 
   defp format_time({year, month, day, hour, min, sec}) do
-    "#{year}-#{month}-#{day} #{hour}:#{min}:#{sec}"
+    "#{year}-#{zeropad(month)}-#{zeropad(day)} #{zeropad(hour)}:#{zeropad(min)}:#{zeropad(sec)}"
   end
 
   defp default_or_apply(nil, _), do: "no value found"
   defp default_or_apply(data, fun), do: fun.(data)
+
+  defp zeropad(number) when number < 10, do: "0#{number}"
+  defp zeropad(number), do: "#{number}"
 end
 
 defimpl IEx.Info, for: List do
@@ -77,7 +80,7 @@ defimpl IEx.Info, for: List do
     specific_info =
       cond do
         list == []                    -> info_list(list)
-        Inspect.List.printable?(list) -> info_char_list(list)
+        Inspect.List.printable?(list) -> info_charlist(list)
         Keyword.keyword?(list)        -> info_kw_list(list)
         true                          -> info_list(list)
       end
@@ -85,17 +88,17 @@ defimpl IEx.Info, for: List do
     ["Data type": "List"] ++ specific_info
   end
 
-  defp info_char_list(char_list) do
+  defp info_charlist(charlist) do
     desc = """
     This is a list of integers that is printed as a sequence of characters
     delimited by single quotes because all the integers in it represent valid
     ASCII characters. Conventionally, such lists of integers are referred to as
-    "char lists" (more precisely, a char list is a list of Unicode codepoints,
+    "charlists" (more precisely, a charlist is a list of Unicode codepoints,
     and ASCII is a subset of Unicode).
     """
 
     ["Description": desc,
-     "Raw representation": inspect(char_list, char_lists: :as_lists),
+     "Raw representation": inspect(charlist, charlists: :as_lists),
      "Reference modules": "List"]
   end
 
@@ -228,7 +231,7 @@ defimpl IEx.Info, for: PID do
   def info(pid) do
     extra =
       case :rpc.pinfo(pid, @keys) do
-        [_|_] = info ->
+        [_ | _] = info ->
           ["Alive": true,
            "Name": process_name(info[:registered_name]),
            "Links": links(info[:links]),

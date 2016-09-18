@@ -5,7 +5,7 @@ defmodule Stream.Reducers do
   defmacro chunk(n, step, limit, f \\ nil) do
     quote do
       fn entry, acc(h, {buffer, count}, t) ->
-        buffer = [entry|buffer]
+        buffer = [entry | buffer]
         count  = count + 1
 
         new =
@@ -31,7 +31,7 @@ defmodule Stream.Reducers do
         entry, acc(h, {buffer, value}, t) ->
           new_value = unquote(callback).(entry)
           if new_value == value do
-            skip(acc(h, {[entry|buffer], value}, t))
+            skip(acc(h, {[entry | buffer], value}, t))
           else
             next_with_acc(unquote(f), :lists.reverse(buffer), h, {[entry], new_value}, t)
           end
@@ -60,6 +60,18 @@ defmodule Stream.Reducers do
           skip(acc(h, n-1, t))
         entry, acc(h, n, t) ->
           next_with_acc(unquote(f), entry, h, n, t)
+      end
+    end
+  end
+
+  defmacro drop_every(nth, f \\ nil) do
+    quote do
+      fn
+        entry, acc(h, n, t) when n === :first
+                            when n === unquote(nth) ->
+          skip(acc(h, 1, t))
+        entry, acc(h, n, t) ->
+          next_with_acc(unquote(f), entry, h, n+1, t)
       end
     end
   end

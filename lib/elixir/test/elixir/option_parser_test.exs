@@ -108,6 +108,16 @@ defmodule OptionParserTest do
            == {[no_value: true], [], []}
   end
 
+  test "parses configured counters" do
+    assert OptionParser.parse(["--verbose"], switches: [verbose: :count])
+           == {[verbose: 1], [], []}
+    assert OptionParser.parse(["--verbose", "--verbose"], switches: [verbose: :count])
+           == {[verbose: 2], [], []}
+    assert OptionParser.parse(["--verbose", "-v", "-v", "--", "bar"],
+                              aliases: [v: :verbose], strict: [verbose: :count])
+           == {[verbose: 3], ["bar"], []}
+  end
+
   test "parses configured integers" do
     assert OptionParser.parse(["--value", "1", "foo"], switches: [value: :integer])
            == {[value: 1], ["foo"], []}
@@ -198,6 +208,27 @@ defmodule OptionParserTest do
            == {[source: "from_docs/"], [], [{"--doc", nil}]}
   end
 
+  test "parse!/2 raise an exception for an unknown option using strict" do
+    assert_raise OptionParser.ParseError, "1 error found!\n--doc : Unknown option", fn ->
+      args = ["--source", "from_docs/", "--doc", "show"]
+      OptionParser.parse!(args, strict: [source: :string, docs: :string])
+    end
+  end
+
+  test "parse!/2 raise an exception when an option is of the wrong type" do
+    assert_raise OptionParser.ParseError, fn ->
+      args = ["--bad", "opt", "foo", "-o", "bad", "bar"]
+      OptionParser.parse!(args, switches: [bad: :integer])
+    end
+  end
+
+  test "parse_head!/2 raise an exception when an option is of the wrong type" do
+    assert_raise OptionParser.ParseError, "1 error found!\n--number : Expected type integer, got \"lib\"", fn ->
+      args = ["--number", "lib", "test/enum_test.exs"]
+      OptionParser.parse_head!(args, strict: [number: :integer])
+    end
+  end
+
   test ":switches with :strict raises" do
     assert_raise ArgumentError, ":switches and :strict cannot be given together", fn ->
       OptionParser.parse([], strict: [], switches: [])
@@ -210,6 +241,28 @@ defmodule OptionParserTest do
 
     assert OptionParser.parse(["--foo", "-", "-b", "-"], strict: [foo: :boolean, boo: :string], aliases: [b: :boo])
            == {[foo: true, boo: "-"], ["-"], []}
+  end
+
+  test "correctly handles negative integers" do
+    assert OptionParser.parse(["arg1", "-43"])
+      == {[], ["arg1", "-43"], []}
+
+      assert OptionParser.parse(["arg1", "-o", "-43"], switches: [option: :integer], aliases: [o: :option])
+      == {[option: -43], ["arg1"], []}
+
+      assert OptionParser.parse(["arg1", "--option=-43"], switches: [option: :integer])
+      == {[option: -43], ["arg1"], []}
+  end
+
+  test "correctly handles negative floating point numbers" do
+    assert OptionParser.parse(["arg1", "-43.2"])
+      == {[], ["arg1", "-43.2"], []}
+
+      assert OptionParser.parse(["arg1", "-o", "-43.2"], switches: [option: :float], aliases: [o: :option])
+      == {[option: -43.2], ["arg1"], []}
+
+      assert OptionParser.parse(["arg1", "--option=-43.2"], switches: [option: :float])
+      == {[option: -43.2], ["arg1"], []}
   end
 
   test "multi-word option" do

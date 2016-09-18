@@ -20,7 +20,7 @@ defmodule File do
   `IO.write/2` functions must be used as they are responsible for
   doing the proper conversions and providing the proper data guarantees.
 
-  Note that filenames when given as char lists in Elixir are
+  Note that filenames when given as charlists in Elixir are
   always treated as UTF-8. In particular, we expect that the
   shell and the operating system are configured to use UTF-8
   encoding. Binary filenames are considered raw and passed
@@ -75,9 +75,9 @@ defmodule File do
   @type posix :: :file.posix()
   @type io_device :: :file.io_device()
   @type stat_options :: [time: :local | :universal | :posix]
-  @type mode :: :append | :binary | :compressed | :delayed_write | :exclusive |
-    :raw | :read | :read_ahead | :sync | :write |
-    {:encoding, :latin1 | :unicode | :utf16 | :utf32 | :utf8 |
+  @type mode :: :append | :binary | :charlist | :compressed | :delayed_write | :exclusive |
+    :raw | :read | :read_ahead | :sync | :utf8 | :write |
+    {:encoding, :latin1 | :unicode | :utf8 | :utf16 | :utf32 |
       {:utf16, :big | :little} | {:utf32, :big | :little}} |
     {:read_ahead, pos_integer} |
     {:delayed_write, non_neg_integer, non_neg_integer}
@@ -411,7 +411,7 @@ defmodule File do
   @doc """
   Copies the contents of `source` to `destination`.
 
-  Both parameters can be a filename or an io device opened
+  Both parameters can be a filename or an IO device opened
   with `open/2`. `bytes_count` specifies the number of
   bytes to copy, the default being `:infinity`.
 
@@ -430,22 +430,23 @@ defmodule File do
   Typical error reasons are the same as in `open/2`,
   `read/1` and `write/3`.
   """
-  @spec copy(Path.t, Path.t, pos_integer | :infinity) :: {:ok, non_neg_integer} | {:error, posix}
+  @spec copy(Path.t | io_device, Path.t | io_device, pos_integer | :infinity) :: {:ok, non_neg_integer} | {:error, posix}
   def copy(source, destination, bytes_count \\ :infinity) do
-    F.copy(IO.chardata_to_string(source), IO.chardata_to_string(destination), bytes_count)
+    F.copy(maybe_to_string(source), maybe_to_string(destination), bytes_count)
   end
 
   @doc """
   The same as `copy/3` but raises an `File.CopyError` if it fails.
   Returns the `bytes_copied` otherwise.
   """
-  @spec copy!(Path.t, Path.t, pos_integer | :infinity) :: non_neg_integer | no_return
+  @spec copy!(Path.t | io_device, Path.t | io_device, pos_integer | :infinity) :: non_neg_integer | no_return
   def copy!(source, destination, bytes_count \\ :infinity) do
     case copy(source, destination, bytes_count) do
       {:ok, bytes_count} -> bytes_count
       {:error, reason} ->
         raise File.CopyError, reason: reason, action: "copy",
-          source: IO.chardata_to_string(source), destination: IO.chardata_to_string(destination)
+          source: maybe_to_string(source),
+          destination: maybe_to_string(destination)
     end
   end
 
@@ -484,7 +485,7 @@ defmodule File do
   The function returns `:ok` in case of success, returns
   `{:error, reason}` otherwise.
 
-  If you want to copy contents from an io device to another device
+  If you want to copy contents from an IO device to another device
   or do a straight copy from a source to a destination without
   preserving modes, check `copy/3` instead.
 
@@ -609,7 +610,7 @@ defmodule File do
           {:ok, files} ->
             case mkdir(dest) do
               success when success in [:ok, {:error, :eexist}] ->
-                Enum.reduce(files, [dest|acc], fn(x, acc) ->
+                Enum.reduce(files, [dest | acc], fn(x, acc) ->
                   do_cp_r(Path.join(src, x), Path.join(dest, x), callback, acc)
                 end)
               {:error, reason} -> {:error, reason, dest}
@@ -636,13 +637,13 @@ defmodule File do
     case F.copy(src, {dest, [:exclusive]}) do
       {:ok, _} ->
         copy_file_mode!(src, dest)
-        [dest|acc]
+        [dest | acc]
       {:error, :eexist} ->
         if path_differs?(src, dest) and callback.(src, dest) do
           case copy(src, dest) do
             {:ok, _} ->
               copy_file_mode!(src, dest)
-              [dest|acc]
+              [dest | acc]
             {:error, reason} -> {:error, reason, src}
           end
         else
@@ -656,13 +657,13 @@ defmodule File do
   defp do_cp_link(link, src, dest, callback, acc) do
     case F.make_symlink(link, dest) do
       :ok ->
-        [dest|acc]
+        [dest | acc]
       {:error, :eexist} ->
         if path_differs?(src, dest) and callback.(src, dest) do
           # If rm/1 fails, F.make_symlink/2 will fail
           _ = rm(dest)
           case F.make_symlink(link, dest) do
-            :ok -> [dest|acc]
+            :ok -> [dest | acc]
             {:error, reason} -> {:error, reason, src}
           end
         else
@@ -699,6 +700,7 @@ defmodule File do
   """
   @spec write(Path.t, iodata, [mode]) :: :ok | {:error, posix}
   def write(path, content, modes \\ []) do
+    modes = normalize_modes(modes, false)
     F.write_file(IO.chardata_to_string(path), content, modes)
   end
 
@@ -707,6 +709,7 @@ defmodule File do
   """
   @spec write!(Path.t, iodata, [mode]) :: :ok | no_return
   def write!(path, content, modes \\ []) do
+    modes = normalize_modes(modes, false)
     case F.write_file(path, content, modes) do
       :ok -> :ok
       {:error, reason} ->
@@ -849,7 +852,7 @@ defmodule File do
         case res do
           {:ok, acc} ->
             case rmdir(path) do
-              :ok -> {:ok, [path|acc]}
+              :ok -> {:ok, [path | acc]}
               {:error, :enoent} -> res
               {:error, reason} -> {:error, reason, path}
             end
@@ -869,19 +872,19 @@ defmodule File do
 
   defp do_rm_regular(path, {:ok, acc} = entry) do
     case rm(path) do
-      :ok -> {:ok, [path|acc]}
+      :ok -> {:ok, [path | acc]}
       {:error, :enoent} -> entry
       {:error, reason} -> {:error, reason, path}
     end
   end
 
-  # On windows, symlinks are treated as directory and must be removed
+  # On Windows, symlinks are treated as directory and must be removed
   # with rmdir/1. But on Unix, we remove them via rm/1. So we first try
   # to remove it as a directory and, if we get :enotdir, we fallback to
   # a file removal.
   defp do_rm_directory(path, {:ok, acc} = entry) do
     case rmdir(path) do
-      :ok -> {:ok, [path|acc]}
+      :ok -> {:ok, [path | acc]}
       {:error, :enotdir} -> do_rm_regular(path, entry)
       {:error, :enoent} -> entry
       {:error, reason} -> {:error, reason, path}
@@ -919,16 +922,19 @@ defmodule File do
   end
 
   @doc ~S"""
-  Opens the given `path` according to the given list of modes.
+  Opens the given `path` according to the given list of `modes`.
 
   In order to write and read files, one must use the functions
-  in the `IO` module. By default, a file is opened in binary mode,
+  in the `IO` module. By default, a file is opened in `:binary` mode,
   which requires the functions `IO.binread/2` and `IO.binwrite/2`
   to interact with the file. A developer may pass `:utf8` as an
   option when opening the file and then all other functions from
   `IO` are available, since they work directly with Unicode data.
 
   The allowed modes:
+
+    * `:binary` - opens the file in binary mode, disabling special handling of unicode sequences
+      (default mode).
 
     * `:read` - the file, which must exist, is opened for reading.
 
@@ -945,8 +951,8 @@ defmodule File do
     * `:exclusive` - the file, when opened for writing, is created if it does
       not exist. If the file exists, open will return `{:error, :eexist}`.
 
-    * `:char_list` - when this term is given, read operations on the file will
-      return char lists rather than binaries.
+    * `:charlist` - when this term is given, read operations on the file will
+      return charlists rather than binaries.
 
     * `:compressed` - makes it possible to read or write gzip compressed files.
 
@@ -963,8 +969,9 @@ defmodule File do
       cannot cope with the character range of the data, an error occurs and the
       file will be closed.
 
-  For more information about other options like `:read_ahead` and `:delayed_write`,
-  see [`:file.open/2`](http://www.erlang.org/doc/man/file.html#open-2).
+    * `:delayed_write`, `:raw`, `:ram`, `:read_ahead`, `:sync`, `{:encoding, ...}`,
+      `{:read_ahead, pos_integer}`, `{:delayed_write, non_neg_integer, non_neg_integer}` -
+      for more information about these options see [`:file.open/2`](http://www.erlang.org/doc/man/file.html#open-2).
 
   This function returns:
 
@@ -992,7 +999,7 @@ defmodule File do
   def open(path, modes \\ [])
 
   def open(path, modes) when is_list(modes) do
-    F.open(IO.chardata_to_string(path), open_defaults(modes, true))
+    F.open(IO.chardata_to_string(path), normalize_modes(modes, true))
   end
 
   def open(path, function) when is_function(function) do
@@ -1221,7 +1228,7 @@ defmodule File do
 
   """
   def stream!(path, modes \\ [], line_or_bytes \\ :line) do
-    modes = open_defaults(modes, true)
+    modes = normalize_modes(modes, true)
     File.Stream.__build__(IO.chardata_to_string(path), modes, line_or_bytes)
   end
 
@@ -1315,24 +1322,26 @@ defmodule File do
 
   ## Helpers
 
-  @read_ahead 64*1024
+  @read_ahead_size 64 * 1024
 
-  defp open_defaults([:char_list|t], _add_binary) do
-    open_defaults(t, false)
+  defp normalize_modes([:utf8 | rest], binary?) do
+    [encoding: :utf8] ++ normalize_modes(rest, binary?)
   end
-
-  defp open_defaults([:utf8|t], add_binary) do
-    open_defaults([{:encoding, :utf8}|t], add_binary)
+  defp normalize_modes([:read_ahead | rest], binary?) do
+    [read_ahead: @read_ahead_size] ++ normalize_modes(rest, binary?)
   end
-
-  defp open_defaults([:read_ahead|t], add_binary) do
-    open_defaults([{:read_ahead, @read_ahead}|t], add_binary)
+  # TODO: Deprecate :char_list mode by v1.5
+  defp normalize_modes([mode | rest], _binary?) when mode in [:charlist, :char_list] do
+    normalize_modes(rest, false)
   end
-
-  defp open_defaults([h|t], add_binary) do
-    [h|open_defaults(t, add_binary)]
+  defp normalize_modes([mode | rest], binary?) do
+    [mode | normalize_modes(rest, binary?)]
   end
+  defp normalize_modes([], true), do: [:binary]
+  defp normalize_modes([], false), do: []
 
-  defp open_defaults([], true),  do: [:binary]
-  defp open_defaults([], false), do: []
+  defp maybe_to_string(path) when is_pid(path),
+    do: path
+  defp maybe_to_string(path),
+    do: IO.chardata_to_string(path)
 end

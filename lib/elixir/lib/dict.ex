@@ -13,36 +13,7 @@ defmodule Dict do
   @type value :: any
   @type t :: list | map
 
-  # TODO: Remove callbacks on 1.3
-  # TODO: Deprecate every function on 1.3
-  @callback new :: t
-  @callback delete(t, key) :: t
-  @callback drop(t, Enum.t) :: t
-  @callback equal?(t, t) :: boolean
-  @callback get(t, key) :: value
-  @callback get(t, key, value) :: value
-  @callback get_lazy(t, key, (() -> value)) :: value
-  @callback get_and_update(t, key, (value -> {value, value})) :: {value, t}
-  @callback fetch(t, key) :: {:ok, value} | :error
-  @callback fetch!(t, key) :: value | no_return
-  @callback has_key?(t, key) :: boolean
-  @callback keys(t) :: [key]
-  @callback merge(t, t) :: t
-  @callback merge(t, t, (key, value, value -> value)) :: t
-  @callback pop(t, key) :: {value, t}
-  @callback pop(t, key, value) :: {value, t}
-  @callback pop_lazy(t, key, (() -> value)) :: {value, t}
-  @callback put(t, key, value) :: t
-  @callback put_new(t, key, value) :: t
-  @callback put_new_lazy(t, key, (() -> value)) :: t
-  @callback size(t) :: non_neg_integer()
-  @callback split(t, Enum.t) :: {t, t}
-  @callback take(t, Enum.t) :: t
-  @callback to_list(t) :: list()
-  @callback update(t, key, value, (value -> value)) :: t
-  @callback update!(t, key, (value -> value)) :: t | no_return
-  @callback values(t) :: list(value)
-
+  # TODO: Deprecate every function by 1.4
   defmacro __using__(_) do
     # Use this import to guarantee proper code expansion
     import Kernel, except: [size: 1]
@@ -51,8 +22,6 @@ defmodule Dict do
     :elixir_errors.warn(line, file, "the Dict module is deprecated")
 
     quote do
-      @behaviour Dict
-
       def get(dict, key, default \\ nil) do
         case fetch(dict, key) do
           {:ok, value} -> value
@@ -113,19 +82,19 @@ defmodule Dict do
 
       def to_list(dict) do
         reduce(dict, {:cont, []}, fn
-          kv, acc -> {:cont, [kv|acc]}
+          kv, acc -> {:cont, [kv | acc]}
         end) |> elem(1) |> :lists.reverse
       end
 
       def keys(dict) do
         reduce(dict, {:cont, []}, fn
-          {k, _}, acc -> {:cont, [k|acc]}
+          {k, _}, acc -> {:cont, [k | acc]}
         end) |> elem(1) |> :lists.reverse
       end
 
       def values(dict) do
         reduce(dict, {:cont, []}, fn
-          {_, v}, acc -> {:cont, [v|acc]}
+          {_, v}, acc -> {:cont, [v | acc]}
         end) |> elem(1) |> :lists.reverse
       end
 
@@ -392,6 +361,7 @@ defmodule Dict do
     target(dict).to_list(dict)
   end
 
+  @spec unsupported_dict(t) :: no_return
   defp unsupported_dict(dict) do
     raise ArgumentError, "unsupported dict: #{inspect dict}"
   end

@@ -19,29 +19,28 @@ end
 
 defmodule FileTest do
   use Elixir.FileCase
-  import Regex, only: [escape: 1]
 
   defmodule Rename do
     # Following Erlang's underlying implementation
     #
     # Renaming files
     # :ok               -> rename file to existing file default behaviour
-    # {:error,:eisdir}  -> rename file to existing empty dir
-    # {:error,:eisdir}  -> rename file to existing non empty dir
+    # {:error, :eisdir} -> rename file to existing empty dir
+    # {:error, :eisdir} -> rename file to existing non empty dir
     # :ok               -> rename file to non existing location
-    # {:error,:eexist}  -> rename file to existing file
+    # {:error, :eexist} -> rename file to existing file
     # :ok               -> rename file to itself
 
     # Renaming dirs
-    # {:error,:enotdir} -> rename dir to existing file
-    # :ok               -> rename dir to non existing leaf location
-    # {:error,??}       -> rename dir to non existing parent location
-    # :ok               -> rename dir to itself
-    # :ok               -> rename dir to existing empty dir default behaviour
-    # {:error,:eexist}  -> rename dir to existing empty dir
-    # {:error, :einval} -> rename parent dir to existing sub dir
-    # {:error, :einval} -> rename parent dir to non existing sub dir
-    # {:error,:eexist}  -> rename dir to existing non empty dir
+    # {:error, :enotdir} -> rename dir to existing file
+    # :ok                -> rename dir to non existing leaf location
+    # {:error, ??}       -> rename dir to non existing parent location
+    # :ok                -> rename dir to itself
+    # :ok                -> rename dir to existing empty dir default behaviour
+    # {:error, :eexist}  -> rename dir to existing empty dir
+    # {:error, :einval}  -> rename parent dir to existing sub dir
+    # {:error, :einval}  -> rename parent dir to non existing sub dir
+    # {:error, :eexist}  -> rename dir to existing non empty dir
 
     # other tests
     # {:error, :enoent} -> rename unknown source
@@ -71,7 +70,7 @@ defmodule FileTest do
 
       try do
         File.mkdir(dest)
-        assert File.rename(src, dest) == {:error,:eisdir}
+        assert File.rename(src, dest) == {:error, :eisdir}
         assert File.exists?(src)
         refute File.exists?(tmp_path("tmp/file.txt"))
       after
@@ -85,8 +84,8 @@ defmodule FileTest do
       dest = tmp_path("tmp")
 
       try do
-        File.mkdir_p(Path.join(dest,"a"))
-        assert File.rename(src, dest) == {:error,:eisdir}
+        File.mkdir_p(Path.join(dest, "a"))
+        assert File.rename(src, dest) == {:error, :eisdir}
         assert File.exists?(src)
         refute File.exists?(Path.join(dest, "file.txt"))
       after
@@ -294,7 +293,7 @@ defmodule FileTest do
         assert File.exists?(src)
         refute File.exists?(tmp_path("tmp/a"))
 
-        assert File.rename(src, dest) == {:error,:eexist}
+        assert File.rename(src, dest) == {:error, :eexist}
 
         assert File.exists?(tmp_path("tmp/x"))
         assert File.exists?(src)
@@ -334,7 +333,7 @@ defmodule FileTest do
     def tmp_fixture_path(extra) do
       src = fixture_path(extra)
       dest = tmp_path(extra)
-      File.cp_r(src,dest)
+      File.cp_r(src, dest)
       dest
     end
   end
@@ -441,8 +440,8 @@ defmodule FileTest do
     test "cp! with src dir" do
       src   = fixture_path("cp_r")
       dest  = tmp_path("tmp.file")
-      assert_raise File.CopyError, "could not copy from #{src} to #{dest}: " <>
-          "illegal operation on a directory", fn ->
+      assert_raise File.CopyError, "could not copy from #{inspect(src)} " <>
+          "to #{inspect(dest)}: illegal operation on a directory", fn ->
         File.cp!(src, dest)
       end
     end
@@ -578,8 +577,8 @@ defmodule FileTest do
     end
 
     test "cp_r with src dir and dest dir using lists" do
-      src  = fixture_path("cp_r") |> to_char_list
-      dest = tmp_path("tmp") |> to_char_list
+      src  = fixture_path("cp_r") |> to_charlist
+      dest = tmp_path("tmp") |> to_charlist
 
       File.mkdir(dest)
 
@@ -660,7 +659,7 @@ defmodule FileTest do
     test "cp_r with src_unknown!" do
       src  = fixture_path("unknown")
       dest = tmp_path("tmp")
-      assert_raise File.CopyError, "could not copy recursively from #{src} to #{dest}. #{src}: no such file or directory", fn ->
+      assert_raise File.CopyError, "could not copy recursively from #{inspect(src)} to #{inspect(dest)}. #{src}: no such file or directory", fn ->
         File.cp_r!(src, dest)
       end
     end
@@ -692,7 +691,7 @@ defmodule FileTest do
 
     test "regular" do
       assert File.regular?(__ENV__.file)
-      assert File.regular?(String.to_char_list(__ENV__.file))
+      assert File.regular?(String.to_charlist(__ENV__.file))
       refute File.regular?("#{__ENV__.file}.unknown")
     end
 
@@ -743,7 +742,7 @@ defmodule FileTest do
 
     test "read!" do
       assert File.read!(fixture_path("file.txt")) == "FOO\n"
-      expected_message = "could not read file fixtures/missing.txt: no such file or directory"
+      expected_message = "could not read file \"fixtures/missing.txt\": no such file or directory"
 
       assert_raise File.Error, expected_message, fn ->
         File.read!("fixtures/missing.txt")
@@ -790,8 +789,8 @@ defmodule FileTest do
       assert File.close(file) == :ok
     end
 
-    test "open file with char list" do
-      {:ok, file} = File.open(fixture_path("file.txt"), [:char_list])
+    test "open file with charlist" do
+      {:ok, file} = File.open(fixture_path("file.txt"), [:charlist])
       assert IO.gets(file, "") == 'FOO\n'
       assert File.close(file) == :ok
     end
@@ -833,7 +832,7 @@ defmodule FileTest do
     end
 
     test "open utf8 and charlist" do
-      {:ok, file} = File.open(fixture_path("utf8.txt"), [:char_list, :utf8])
+      {:ok, file} = File.open(fixture_path("utf8.txt"), [:charlist, :utf8])
       assert IO.gets(file, "") == [1056, 1091, 1089, 1089, 1082, 1080, 1081, 10]
       assert File.close(file) == :ok
     end
@@ -854,7 +853,7 @@ defmodule FileTest do
     end
 
     test "open! a missing file" do
-      message = "could not open missing.txt: no such file or directory"
+      message = "could not open \"missing.txt\": no such file or directory"
       assert_raise File.Error, message, fn ->
         File.open!('missing.txt')
       end
@@ -881,7 +880,7 @@ defmodule FileTest do
     end
 
     test "mkdir with list" do
-      fixture = tmp_path("tmp_test") |> to_char_list
+      fixture = tmp_path("tmp_test") |> to_charlist
       try do
         refute File.exists?(fixture)
         assert File.mkdir(fixture) == :ok
@@ -914,7 +913,7 @@ defmodule FileTest do
       fixture = fixture_path("file.txt")
       invalid = Path.join fixture, "test"
       assert File.exists?(fixture)
-      assert_raise File.Error, ~r"^could not make directory #{escape invalid}: (not a directory|no such file or directory)", fn ->
+      assert_raise File.Error, ~r"\Acould not make directory #{inspect invalid}: (not a directory|no such file or directory)", fn ->
         File.mkdir!(invalid)
       end
     end
@@ -945,7 +944,7 @@ defmodule FileTest do
     end
 
     test "mkdir_p with nested directory and list" do
-      base    = tmp_path("tmp_test") |> to_char_list
+      base    = tmp_path("tmp_test") |> to_charlist
       fixture = Path.join(base, "test")
       refute File.exists?(base)
 
@@ -995,7 +994,7 @@ defmodule FileTest do
       fixture = fixture_path("file.txt")
       invalid = Path.join fixture, "test"
       assert File.exists?(fixture)
-      assert_raise File.Error, ~r"^could not make directory \(with -p\) #{escape invalid}: (not a directory|no such file or directory)", fn ->
+      assert_raise File.Error, ~r"\Acould not make directory \(with -p\) #{inspect invalid}: (not a directory|no such file or directory)", fn ->
         File.mkdir_p!(invalid)
       end
     end
@@ -1043,7 +1042,7 @@ defmodule FileTest do
     end
 
     test "rm! with invalid file" do
-      assert_raise File.Error, "could not remove file missing.file: no such file or directory", fn ->
+      assert_raise File.Error, "could not remove file \"missing.file\": no such file or directory", fn ->
         File.rm!("missing.file")
       end
     end
@@ -1070,7 +1069,7 @@ defmodule FileTest do
 
     test "rmdir! with file" do
       fixture = fixture_path("file.txt")
-      assert_raise File.Error, ~r"^could not remove directory #{escape fixture}: (not a directory|I/O error)", fn ->
+      assert_raise File.Error, ~r"\Acould not remove directory #{inspect fixture}: (not a directory|I/O error)", fn ->
         File.rmdir!(fixture)
       end
     end
@@ -1116,8 +1115,8 @@ defmodule FileTest do
       File.rm(tmp_path("tmp/from"))
     end
 
-    test "rm_rf with char list" do
-      fixture = tmp_path("tmp") |> to_char_list
+    test "rm_rf with charlist" do
+      fixture = tmp_path("tmp") |> to_charlist
       File.mkdir(fixture)
       File.cp_r!(fixture_path("cp_r"), fixture)
 
@@ -1246,7 +1245,7 @@ defmodule FileTest do
   end
 
 
-  test "io stream utf8" do
+  test "IO stream utf8" do
     src  = File.open! fixture_path("file.txt"), [:utf8]
     dest = tmp_path("tmp_test.txt")
 
@@ -1261,7 +1260,7 @@ defmodule FileTest do
     end
   end
 
-  test "io stream" do
+  test "IO stream" do
     src  = File.open! fixture_path("file.txt")
     dest = tmp_path("tmp_test.txt")
 
@@ -1429,6 +1428,19 @@ defmodule FileTest do
     end
   end
 
+  test "copy with an io_device" do
+    {:ok, src} = File.open(fixture_path("file.txt"))
+    dest = tmp_path("tmp_test.txt")
+    try do
+      refute File.exists?(dest)
+      assert File.copy(src, dest) == {:ok, 4}
+      assert File.read(dest) == {:ok, "FOO\n"}
+    after
+      File.close(src)
+      File.rm(dest)
+    end
+  end
+
   test "copy with bytes count" do
     src  = fixture_path("file.txt")
     dest = tmp_path("tmp_test.txt")
@@ -1474,7 +1486,7 @@ defmodule FileTest do
   test "copy! with invalid file" do
     src  = fixture_path("invalid.txt")
     dest = tmp_path("tmp_test.txt")
-    assert_raise File.CopyError, "could not copy from #{src} to #{dest}: no such file or directory", fn ->
+    assert_raise File.CopyError, "could not copy from #{inspect(src)} to #{inspect(dest)}: no such file or directory", fn ->
       File.copy!(src, dest, 2)
     end
   end
@@ -1506,7 +1518,7 @@ defmodule FileTest do
   end
 
   test "invalid_cd!" do
-    message = ~r"^could not set current working directory to #{escape fixture_path("file.txt")}: (not a directory|no such file or directory)"
+    message = ~r"\Acould not set current working directory to #{inspect fixture_path("file.txt")}: (not a directory|no such file or directory)"
     assert_raise File.Error, message, fn ->
       File.cd!(fixture_path("file.txt"))
     end
@@ -1562,7 +1574,7 @@ defmodule FileTest do
 
   test "touch! with failure" do
     fixture = fixture_path("file.txt/bar")
-    assert_raise File.Error, ~r"could not touch #{escape fixture}: (not a directory|no such file or directory)", fn ->
+    assert_raise File.Error, ~r"\Acould not touch #{inspect fixture}: (not a directory|no such file or directory)", fn ->
       File.touch!(fixture)
     end
   end
@@ -1616,7 +1628,7 @@ defmodule FileTest do
     fixture = tmp_path("tmp_test.txt")
     File.rm(fixture)
 
-    message = ~r"could not change mode for #{escape fixture}: no such file or directory"
+    message = ~r"could not change mode for #{inspect fixture}: no such file or directory"
     assert_raise File.Error, message, fn ->
       File.chmod!(fixture, 0o100777)
     end
@@ -1633,7 +1645,7 @@ defmodule FileTest do
     fixture = tmp_path("tmp_test.txt")
     File.rm(fixture)
 
-    message = ~r"could not change group for #{escape fixture}: no such file or directory"
+    message = ~r"could not change group for #{inspect fixture}: no such file or directory"
     assert_raise File.Error, message, fn ->
       File.chgrp!(fixture, 1)
     end
@@ -1650,7 +1662,7 @@ defmodule FileTest do
     fixture = tmp_path("tmp_test.txt")
     File.rm(fixture)
 
-    message = ~r"could not change owner for #{escape fixture}: no such file or directory"
+    message = ~r"could not change owner for #{inspect fixture}: no such file or directory"
     assert_raise File.Error, message, fn ->
       File.chown!(fixture, 1)
     end
@@ -1658,6 +1670,10 @@ defmodule FileTest do
 
   defp last_year do
     last_year :calendar.local_time
+  end
+
+  defp last_year({{year, 2, 29}, time}) do
+    {{year - 1, 2, 28}, time}
   end
 
   defp last_year({{year, month, day}, time}) do

@@ -46,6 +46,9 @@ defmodule RecordTest do
     assert record?({User, "meg", 27}, User)
     refute record?({User, "meg", 27}, Author)
     refute record?(13, Author)
+    refute record?({"user", "meg", 27}, "user")
+    refute record?({}, User)
+    refute record?([], User)
   end
 
   # We need indirection to avoid warnings
@@ -57,16 +60,40 @@ defmodule RecordTest do
     assert record?({User, "john", 27})
     refute record?({"john", 27})
     refute record?(13)
+    refute record?({})
   end
 
-  Record.defrecord  :timestamp, [:date, :time]
-  Record.defrecord  :user, __MODULE__, name: "john", age: 25
+  def is_record_in_guard(term) when Record.is_record(term),
+    do: true
+  def is_record_in_guard(_),
+    do: false
+
+  def is_record_in_guard(term, kind) when Record.is_record(term, kind),
+    do: true
+  def is_record_in_guard(_, _),
+    do: false
+
+  test "is_record/1/2 (in guard)" do
+    assert is_record_in_guard({User, "john", 27})
+    refute is_record_in_guard({"user", "john", 27})
+
+    assert is_record_in_guard({User, "john", 27}, User)
+    refute is_record_in_guard({"user", "john", 27}, "user")
+  end
+
+  Record.defrecord :timestamp, [:date, :time]
+  Record.defrecord :user, __MODULE__, name: "john", age: 25
+
   Record.defrecordp :file_info,
     Record.extract(:file_info, from_lib: "kernel/include/file.hrl")
   Record.defrecordp :certificate, :OTPCertificate,
     Record.extract(:OTPCertificate, from_lib: "public_key/include/public_key.hrl")
 
-  test "records generates macros that generates tuples" do
+  test "records are tagged" do
+    assert elem(file_info(), 0) == :file_info
+  end
+
+  test "records macros" do
     record = user()
     assert user(record, :name) == "john"
     assert user(record, :age)  == 25
@@ -83,8 +110,17 @@ defmodule RecordTest do
     assert user(:name) == 1
   end
 
-  test "records with no tag" do
-    assert elem(file_info(), 0) == :file_info
+  test "records with default values" do
+    record = user(_: :_, name: "meg")
+    assert user(record, :name) == "meg"
+    assert user(record, :age) == :_
+
+    assert match?(user(_: _), user())
+    refute match?(user(_: "other"), user())
+
+    record = user(user(), _: :_, name: "meg")
+    assert user(record, :name) == "meg"
+    assert user(record, :age) == :_
   end
 
   test "records with dynamic arguments" do

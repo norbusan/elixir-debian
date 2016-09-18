@@ -29,6 +29,8 @@ defmodule Kernel.SigilsTest do
     assert ~S(f\no) == "f\\no"
     assert ~S(foo\)) == "foo)"
     assert ~S[foo\]] == "foo]"
+    assert ~S(foo\
+bar) == "foo\\\nbar"
   end
 
   test "sigil S with heredoc" do
@@ -64,6 +66,13 @@ defmodule Kernel.SigilsTest do
     assert ~w(foo bar baz) == ["foo", "bar", "baz"]
     assert ~w(foo #{:bar} baz) == ["foo", "bar", "baz"]
 
+    assert ~w(#{""}) == []
+    assert ~w(foo #{""}) == ["foo"]
+    assert ~w(#{" foo bar "}) == ["foo", "bar"]
+
+    assert ~w(foo\ #{:bar}) == ["foo", "bar"]
+    assert ~w(foo\ bar) == ["foo", "bar"]
+
     assert ~w(
       foo
       bar
@@ -74,7 +83,7 @@ defmodule Kernel.SigilsTest do
     assert ~w(foo bar baz)a == [:foo, :bar, :baz]
     assert ~w(foo bar baz)c == ['foo', 'bar', 'baz']
 
-    bad_modifier = quote do: ~w(foo bar baz)x
+    bad_modifier = quote(do: ~w(foo bar baz)x)
     assert %ArgumentError{} = catch_error(Code.eval_quoted(bad_modifier))
 
     assert ~w(Foo Bar)a == [:"Foo", :"Bar"]
@@ -87,7 +96,10 @@ defmodule Kernel.SigilsTest do
   end
 
   test "sigil W" do
+    assert ~W() == []
     assert ~W(foo #{bar} baz) == ["foo", "\#{bar}", "baz"]
+
+    assert ~W(foo\ bar) == ["foo\\", "bar"]
 
     assert ~W(
       foo

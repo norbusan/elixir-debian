@@ -209,7 +209,7 @@ defmodule Kernel.RaiseTest do
     assert result == "an exception"
   end
 
-  test "wrap custom erlang error" do
+  test "wrap custom Erlang error" do
     result = try do
       :erlang.error(:sample)
     rescue
@@ -226,7 +226,7 @@ defmodule Kernel.RaiseTest do
       x in [UndefinedFunctionError] -> Exception.message(x)
     end
 
-    assert result == "undefined function DoNotExist.for_sure/0 (module DoNotExist is not available)"
+    assert result == "function DoNotExist.for_sure/0 is undefined (module DoNotExist is not available)"
   end
 
   test "function clause error" do
@@ -283,9 +283,10 @@ defmodule Kernel.RaiseTest do
   end
 
   test "badfun error" do
-    x = :example
+    # Avoid "invalid function call" warning in >= OTP 19
+    x = fn -> :example end
     result = try do
-      x.(2)
+      x.().(2)
     rescue
       x in [BadFunctionError] -> Exception.message(x)
     end
@@ -373,14 +374,14 @@ defmodule Kernel.RaiseTest do
     assert result == "no try clause matching: :example"
   end
 
-  test "undefined function error as erlang error" do
+  test "undefined function error as Erlang error" do
     result = try do
       DoNotExist.for_sure()
     rescue
       x in [ErlangError] -> Exception.message(x)
     end
 
-    assert result == "undefined function DoNotExist.for_sure/0 (module DoNotExist is not available)"
+    assert result == "function DoNotExist.for_sure/0 is undefined (module DoNotExist is not available)"
   end
 
   defmacrop exceptions do
@@ -394,7 +395,7 @@ defmodule Kernel.RaiseTest do
       x in exceptions -> Exception.message(x)
     end
 
-    assert result == "undefined function DoNotExist.for_sure/0 (module DoNotExist is not available)"
+    assert result == "function DoNotExist.for_sure/0 is undefined (module DoNotExist is not available)"
   end
 
   defp zero(0), do: 0

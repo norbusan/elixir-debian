@@ -2,12 +2,12 @@ defmodule Keyword do
   @moduledoc """
   A set of functions for working with keywords.
 
-  A keyword is a list of 2-element tuples where the first
+  A keyword is a list of two-element tuples where the first
   element of the tuple is an atom and the second element
   can be any value.
 
   A keyword may have duplicated keys so it is not strictly
-  a dictionary. However most of the functions in this module
+  a key-value store. However most of the functions in this module
   behave exactly as a dictionary so they work similarly to
   the functions you would find in the `Map` module.
 
@@ -71,7 +71,7 @@ defmodule Keyword do
       []
 
   """
-  @spec new :: t
+  @spec new :: []
   def new, do: []
 
   @doc """
@@ -104,7 +104,7 @@ defmodule Keyword do
 
   ## Examples
 
-      iex> Keyword.new([:a, :b], fn (x) -> {x, x} end)
+      iex> Keyword.new([:a, :b], fn(x) -> {x, x} end)
       [a: :a, b: :b]
 
   """
@@ -191,12 +191,14 @@ defmodule Keyword do
   Gets the value from `key` and updates it, all in one pass.
 
   This `fun` argument receives the value of `key` (or `nil` if `key`
-  is not present) and must return a two-elements tuple: the "get" value (the
-  retrieved value, which can be operated on before being returned) and the new
-  value to be stored under `key`.
+  is not present) and must return a two-element tuple: the "get" value
+  (the retrieved value, which can be operated on before being returned)
+  and the new value to be stored under `key`. The `fun` may also
+  return `:pop`, implying the current value shall be removed from the
+  keyword list and returned.
 
-  The returned value is a tuple with the "get" value returned by `fun` and a new
-  keyword list with the updated value under `key`.
+  The returned value is a tuple with the "get" value returned by
+  `fun` and a new keyword list with the updated value under `key`.
 
   ## Examples
 
@@ -210,30 +212,40 @@ defmodule Keyword do
       ...> end)
       {nil, [b: "new value!", a: 1]}
 
+      iex> Keyword.get_and_update([a: 1], :a, fn _ -> :pop end)
+      {1, []}
+
+      iex> Keyword.get_and_update([a: 1], :b, fn _ -> :pop end)
+      {nil, [a: 1]}
+
   """
-  @spec get_and_update(t, key, (value -> {get, value})) :: {get, t} when get: term
+  @spec get_and_update(t, key, (value -> {get, value} | :pop)) :: {get, t} when get: term
   def get_and_update(keywords, key, fun)
     when is_list(keywords) and is_atom(key),
     do: get_and_update(keywords, [], key, fun)
 
-  defp get_and_update([{key, value}|t], acc, key, fun) do
-    {get, new_value} = fun.(value)
-    {get, :lists.reverse(acc, [{key, new_value}|t])}
+  defp get_and_update([{key, current} | t], acc, key, fun) do
+    case fun.(current) do
+      {get, value} -> {get, :lists.reverse(acc, [{key, value} | t])}
+      :pop         -> {current, :lists.reverse(acc, t)}
+    end
   end
 
-  defp get_and_update([h|t], acc, key, fun),
-    do: get_and_update(t, [h|acc], key, fun)
+  defp get_and_update([h | t], acc, key, fun),
+    do: get_and_update(t, [h | acc], key, fun)
 
   defp get_and_update([], acc, key, fun) do
-    {get, update} = fun.(nil)
-    {get, [{key, update}|:lists.reverse(acc)]}
+    case fun.(nil) do
+      {get, update} -> {get, [{key, update} | :lists.reverse(acc)]}
+      :pop -> {nil, :lists.reverse(acc)}
+    end
   end
 
   @doc """
   Gets the value from `key` and updates it. Raises if there is no `key`.
 
   This `fun` argument receives the value of `key` and must return a
-  two-elements tuple: the "get" value (the retrieved value, which can be
+  two-element tuple: the "get" value (the retrieved value, which can be
   operated on before being returned) and the new value to be stored under
   `key`.
 
@@ -242,7 +254,7 @@ defmodule Keyword do
 
   ## Examples
 
-      iex> Keyword.get_and_update!([a: 1], :a, fn(current_value) ->
+      iex> Keyword.get_and_update!([a: 1], :a, fn current_value ->
       ...>   {current_value, "new value!"}
       ...> end)
       {1, [a: "new value!"]}
@@ -252,19 +264,28 @@ defmodule Keyword do
       ...> end)
       ** (KeyError) key :b not found in: [a: 1]
 
+      iex> Keyword.get_and_update!([a: 1], :a, fn _ ->
+      ...>   :pop
+      ...> end)
+      {1, []}
+
   """
   @spec get_and_update!(t, key, (value -> {get, value})) :: {get, t} | no_return when get: term
   def get_and_update!(keywords, key, fun) do
     get_and_update!(keywords, key, fun, [])
   end
 
-  defp get_and_update!([{key, value}|keywords], key, fun, acc) do
-    {get, value} = fun.(value)
-    {get, :lists.reverse(acc, [{key, value}|delete(keywords, key)])}
+  defp get_and_update!([{key, value} | keywords], key, fun, acc) do
+    case fun.(value) do
+      {get, value} ->
+        {get, :lists.reverse(acc, [{key, value} | delete(keywords, key)])}
+      :pop ->
+        {value, :lists.reverse(acc, keywords)}
+    end
   end
 
-  defp get_and_update!([{_, _} = e|keywords], key, fun, acc) do
-    get_and_update!(keywords, key, fun, [e|acc])
+  defp get_and_update!([{_, _} = e | keywords], key, fun, acc) do
+    get_and_update!(keywords, key, fun, [e | acc])
   end
 
   defp get_and_update!([], key, _fun, acc) when is_atom(key) do
@@ -329,7 +350,7 @@ defmodule Keyword do
   @spec get_values(t, key) :: [value]
   def get_values(keywords, key) when is_list(keywords) and is_atom(key) do
     fun = fn
-      {k, v} when k === key -> {true, v}
+      {^key, val} -> {true, val}
       {_, _} -> false
     end
     :lists.filtermap(fun, keywords)
@@ -451,7 +472,7 @@ defmodule Keyword do
   """
   @spec put(t, key, value) :: t
   def put(keywords, key, value) when is_list(keywords) and is_atom(key) do
-    [{key, value}|delete(keywords, key)]
+    [{key, value} | delete(keywords, key)]
   end
 
   @doc """
@@ -479,7 +500,7 @@ defmodule Keyword do
       when is_list(keywords) and is_atom(key) and is_function(fun, 0) do
     case :lists.keyfind(key, 1, keywords) do
       {^key, _} -> keywords
-      false -> [{key, fun.()}|keywords]
+      false -> [{key, fun.()} | keywords]
     end
   end
 
@@ -499,7 +520,7 @@ defmodule Keyword do
   def put_new(keywords, key, value) when is_list(keywords) and is_atom(key) do
     case :lists.keyfind(key, 1, keywords) do
       {^key, _} -> keywords
-      false -> [{key, value}|keywords]
+      false -> [{key, value} | keywords]
     end
   end
 
@@ -581,13 +602,13 @@ defmodule Keyword do
     do_merge(keywords2, [], keywords1, keywords1, fun)
   end
 
-  defp do_merge([{k, v2}|t], acc, rest, original, fun) do
+  defp do_merge([{k, v2} | t], acc, rest, original, fun) do
     case :lists.keyfind(k, 1, original) do
       {^k, v1} ->
-        do_merge(t, [{k, fun.(k, v1, v2)}|acc],
+        do_merge(t, [{k, fun.(k, v1, v2)} | acc],
                  delete(rest, k), :lists.keydelete(k, 1, original), fun)
       false ->
-        do_merge(t, [{k, v2}|acc], rest, original, fun)
+        do_merge(t, [{k, v2} | acc], rest, original, fun)
     end
   end
 
@@ -635,12 +656,12 @@ defmodule Keyword do
     update!(keywords, key, fun, keywords)
   end
 
-  defp update!([{key, value}|keywords], key, fun, _dict) do
-    [{key, fun.(value)}|delete(keywords, key)]
+  defp update!([{key, value} | keywords], key, fun, _dict) do
+    [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  defp update!([{_, _} = e|keywords], key, fun, dict) do
-    [e|update!(keywords, key, fun, dict)]
+  defp update!([{_, _} = e | keywords], key, fun, dict) do
+    [e | update!(keywords, key, fun, dict)]
   end
 
   defp update!([], key, _fun, dict) when is_atom(key) do
@@ -668,12 +689,12 @@ defmodule Keyword do
   @spec update(t, key, value, (value -> value)) :: t
   def update(keywords, key, initial, fun)
 
-  def update([{key, value}|keywords], key, _initial, fun) do
-    [{key, fun.(value)}|delete(keywords, key)]
+  def update([{key, value} | keywords], key, _initial, fun) do
+    [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  def update([{_, _} = e|keywords], key, initial, fun) do
-    [e|update(keywords, key, initial, fun)]
+  def update([{_, _} = e | keywords], key, initial, fun) do
+    [e | update(keywords, key, initial, fun)]
   end
 
   def update([], key, initial, _fun) when is_atom(key) do
@@ -686,7 +707,7 @@ defmodule Keyword do
 
   Returns a tuple with the new list and the old list with removed keys.
 
-  Keys for which there are no entires in the keyword list are ignored.
+  Keys for which there are no entries in the keyword list are ignored.
 
   Entries with duplicated keys end up in the same keyword list.
 
@@ -701,8 +722,8 @@ defmodule Keyword do
   def split(keywords, keys) when is_list(keywords) do
     fun = fn {k, v}, {take, drop} ->
       case k in keys do
-        true  -> {[{k, v}|take], drop}
-        false -> {take, [{k, v}|drop]}
+        true  -> {[{k, v} | take], drop}
+        false -> {take, [{k, v} | drop]}
       end
     end
 
@@ -845,10 +866,10 @@ defmodule Keyword do
     keyword
   end
 
-  # TODO: Deprecate by 1.3
-  # TODO: Remove by 1.4
   @doc false
+  # TODO: Remove on 2.0
   def size(keyword) do
+    IO.warn "Keyword.size/1 is deprecated, please use Kernel.length/1"
     length(keyword)
   end
 end

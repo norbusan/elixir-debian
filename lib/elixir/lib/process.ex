@@ -28,7 +28,7 @@ defmodule Process do
   end
 
   @doc """
-  Returns all key-values in the dictionary.
+  Returns all key-value pairs in the process dictionary.
 
   Inlined by the compiler.
   """
@@ -38,7 +38,7 @@ defmodule Process do
   end
 
   @doc """
-  Returns the value for the given `key`.
+  Returns the value for the given `key` or `default` if `key` is not set.
   """
   @spec get(term) :: term
   @spec get(term, default :: term) :: term
@@ -72,7 +72,7 @@ defmodule Process do
   end
 
   @doc """
-  Stores the given key-value in the process dictionary.
+  Stores the given `key`-`value` pair in the process dictionary.
 
   The return value is the value that was previously stored under the key `key`
   (or `nil` in case no value was stored under `key`).
@@ -83,7 +83,7 @@ defmodule Process do
   end
 
   @doc """
-  Deletes the given `key` from the dictionary.
+  Deletes the given `key` from the process dictionary.
   """
   @spec delete(term) :: term | nil
   def delete(key) do
@@ -91,23 +91,27 @@ defmodule Process do
   end
 
   @doc """
-  Sends an exit signal with the given reason to the pid.
+  Sends an exit signal with the given `reason` to the `pid`.
 
-  The following behaviour applies if reason is any term except `:normal` or `:kill`:
+  The following behaviour applies if `reason` is any term except `:normal`
+  or `:kill`:
 
-    1. If pid is not trapping exits, pid will exit with the given reason.
+    1. If `pid` is not trapping exits, `pid` will exit with the given
+       `reason`.
 
-    2. If pid is trapping exits, the exit signal is transformed into a message
-       `{:EXIT, from, reason}` and delivered to the message queue of pid.
+    2. If `pid` is trapping exits, the exit signal is transformed into a
+       message `{:EXIT, from, reason}` and delivered to the message queue
+       of `pid`.
 
-    3. If reason is the atom `:normal`, pid will not exit (unless it is the calling
-       process's pid, in which case it will exit with the reason `:normal`).
-       If it is trapping exits, the exit signal is transformed into a message
-       `{:EXIT, from, :normal}` and delivered to its message queue.
+    3. If `reason` is the atom `:normal`, `pid` will not exit (unless it
+       is the calling process's pid, in which case it will exit with the
+       reason `:normal`). If it is trapping exits, the exit signal is
+       transformed into a message `{:EXIT, from, :normal}` and delivered
+       to its message queue.
 
-    4. If reason is the atom `:kill`, that is if `exit(pid, :kill)` is called,
-       an untrappable exit signal is sent to pid which will unconditionally
-       exit with exit reason `:killed`.
+    4. If `reason` is the atom `:kill`, that is if `exit(pid, :kill)` is
+       called, an untrappable exit signal is sent to `pid` which will
+       unconditionally exit with exit reason `:killed`.
 
   Inlined by the compiler.
 
@@ -119,6 +123,80 @@ defmodule Process do
   @spec exit(pid, term) :: true
   def exit(pid, reason) do
     :erlang.exit(pid, reason)
+  end
+
+  @doc """
+  Sleeps the current process by `timeout`.
+
+  `timeout` is either the number of milliseconds to sleep as an
+  integer or the atom `:infinity`. When `:infinity` is given,
+  the current process will suspend forever.
+
+  **Use this function with extreme care**. For almost all situations
+  where you would use `sleep/1` in Elixir, there is likely a
+  more correct, faster and precise way of achieving it with
+  message passing.
+
+  For example, if you are waiting a process to perform some
+  action, it is better to communicate.
+
+  In other words, **do not**:
+
+      Task.start_link fn ->
+        do_something()
+        ...
+      end
+
+      # Wait until work is done
+      Process.sleep(2000)
+
+  But **do**:
+
+      parent = self()
+      Task.start_link fn ->
+        do_something()
+        send parent, :work_is_done
+        ...
+      end
+
+      receive do
+        :work_is_done -> :ok
+      after
+        30_000 -> :timeout # Optional timeout
+      end
+
+  Or even use `Task.async/1` and `Task.await/2` in the example
+  above.
+
+  Similarly, if you are waiting for a process to terminate,
+  use monitor instead of sleep. **Do not**:
+
+      Task.start_link fn ->
+        ...
+      end
+
+      # Wait until task terminates
+      Process.sleep(2000)
+
+  Instead **do**:
+
+      {:ok, pid} =
+        Task.start_link fn ->
+          ...
+        end
+
+      ref = Process.monitor(pid)
+      receive do
+        {:DOWN, ^ref, _, _, _} -> :task_is_down
+      after
+        30_000 -> :timeout # Optional timeout
+      end
+
+  """
+  def sleep(timeout)
+      when is_integer(timeout) and timeout >= 0
+      when timeout == :infinity do
+    receive after: (timeout -> :ok)
   end
 
   @doc """
@@ -171,8 +249,8 @@ defmodule Process do
   @doc """
   Cancels a timer created by `send_after/3`.
 
-  When the result is an integer, it represents the time in milli-seconds
-  left until the timer will expire.
+  When the result is an integer, it represents the time in milliseconds
+  left until the timer would have expired.
 
   When the result is `false`, a timer corresponding to `timer_ref` could
   not be found. This can be either because the timer expired, already has
@@ -191,7 +269,7 @@ defmodule Process do
   @doc """
   Reads a timer created by `send_after/3`.
 
-  When the result is an integer, it represents the time in milli-seconds
+  When the result is an integer, it represents the time in milliseconds
   left until the timer will expire.
 
   When the result is `false`, a timer corresponding to `timer_ref` could
@@ -215,8 +293,7 @@ defmodule Process do
   @type spawn_opts :: [spawn_opt]
 
   @doc """
-  Spawns the given module and function passing the given args
-  according to the given options.
+  Spawns the given function according to the given options.
 
   The result depends on the given options. In particular,
   if `:monitor` is given as an option, it will return a tuple
@@ -234,7 +311,7 @@ defmodule Process do
   end
 
   @doc """
-  Spawns the given module and function passing the given args
+  Spawns the given function from module `mod`, passing the given `args`
   according to the given options.
 
   The result depends on the given options. In particular,
@@ -253,7 +330,7 @@ defmodule Process do
   end
 
   @doc """
-  The calling process starts monitoring the item given.
+  The calling process starts monitoring the given `item`.
   It returns the monitor reference.
 
   See [the need for monitoring](http://elixir-lang.org/getting-started/mix-otp/genserver.html#the-need-for-monitoring)
@@ -325,21 +402,22 @@ defmodule Process do
   end
 
   @doc """
-  Associates the name with a pid or a port identifier. `name`, which must
-  be an atom, can be used instead of the pid / port identifier with the
-  `Kernel.send/2` function.
+  Associates the atom `name` with a `pid` or a port identifier.
 
-  `Process.register/2` will fail with `ArgumentError` if the pid supplied
-  is no longer alive, (check with `alive?/1`) or if the name is
-  already registered (check with `whereis/1`).
+  `name`, can then be used instead of the `pid` / port identifier with the `Kernel.send/2`
+  function. `Process.register/2` will fail with `ArgumentError` if the pid supplied
+  is no longer alive, (check with `alive?/1`) or if the name is already registered
+  (check with `whereis/1`) or if the `pid` is already registered to a different `name`.
   """
   @spec register(pid | port, atom) :: true
-  def register(pid, name) when not name in [nil, false, true] do
+  def register(pid, name) when not name in [nil, false, true] and is_atom(name) do
     :erlang.register(name, pid)
   end
 
   @doc """
-  Removes the registered name, associated with a pid or a port identifier.
+  Removes the registered `name`, associated with a pid or a port identifier.
+
+  Fails with `ArgumentError` if the name is not registered to any pid or port.
 
   See [`:erlang.unregister/1`](http://www.erlang.org/doc/man/erlang.html#unregister-1) for more info.
   """
@@ -349,7 +427,7 @@ defmodule Process do
   end
 
   @doc """
-  Returns the pid or port identifier with the registered name.
+  Returns the pid or port identifier with the registered `name`.
   Returns `nil` if the name is not registered.
 
   See [`:erlang.whereis/1`](http://www.erlang.org/doc/man/erlang.html#whereis-1) for more info.
@@ -389,7 +467,7 @@ defmodule Process do
                          :sensitive
   @doc """
   Sets certain flags for the process which calls this function.
-  Returns the old value of the flag.
+  Returns the old value of the `flag`.
 
   See [`:erlang.process_flag/2`](http://www.erlang.org/doc/man/erlang.html#process_flag-2) for more info.
   """
@@ -400,8 +478,8 @@ defmodule Process do
 
   @doc """
   Sets certain flags for the process `pid`, in the same manner as `flag/2`.
-  Returns the old value of the flag. The allowed values for `flag` are
-  only a subset of those allowed in `flag/2`, namely: `save_calls`.
+  Returns the old value of the `flag`. The allowed values for `flag` are
+  only a subset of those allowed in `flag/2`, namely `:save_calls`.
 
   See [`:erlang.process_flag/3`](http://www.erlang.org/doc/man/erlang.html#process_flag-3) for more info.
   """
@@ -411,7 +489,7 @@ defmodule Process do
   end
 
   @doc """
-  Returns information about the process identified by `pid` or `nil` if the process
+  Returns information about the process identified by `pid`, or returns `nil` if the process
   is not alive.
   Use this only for debugging information.
 
@@ -423,8 +501,8 @@ defmodule Process do
   end
 
   @doc """
-  Returns information about the process identified by `pid`
-  or `nil` if the process is not alive.
+  Returns information about the process identified by `pid`,
+  or returns `nil` if the process is not alive.
 
   See [`:erlang.process_info/2`](http://www.erlang.org/doc/man/erlang.html#process_info-2) for more info.
   """

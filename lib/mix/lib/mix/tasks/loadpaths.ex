@@ -4,15 +4,21 @@ defmodule Mix.Tasks.Loadpaths do
   @moduledoc """
   Loads the application and its dependencies paths.
 
+  ## Configuration
+
+    * `:elixir` - matches the current elixir version against the
+      given requirement
+
   ## Command line options
 
     * `--no-archives-check` - do not check archive
-    * `--no-deps-check` - do not check dependencies (also implies --no-archives-check)
+    * `--no-deps-check` - do not check dependencies
     * `--no-elixir-version-check` - do not check Elixir version
 
   """
 
   @spec run(OptionParser.argv) :: :ok
+
   def run(args) do
     config = Mix.Project.config
 
@@ -20,10 +26,14 @@ defmodule Mix.Tasks.Loadpaths do
       check_elixir_version(config, args)
     end
 
-    # --no-deps is used only internally. It has not purpose
-    # from Mix.CLI because the CLI itself already loads deps.
+    unless "--no-archives-check" in args do
+      Mix.Task.run "archive.check", args
+    end
+
+    # --no-deps is used only internally. It has no purpose
+    # from Mix.CLI because running a task may load deps.
     unless "--no-deps" in args do
-      load_deps(config, args)
+      Mix.Task.run "deps.loadpaths", args
     end
 
     if config[:app] do
@@ -38,22 +48,14 @@ defmodule Mix.Tasks.Loadpaths do
       case Version.parse_requirement(req) do
         {:ok, req} ->
           unless Version.match?(System.version, req) do
-            Mix.raise Mix.ElixirVersionError, target: config[:app] || Mix.Project.get,
-                                              expected: req,
-                                              actual: System.version
+            raise Mix.ElixirVersionError, target: config[:app] || Mix.Project.get,
+                                          expected: req,
+                                          actual: System.version
           end
         :error ->
           Mix.raise "Invalid Elixir version requirement #{req} in mix.exs file"
       end
     end
-  end
-
-  defp load_deps(_config, args) do
-    unless "--no-deps-check" in args do
-      Mix.Task.run "deps.check", args
-    end
-
-    Mix.Task.run "deps.loadpaths"
   end
 
   defp load_project(config, _args) do
@@ -75,5 +77,6 @@ defmodule Mix.Tasks.Loadpaths do
 
   defp rm_rf_app(config) do
     File.rm_rf Mix.Project.app_path(config)
+    File.rm_rf Mix.Project.consolidation_path(config)
   end
 end

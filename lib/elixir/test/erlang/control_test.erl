@@ -29,10 +29,6 @@ if_else_kv_blocks_test() ->
   {2, _} = eval("if(false) do 1 else 2 end"),
   {2, _} = eval("if(false) do 1;else 2; end").
 
-multi_assigned_if_test() ->
-  {3, _} = eval("x = 1\nif true do\nx = 2\nx = 3\nelse true\nend\nx"),
-  {3, _} = eval("x = 1\nif true do\n^x = 1\nx = 2\nx = 3\nelse true\nend\nx").
-
 multi_line_if_test() ->
   {1, _} = eval("if true\ndo\n1\nelse\n2\nend").
 
@@ -61,17 +57,13 @@ case_test() ->
   {true, []} = eval("case {1, 2} do; {3, 4} -> false\n_ -> true\nend").
 
 case_with_do_ambiguity_test() ->
-  {true, _} = eval("case Atom.to_char_list(true) do\n_ -> true\nend").
+  {true, _} = eval("case Atom.to_charlist(true) do\n_ -> true\nend").
 
 case_with_match_do_ambiguity_test() ->
-  {true, _} = eval("case x = Atom.to_char_list(true) do\n_ -> true\nend").
+  {true, _} = eval("case x = Atom.to_charlist(true) do\n_ -> true\nend").
 
 case_with_unary_do_ambiguity_test() ->
-  {false, _} = eval("! case Atom.to_char_list(true) do\n_ -> true\nend").
-
-multi_assigned_case_test() ->
-  {3, _} = eval("x = 1\ncase true do\n true ->\nx = 2\nx = 3\n_ -> true\nend\nx"),
-  {3, _} = eval("x = 1\ncase 1 do\n ^x -> x = 2\nx = 3\n_ -> true\nend\nx").
+  {false, _} = eval("! case Atom.to_charlist(true) do\n_ -> true\nend").
 
 % Comparison
 

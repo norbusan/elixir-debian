@@ -7,8 +7,7 @@ defmodule Behaviour do
   Instead of `__behaviour__(:callbacks)`, one can simply use `behaviour_info(:callbacks)`.
   """
 
-  # TODO: Deprecate by 1.2
-  # TODO: Remove by 2.0
+  # TODO: Deprecate by 1.4
 
   @doc """
   Defines a function callback according to the given type specification.

@@ -29,13 +29,13 @@ defmodule ExUnit.Callbacks do
 
   ## Context
 
-  If you return `{:ok, <dict>}` from `setup_all`, the dictionary
+  If you return `{:ok, keywords}` from `setup_all`, the keyword
   will be merged into the current context and be available in all
   subsequent `setup_all`, `setup` and the test itself.
 
-  Similarly, returning `{:ok, <dict>}` from `setup`, the dict returned
-  will be merged into the current context and be available in all
-  subsequent `setup` and the `test` itself.
+  Similarly, returning `{:ok, keywords}` from `setup`, the keyword
+  returned will be merged into the current context and be available
+  in all subsequent `setup` and the `test` itself.
 
   Returning `:ok` leaves the context unchanged in both cases.
 
@@ -63,8 +63,8 @@ defmodule ExUnit.Callbacks do
             IO.puts "This is invoked once the test is done"
           end
 
-          # Returns extra metadata, it must be a dict
-          {:ok, hello: "world"}
+          # Returns extra metadata to be merged into context
+          [hello: "world"]
         end
 
         # Same as "setup", but receives the context
@@ -74,12 +74,19 @@ defmodule ExUnit.Callbacks do
           :ok
         end
 
+        # Setups can also invoke a local or imported function
+        setup :invoke_local_or_imported_function
+
         test "always pass" do
           assert true
         end
 
         test "another one", context do
           assert context[:hello] == "world"
+        end
+
+        defp invoke_local_or_imported_function(context) do
+          [from_named_setup: true]
         end
       end
 
@@ -88,6 +95,7 @@ defmodule ExUnit.Callbacks do
   @doc false
   defmacro __using__(_) do
     quote do
+      @ex_unit_describe nil
       @ex_unit_setup []
       @ex_unit_setup_all []
 
@@ -104,23 +112,86 @@ defmodule ExUnit.Callbacks do
 
   @doc """
   Defines a callback to be run before each test in a case.
+
+  ## Examples
+
+      setup :clean_up_tmp_directory
+
   """
-  defmacro setup(var \\ quote(do: _), block) do
+  defmacro setup(block) do
+    if Keyword.keyword?(block) do
+      do_setup(quote(do: _), block)
+    else
+      quote do
+        @ex_unit_setup ExUnit.Callbacks.__callback__(unquote(block), @ex_unit_describe) ++
+                       @ex_unit_setup
+      end
+    end
+  end
+
+  @doc """
+  Defines a callback to be run before each test in a case.
+
+  ## Examples
+
+      setup context do
+        [conn: Plug.Conn.build_conn()]
+      end
+
+  """
+  defmacro setup(var, block) do
+    do_setup(var, block)
+  end
+
+  defp do_setup(var, block) do
     quote bind_quoted: [var: escape(var), block: escape(block)] do
       name = :"__ex_unit_setup_#{length(@ex_unit_setup)}"
       defp unquote(name)(unquote(var)), unquote(block)
-      @ex_unit_setup [name|@ex_unit_setup]
+      @ex_unit_setup [{name, @ex_unit_describe} | @ex_unit_setup]
     end
   end
 
   @doc """
   Defines a callback to be run before all tests in a case.
+
+  ## Examples
+
+      setup_all :clean_up_tmp_directory
+
   """
-  defmacro setup_all(var \\ quote(do: _), block) do
+  defmacro setup_all(block) do
+    if Keyword.keyword?(block) do
+      do_setup_all(quote(do: _), block)
+    else
+      quote do
+        @ex_unit_describe && raise "cannot invoke setup_all/1 inside describe as setup_all/1 " <>
+                                   "always applies to all tests in a module"
+        @ex_unit_setup_all ExUnit.Callbacks.__callback__(unquote(block), nil) ++
+                           @ex_unit_setup_all
+      end
+    end
+  end
+
+  @doc """
+  Defines a callback to be run before all tests in a case.
+
+  ## Examples
+
+      setup_all context do
+        [conn: Plug.Conn.build_conn()]
+      end
+
+  """
+  defmacro setup_all(var, block) do
+    do_setup_all(var, block)
+  end
+
+  defp do_setup_all(var, block) do
     quote bind_quoted: [var: escape(var), block: escape(block)] do
+      @ex_unit_describe && raise "cannot invoke setup_all/2 inside describe"
       name = :"__ex_unit_setup_all_#{length(@ex_unit_setup_all)}"
       defp unquote(name)(unquote(var)), unquote(block)
-      @ex_unit_setup_all [name|@ex_unit_setup_all]
+      @ex_unit_setup_all [{name, nil} | @ex_unit_setup_all]
     end
   end
 
@@ -146,48 +217,62 @@ defmodule ExUnit.Callbacks do
 
   ## Helpers
 
-  @reserved ~w(case test line file)a
+  @reserved [:case, :file, :line, :test, :async, :registered, :describe]
+
+  @doc false
+  def __callback__(callback, describe) do
+    for k <- List.wrap(callback) do
+      if not is_atom(k) do
+        raise ArgumentError, "setup/setup_all expect a callback name as an atom or " <>
+                             "a list of callback names, got: #{inspect k}"
+      end
+
+      {k, describe}
+    end |> Enum.reverse()
+  end
 
   @doc false
   def __merge__(_mod, context, :ok) do
-    {:ok, context}
+    context
   end
 
-  def __merge__(mod, context, {:ok, data}) do
-    {:ok, context_merge(mod, context, data)}
+  # TODO: Deprecate tagged tuple result on v1.5
+  def __merge__(mod, context, {:ok, value}) do
+    __merge__(mod, context, value)
   end
 
-  def __merge__(mod, _, data) do
-    raise_merge_failed!(mod, data)
+  def __merge__(mod, _context, %{__struct__: _} = return_value) do
+    raise_merge_failed!(mod, return_value)
   end
 
-  defp context_merge(mod, _context, %{__struct__: _} = data) do
-    raise_merge_failed!(mod, data)
+  def __merge__(mod, context, data) when is_list(data) do
+    __merge__(mod, context, Map.new(data))
   end
 
-  defp context_merge(mod, context, %{} = data) do
+  def __merge__(mod, context, data) when is_map(data) do
+    context_merge(mod, context, data)
+  end
+
+  def __merge__(mod, _, return_value) do
+    raise_merge_failed!(mod, return_value)
+  end
+
+  defp context_merge(mod, context, data) do
     Map.merge(context, data, fn
-      _, v, v -> v
-      k, _, v when k in @reserved -> raise_merge_reserved!(mod, k, v)
-      _, _, v -> v
+      k, v1, v2 when k in @reserved ->
+        if v1 == v2, do: v1, else: raise_merge_reserved!(mod, k, v1)
+      _, _, v ->
+        v
     end)
   end
 
-  defp context_merge(mod, context, data) when is_list(data) do
-    context_merge(mod, context, Map.new(data))
-  end
-
-  defp context_merge(mod, _context, data) do
-    raise_merge_failed!(mod, data)
-  end
-
-  defp raise_merge_failed!(mod, data) do
-    raise "expected ExUnit callback in #{inspect mod} to return :ok " <>
-          "or {:ok, keyword | map}, got #{inspect data} instead"
+  defp raise_merge_failed!(mod, return_value) do
+    raise "expected ExUnit callback in #{inspect mod} to return :ok | keyword | map, " <>
+          "got #{inspect return_value} instead"
   end
 
   defp raise_merge_reserved!(mod, key, value) do
-    raise "expected ExUnit callback in #{inspect mod} is trying to set " <>
+    raise "ExUnit callback in #{inspect mod} is trying to set " <>
           "reserved field #{inspect key} to #{inspect value}"
   end
 
@@ -201,24 +286,37 @@ defmodule ExUnit.Callbacks do
     acc =
       case callbacks do
         [] ->
-          quote do: {:ok, context}
-        [h|t] ->
-          Enum.reduce t, compile_merge(h), fn(callback, acc) ->
+          quote do: context
+        [h | t] ->
+          Enum.reduce t, compile_merge(h), fn callback_describe, acc ->
             quote do
-              {:ok, context} = unquote(acc)
-              unquote(compile_merge(callback))
+              context = unquote(acc)
+              unquote(compile_merge(callback_describe))
             end
           end
       end
 
     quote do
-      def __ex_unit__(unquote(kind), context), do: unquote(acc)
+      def __ex_unit__(unquote(kind), context) do
+        describe = Map.get(context, :describe, nil)
+        unquote(acc)
+      end
     end
   end
 
-  defp compile_merge(callback) do
+  defp compile_merge({callback, nil}) do
     quote do
       unquote(__MODULE__).__merge__(__MODULE__, context, unquote(callback)(context))
+    end
+  end
+
+  defp compile_merge({callback, describe}) do
+    quote do
+      if unquote(describe) == describe do
+        unquote(compile_merge({callback, nil}))
+      else
+        context
+      end
     end
   end
 end

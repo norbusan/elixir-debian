@@ -5,7 +5,8 @@ defmodule Mix.Tasks.Compile.AppTest do
 
   defmodule CustomProject do
     def project do
-      [app: :custom_project, version: "0.2.0"]
+      [app: :custom_project, version: "0.2.0",
+       description: "Some UTF-8 description (uma descrição em UTF-8)"]
     end
 
     def application do
@@ -66,6 +67,7 @@ defmodule Mix.Tasks.Compile.AppTest do
       assert contents =~ "0.2.0"
       assert contents =~ "{maxT,infinity}"
       assert contents =~ "{applications,[kernel,stdlib,elixir,example_app]}"
+      assert contents =~ "Some UTF-8 description (uma descrição em UTF-8)"
     end
   end
 
@@ -104,7 +106,8 @@ defmodule Mix.Tasks.Compile.AppTest do
     Mix.Project.push InvalidVsnProject
 
     in_fixture "no_mixfile", fn ->
-      assert_raise Mix.Error, "Expected :version to be a SemVer version", fn ->
+      message = "Expected :version to be a SemVer version, got: \"0.3\""
+      assert_raise Mix.Error, message, fn ->
         Mix.Tasks.Compile.App.run([])
       end
     end

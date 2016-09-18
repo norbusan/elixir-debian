@@ -10,10 +10,19 @@
 -define(system, 'Elixir.System').
 
 %% Top level types
--export_type([char_list/0, struct/0, as_boolean/1]).
+%% TODO: Deprecate char_list type by v1.5
+-export_type([charlist/0, char_list/0, struct/0, as_boolean/1, keyword/0, keyword/1]).
+-type charlist() :: string().
 -type char_list() :: string().
--type struct() :: #{'__struct__' => atom()}.
 -type as_boolean(T) :: T.
+-type keyword() :: [{atom(), any()}].
+-type keyword(T) :: [{atom(), T}].
+
+-ifdef(old_map_specs).
+-type struct() :: #{'__struct__' => atom(), atom() => any()}.
+-else.
+-type struct() :: #{'__struct__' := atom(), atom() => any()}.
+-endif.
 
 %% OTP Application API
 
@@ -67,13 +76,12 @@ start(_Type, _Args) ->
       ok
   end,
 
-  URIs = [{<<"ftp">>, 21},
-          {<<"sftp">>, 22},
-          {<<"tftp">>, 69},
-          {<<"http">>, 80},
-          {<<"https">>, 443},
-          {<<"ldap">>, 389}],
-  URIConfig = [{{uri, Scheme}, Port} || {Scheme, Port} <- URIs],
+  URIConfig = [{{uri, <<"ftp">>}, 21},
+               {{uri, <<"sftp">>}, 22},
+               {{uri, <<"tftp">>}, 69},
+               {{uri, <<"http">>}, 80},
+               {{uri, <<"https">>}, 443},
+               {{uri, <<"ldap">>}, 389}],
   CompilerOpts = #{docs => true, ignore_module_conflict => false,
                    debug_info => true, warnings_as_errors => false},
   {ok, [[Home] | _]} = init:get_argument(home),
@@ -184,7 +192,7 @@ eval_quoted(Tree, Binding, #{line := Line} = E) ->
   eval_forms(elixir_quote:linify(Line, Tree), Binding, E).
 
 %% Handle forms evaluation. The main difference to
-%% to eval_quoted is that it does not linefy the given
+%% eval_quoted is that it does not linefy the given
 %% args.
 
 eval_forms(Tree, Binding, Opts) when is_list(Opts) ->
@@ -237,7 +245,7 @@ get_stacktrace(CurrentStack, CurrentStack) ->
 get_stacktrace([StackItem | Stacktrace], CurrentStack) ->
   [StackItem | get_stacktrace(Stacktrace, CurrentStack)].
 
-%% Converts a quoted expression to erlang abstract format
+%% Converts a quoted expression to Erlang abstract format
 
 quoted_to_erl(Quoted, Env) ->
   quoted_to_erl(Quoted, Env, elixir_env:env_to_scope(Env)).
@@ -247,10 +255,10 @@ quoted_to_erl(Quoted, Env, Scope) ->
   {Erl, NewScope}    = elixir_translator:translate(Expanded, Scope),
   {Erl, NewEnv, NewScope}.
 
-%% Converts a given string (char list) into quote expression
+%% Converts a given string (charlist) into quote expression
 
 string_to_quoted(String, StartLine, File, Opts) when is_integer(StartLine), is_binary(File) ->
-  case elixir_tokenizer:tokenize(String, StartLine, [{file, File}|Opts]) of
+  case elixir_tokenizer:tokenize(String, StartLine, [{file, File} | Opts]) of
     {ok, _Line, _Column, Tokens} ->
       put(elixir_parser_file, File),
       try elixir_parser:parse(Tokens) of
