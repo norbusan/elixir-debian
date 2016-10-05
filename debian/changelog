@@ -1,3 +1,9 @@
+elixir-lang (1.3.3-2) unstable; urgency=medium
+
+  * Add erlang-crypto to Build-Depends (Closes: #837236)
+
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Wed, 05 Oct 2016 22:43:17 +0300
+
 elixir-lang (1.3.3-1) unstable; urgency=medium
 
   * New upstream release
