@@ -2,7 +2,6 @@ Source: elixir-lang
 Section: interpreters
 Priority: optional
 Maintainer: Evgeny Golyshev <eugulixes@gmail.com>
-Uploaders: Antonio Terceiro <terceiro@debian.org>
 Build-Depends: debhelper (>= 9~),
                erlang-crypto (>= 1:18),
                erlang-dev (>= 1:18),
