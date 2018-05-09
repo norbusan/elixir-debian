@@ -3,11 +3,12 @@ Section: interpreters
 Priority: optional
 Maintainer: Evgeny Golyshev <eugulixes@gmail.com>
 Build-Depends: debhelper (>= 9~),
-               erlang-crypto (>= 1:18),
-               erlang-dev (>= 1:18),
-               erlang-dialyzer (>= 1:18),
-               erlang-eunit (>= 1:18),
-               erlang-parsetools (>= 1:18),
+               erlang-crypto (>= 1:19),
+               erlang-dev (>= 1:19),
+               erlang-dialyzer (>= 1:19),
+               erlang-eunit (>= 1:19),
+               erlang-parsetools (>= 1:19),
+               erlang-src (>= 1:19),
                git,
                rebar
 Standards-Version: 3.9.8
@@ -18,7 +19,7 @@ Testsuite: autopkgtest
 
 Package: elixir
 Architecture: all
-Depends: erlang-base (>= 1:18) | erlang-base-hipe (>= 1:18),
+Depends: erlang-base (>= 1:19) | erlang-base-hipe (>= 1:19),
          ${misc:Depends}
 Description: functional meta-programming aware language
  Elixir is a functional meta-programming aware language intended primarily for
