@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Kernel.SigilsTest do
   use ExUnit.Case, async: true
@@ -11,8 +11,8 @@ defmodule Kernel.SigilsTest do
 
   test "sigil s with heredoc" do
     assert "  foo\n\n" == ~s"""
-      f#{:o}o\n
-    """
+             f#{:o}o\n
+           """
   end
 
   test "sigil S" do
@@ -29,14 +29,17 @@ defmodule Kernel.SigilsTest do
     assert ~S(f\no) == "f\\no"
     assert ~S(foo\)) == "foo)"
     assert ~S[foo\]] == "foo]"
+  end
+
+  test "sigil S newline" do
     assert ~S(foo\
-bar) == "foo\\\nbar"
+bar) in ["foo\\\nbar", "foo\\\r\nbar"]
   end
 
   test "sigil S with heredoc" do
     assert "  f\#{o}o\\n\n" == ~S"""
-      f#{o}o\n
-    """
+             f#{o}o\n
+           """
   end
 
   test "sigil s/S expand to binary when possible" do
@@ -86,7 +89,7 @@ bar) == "foo\\\nbar"
     bad_modifier = quote(do: ~w(foo bar baz)x)
     assert %ArgumentError{} = catch_error(Code.eval_quoted(bad_modifier))
 
-    assert ~w(Foo Bar)a == [:"Foo", :"Bar"]
+    assert ~w(Foo Bar)a == [:Foo, :Bar]
     assert ~w(Foo.#{Bar}.Baz)a == [:"Foo.Elixir.Bar.Baz"]
     assert ~w(Foo.Bar)s == ["Foo.Bar"]
     assert ~w(Foo.#{Bar})c == ['Foo.Elixir.Bar']
@@ -111,10 +114,10 @@ bar) == "foo\\\nbar"
     assert ~W(foo bar baz)a == [:foo, :bar, :baz]
     assert ~W(foo bar baz)c == ['foo', 'bar', 'baz']
 
-    bad_modifier = quote do: ~W(foo bar baz)x
+    bad_modifier = quote(do: ~W(foo bar baz)x)
     assert %ArgumentError{} = catch_error(Code.eval_quoted(bad_modifier))
 
-    assert ~W(Foo #{Bar})a == [:"Foo", :"\#{Bar}"]
+    assert ~W(Foo #{Bar})a == [:Foo, :"\#{Bar}"]
     assert ~W(Foo.Bar.Baz)a == [:"Foo.Bar.Baz"]
   end
 

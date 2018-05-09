@@ -6,23 +6,38 @@ defmodule Mix.Tasks.Deps.Update do
   @moduledoc """
   Updates the given dependencies.
 
-  Since this is a destructive action, update of all dependencies
-  can only happen by passing the `--all` command line option.
+  The given dependencies and the projects they depend on will
+  be unlocked and updated to the latest version according to their
+  version requirements.
+
+  Since this is a destructive action, updating all dependencies
+  only occurs when the `--all` command line option is passed.
 
   All dependencies are automatically recompiled after update.
 
+  ## mix deps.unlock + mix deps.get
+
+  Upgrading a dependency often requires the projects it depends on
+  to upgrade too. If you would rather update a single dependency and
+  not touch its children, you can explicitly unlock the single dependency
+  and run `mix deps.get`:
+
+      $ mix deps.unlock some_dep
+      $ mix deps.get
+
   ## Command line options
 
-    * `--all` - update all dependencies
-    * `--only` - only fetch dependencies for given environment
-    * `--no-archives-check` - do not check archives before fetching deps
+    * `--all` - updates all dependencies
+    * `--only` - only fetches dependencies for given environment
+    * `--no-archives-check` - does not check archives before fetching deps
   """
-  @spec run(OptionParser.argv) :: [atom]
+
   def run(args) do
     unless "--no-archives-check" in args do
-      Mix.Task.run "archive.check", args
+      Mix.Task.run("archive.check", args)
     end
-    Mix.Project.get!
+
+    Mix.Project.get!()
     {opts, rest, _} = OptionParser.parse(args, switches: [all: :boolean, only: :string])
 
     # Fetch all deps by default unless --only is given
@@ -30,19 +45,23 @@ defmodule Mix.Tasks.Deps.Update do
 
     cond do
       opts[:all] ->
-        Mix.Dep.Fetcher.all(Mix.Dep.Lock.read, %{}, fetch_opts)
+        Mix.Dep.Fetcher.all(Mix.Dep.Lock.read(), %{}, fetch_opts)
+
       rest != [] ->
-        {old, new} = Map.split(Mix.Dep.Lock.read, to_app_names(rest))
+        {old, new} = Map.split(Mix.Dep.Lock.read(), to_app_names(rest))
         Mix.Dep.Fetcher.by_name(rest, old, new, fetch_opts)
+
       true ->
-        Mix.raise "\"mix deps.update\" expects dependencies as arguments or " <>
-                                  "the --all option to update all dependencies"
+        Mix.raise(
+          "\"mix deps.update\" expects dependencies as arguments or " <>
+            "the --all option to update all dependencies"
+        )
     end
   end
 
   defp to_app_names(given) do
-    Enum.map given, fn(app) ->
+    Enum.map(given, fn app ->
       if is_binary(app), do: String.to_atom(app), else: app
-    end
+    end)
   end
 end

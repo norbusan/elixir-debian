@@ -21,7 +21,7 @@ defmodule Logger.Formatter do
     * `$level`    - the log level
     * `$node`     - the node that prints the message
     * `$metadata` - user controlled data presented in `"key=val key2=val2"` format
-    * `$levelpad` - set to a single space if level is 4 characters long,
+    * `$levelpad` - sets to a single space if level is 4 characters long,
       otherwise set to the empty space. Used to align the message after level.
 
   Backends typically allow developers to supply such control
@@ -32,7 +32,7 @@ defmodule Logger.Formatter do
 
   ## Metadata
 
-  Metadata to be sent to the Logger can be read and written with
+  Metadata to be sent to the logger can be read and written with
   the `Logger.metadata/0` and `Logger.metadata/1` functions. For example,
   you can set `Logger.metadata([user_id: 13])` to add user_id metadata
   to the current process. The user can configure the backend to chose
@@ -47,23 +47,20 @@ defmodule Logger.Formatter do
   @replacement "�"
 
   @doc """
-  Prune non-valid UTF-8 codepoints.
+  Prunes non-valid UTF-8 codepoints.
 
   Typically called after formatting when the data cannot be printed.
   """
-  @spec prune(IO.chardata) :: IO.chardata
+  @spec prune(IO.chardata()) :: IO.chardata()
   def prune(binary) when is_binary(binary), do: prune_binary(binary, "")
-  def prune([h | t]) when h in 0..1114111, do: [h | prune(t)]
+  def prune([h | t]) when h in 0..1_114_111, do: [h | prune(t)]
   def prune([h | t]), do: [prune(h) | prune(t)]
   def prune([]), do: []
   def prune(_), do: @replacement
 
-  defp prune_binary(<<h::utf8, t::binary>>, acc),
-    do: prune_binary(t, <<acc::binary, h::utf8>>)
-  defp prune_binary(<<_, t::binary>>, acc),
-    do: prune_binary(t, <<acc::binary, @replacement>>)
-  defp prune_binary(<<>>, acc),
-    do: acc
+  defp prune_binary(<<h::utf8, t::binary>>, acc), do: prune_binary(t, <<acc::binary, h::utf8>>)
+  defp prune_binary(<<_, t::binary>>, acc), do: prune_binary(t, <<acc::binary, @replacement>>)
+  defp prune_binary(<<>>, acc), do: acc
 
   @doc ~S"""
   Compiles a format string into a data structure that the `format/5` can handle.
@@ -84,26 +81,49 @@ defmodule Logger.Formatter do
   def compile({mod, fun}) when is_atom(mod) and is_atom(fun), do: {mod, fun}
 
   def compile(str) do
-    for part <- Regex.split(~r/(?<head>)\$[a-z]+(?<tail>)/, str, on: [:head, :tail], trim: true) do
+    regex = Regex.recompile!(~r/(?<head>)\$[a-z]+(?<tail>)/)
+
+    for part <- Regex.split(regex, str, on: [:head, :tail], trim: true) do
       case part do
         "$" <> code -> compile_code(String.to_atom(code))
-        _           -> part
+        _ -> part
       end
     end
   end
 
   defp compile_code(key) when key in @valid_patterns, do: key
+
   defp compile_code(key) when is_atom(key) do
-    raise(ArgumentError, message: "$#{key} is an invalid format pattern.")
+    raise ArgumentError, "$#{key} is an invalid format pattern."
   end
+
+  @doc """
+  Formats time as chardata.
+  """
+  def format_time({hh, mi, ss, ms}) do
+    [pad2(hh), ?:, pad2(mi), ?:, pad2(ss), ?., pad3(ms)]
+  end
+
+  @doc """
+  Formats date as chardata.
+  """
+  def format_date({yy, mm, dd}) do
+    [Integer.to_string(yy), ?-, pad2(mm), ?-, pad2(dd)]
+  end
+
+  defp pad3(int) when int < 10, do: [?0, ?0, Integer.to_string(int)]
+  defp pad3(int) when int < 100, do: [?0, Integer.to_string(int)]
+  defp pad3(int), do: Integer.to_string(int)
+
+  defp pad2(int) when int < 10, do: [?0, Integer.to_string(int)]
+  defp pad2(int), do: Integer.to_string(int)
 
   @doc """
   Takes a compiled format and injects the, level, timestamp, message and
   metadata listdict and returns a properly formatted string.
   """
-
-  @spec format({atom, atom} | [pattern | binary], Logger.level, Logger.message, time, Keyword.t) ::
-    IO.chardata
+  @spec format({atom, atom} | [pattern | binary], Logger.level(), Logger.message(), time, keyword) ::
+          IO.chardata()
   def format({mod, fun}, level, msg, ts, md) do
     apply(mod, fun, [level, msg, ts, md])
   end
@@ -114,13 +134,14 @@ defmodule Logger.Formatter do
     end
   end
 
-  defp output(:message, _, msg, _, _),        do: msg
-  defp output(:date, _, _, {date, _time}, _), do: Logger.Utils.format_date(date)
-  defp output(:time, _, _, {_date, time}, _), do: Logger.Utils.format_time(time)
-  defp output(:level, level, _, _, _),        do: Atom.to_string(level)
-  defp output(:node, _, _, _, _),             do: Atom.to_string(node())
+  defp output(:message, _, msg, _, _), do: msg
+  defp output(:date, _, _, {date, _time}, _), do: format_date(date)
+  defp output(:time, _, _, {_date, time}, _), do: format_time(time)
+  defp output(:level, level, _, _, _), do: Atom.to_string(level)
+  defp output(:node, _, _, _, _), do: Atom.to_string(node())
 
-  defp output(:metadata, _, _, _, []),        do: ""
+  defp output(:metadata, _, _, _, []), do: ""
+
   defp output(:metadata, _, _, _, meta) do
     Enum.map(meta, fn {key, val} ->
       [to_string(key), ?=, metadata(val), ?\s]
@@ -141,10 +162,12 @@ defmodule Logger.Formatter do
   defp metadata(pid) when is_pid(pid) do
     :erlang.pid_to_list(pid)
   end
+
   defp metadata(ref) when is_reference(ref) do
     '#Ref' ++ rest = :erlang.ref_to_list(ref)
     rest
   end
+
   defp metadata(atom) when is_atom(atom) do
     case Atom.to_string(atom) do
       "Elixir." <> rest -> rest
@@ -152,5 +175,6 @@ defmodule Logger.Formatter do
       binary -> binary
     end
   end
+
   defp metadata(other), do: to_string(other)
 end

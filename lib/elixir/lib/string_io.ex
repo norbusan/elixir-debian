@@ -40,7 +40,7 @@ defmodule StringIO do
       {"", ">"}
 
   """
-  @spec open(binary, Keyword.t) :: {:ok, pid}
+  @spec open(binary, keyword) :: {:ok, pid}
   def open(string, options \\ []) when is_binary(string) do
     GenServer.start_link(__MODULE__, {string, options}, [])
   end
@@ -99,158 +99,156 @@ defmodule StringIO do
 
   ## callbacks
 
+  @impl true
   def init({string, options}) do
     capture_prompt = options[:capture_prompt] || false
     {:ok, %{input: string, output: "", capture_prompt: capture_prompt}}
   end
 
-  def handle_info({:io_request, from, reply_as, req}, s) do
-    s = io_request(from, reply_as, req, s)
-    {:noreply, s}
+  @impl true
+  def handle_info({:io_request, from, reply_as, req}, state) do
+    state = io_request(from, reply_as, req, state)
+    {:noreply, state}
   end
 
-  def handle_info(msg, s) do
-    super(msg, s)
+  def handle_info(message, state) do
+    super(message, state)
   end
 
-  def handle_call(:contents, _from, %{input: input, output: output} = s) do
-    {:reply, {input, output}, s}
+  @impl true
+  def handle_call(:contents, _from, %{input: input, output: output} = state) do
+    {:reply, {input, output}, state}
   end
 
-  def handle_call(:flush, _from, %{output: output} = s) do
-    {:reply, output, %{s | output: ""}}
+  def handle_call(:flush, _from, %{output: output} = state) do
+    {:reply, output, %{state | output: ""}}
   end
 
-  def handle_call(:close, _from, %{input: input, output: output} = s) do
-    {:stop, :normal, {:ok, {input, output}}, s}
+  def handle_call(:close, _from, %{input: input, output: output} = state) do
+    {:stop, :normal, {:ok, {input, output}}, state}
   end
 
-  def handle_call(request, from, s) do
-    super(request, from, s)
+  def handle_call(request, from, state) do
+    super(request, from, state)
   end
 
-  defp io_request(from, reply_as, req, s) do
-    {reply, s} = io_request(req, s)
+  defp io_request(from, reply_as, req, state) do
+    {reply, state} = io_request(req, state)
     io_reply(from, reply_as, to_reply(reply))
-    s
+    state
   end
 
-  defp io_request({:put_chars, chars} = req, s) do
-    put_chars(:latin1, chars, req, s)
+  defp io_request({:put_chars, chars} = req, state) do
+    put_chars(:latin1, chars, req, state)
   end
 
-  defp io_request({:put_chars, m, f, as} = req, s) do
-    put_chars(:latin1, apply(m, f, as), req, s)
+  defp io_request({:put_chars, mod, fun, args} = req, state) do
+    put_chars(:latin1, apply(mod, fun, args), req, state)
   end
 
-  defp io_request({:put_chars, encoding, chars} = req, s) do
-    put_chars(encoding, chars, req, s)
+  defp io_request({:put_chars, encoding, chars} = req, state) do
+    put_chars(encoding, chars, req, state)
   end
 
-  defp io_request({:put_chars, encoding, mod, func, args} = req, s) do
-    put_chars(encoding, apply(mod, func, args), req, s)
+  defp io_request({:put_chars, encoding, mod, fun, args} = req, state) do
+    put_chars(encoding, apply(mod, fun, args), req, state)
   end
 
-  defp io_request({:get_chars, prompt, n}, s) when n >= 0 do
-    io_request({:get_chars, :latin1, prompt, n}, s)
+  defp io_request({:get_chars, prompt, count}, state) when count >= 0 do
+    io_request({:get_chars, :latin1, prompt, count}, state)
   end
 
-  defp io_request({:get_chars, encoding, prompt, n}, s) when n >= 0 do
-    get_chars(encoding, prompt, n, s)
+  defp io_request({:get_chars, encoding, prompt, count}, state) when count >= 0 do
+    get_chars(encoding, prompt, count, state)
   end
 
-  defp io_request({:get_line, prompt}, s) do
-    io_request({:get_line, :latin1, prompt}, s)
+  defp io_request({:get_line, prompt}, state) do
+    io_request({:get_line, :latin1, prompt}, state)
   end
 
-  defp io_request({:get_line, encoding, prompt}, s) do
-    get_line(encoding, prompt, s)
+  defp io_request({:get_line, encoding, prompt}, state) do
+    get_line(encoding, prompt, state)
   end
 
-  defp io_request({:get_until, prompt, mod, fun, args}, s) do
-    io_request({:get_until, :latin1, prompt, mod, fun, args}, s)
+  defp io_request({:get_until, prompt, mod, fun, args}, state) do
+    io_request({:get_until, :latin1, prompt, mod, fun, args}, state)
   end
 
-  defp io_request({:get_until, encoding, prompt, mod, fun, args}, s) do
-    get_until(encoding, prompt, mod, fun, args, s)
+  defp io_request({:get_until, encoding, prompt, mod, fun, args}, state) do
+    get_until(encoding, prompt, mod, fun, args, state)
   end
 
-  defp io_request({:get_password, encoding}, s) do
-    get_line(encoding, "", s)
+  defp io_request({:get_password, encoding}, state) do
+    get_line(encoding, "", state)
   end
 
-  defp io_request({:setopts, _opts}, s) do
-    {{:error, :enotsup}, s}
+  defp io_request({:setopts, _opts}, state) do
+    {{:error, :enotsup}, state}
   end
 
-  defp io_request(:getopts, s) do
-    {{:ok, [binary: true, encoding: :unicode]}, s}
+  defp io_request(:getopts, state) do
+    {{:ok, [binary: true, encoding: :unicode]}, state}
   end
 
-  defp io_request({:get_geometry, :columns}, s) do
-    {{:error, :enotsup}, s}
+  defp io_request({:get_geometry, :columns}, state) do
+    {{:error, :enotsup}, state}
   end
 
-  defp io_request({:get_geometry, :rows}, s) do
-    {{:error, :enotsup}, s}
+  defp io_request({:get_geometry, :rows}, state) do
+    {{:error, :enotsup}, state}
   end
 
-  defp io_request({:requests, reqs}, s) do
-    io_requests(reqs, {:ok, s})
+  defp io_request({:requests, reqs}, state) do
+    io_requests(reqs, {:ok, state})
   end
 
-  defp io_request(_, s) do
-    {{:error, :request}, s}
+  defp io_request(_, state) do
+    {{:error, :request}, state}
   end
 
   ## put_chars
 
-  defp put_chars(encoding, chars, req, %{output: output} = s) do
+  defp put_chars(encoding, chars, req, %{output: output} = state) do
     case :unicode.characters_to_binary(chars, encoding, :unicode) do
       string when is_binary(string) ->
-        {:ok, %{s | output: output <> string}}
+        {:ok, %{state | output: output <> string}}
+
       {_, _, _} ->
-        {{:error, req}, s}
+        {{:error, req}, state}
     end
   end
 
   ## get_chars
 
-  defp get_chars(encoding, prompt, n,
-                 %{input: input, output: output, capture_prompt: capture_prompt} = s) do
-    case do_get_chars(input, encoding, n) do
+  defp get_chars(encoding, prompt, count, %{input: input} = state) do
+    case get_chars(input, encoding, count) do
       {:error, _} = error ->
-        {error, s}
-      {result, input} ->
-        s =
-          if capture_prompt do
-            %{s | output: <<output::binary, IO.chardata_to_string(prompt)::binary>>}
-          else
-            s
-          end
+        {error, state}
 
-        {result, %{s | input: input}}
+      {result, input} ->
+        {result, state_after_read(state, input, prompt, 1)}
     end
   end
 
-  defp do_get_chars("", _encoding, _n) do
+  defp get_chars("", _encoding, _count) do
     {:eof, ""}
   end
 
-  defp do_get_chars(input, :latin1, n) when byte_size(input) < n do
+  defp get_chars(input, :latin1, count) when byte_size(input) < count do
     {input, ""}
   end
 
-  defp do_get_chars(input, :latin1, n) do
-    <<chars::binary-size(n), rest::binary>> = input
+  defp get_chars(input, :latin1, count) do
+    <<chars::binary-size(count), rest::binary>> = input
     {chars, rest}
   end
 
-  defp do_get_chars(input, encoding, n) do
+  defp get_chars(input, encoding, count) do
     try do
-      case :file_io_server.count_and_find(input, n, encoding) do
-        {buf_count, split_pos} when buf_count < n or split_pos == :none ->
+      case :file_io_server.count_and_find(input, count, encoding) do
+        {buf_count, split_pos} when buf_count < count or split_pos == :none ->
           {input, ""}
+
         {_buf_count, split_pos} ->
           <<chars::binary-size(split_pos), rest::binary>> = input
           {chars, rest}
@@ -263,94 +261,91 @@ defmodule StringIO do
 
   ## get_line
 
-  defp get_line(encoding, prompt,
-                %{input: input, output: output, capture_prompt: capture_prompt} = s) do
-    case :unicode.characters_to_list(input, encoding) do
-      {:error, _, _} ->
-        {{:error, :collect_line}, s}
-      {:incomplete, _, _} ->
-        {{:error, :collect_line}, s}
-      chars ->
-        {result, input} = do_get_line(chars, encoding)
+  defp get_line(encoding, prompt, %{input: input} = state) do
+    case bytes_until_eol(input, encoding, 0) do
+      {:split, 0} ->
+        {:eof, state_after_read(state, "", prompt, 1)}
 
-        s =
-          if capture_prompt do
-            %{s | output: <<output::binary, IO.chardata_to_string(prompt)::binary>>}
-          else
-            s
-          end
+      {:split, count} ->
+        {result, remainder} = :erlang.split_binary(input, count)
+        {result, state_after_read(state, remainder, prompt, 1)}
 
-        {result, %{s | input: input}}
+      {:replace_split, count} ->
+        {result, remainder} = :erlang.split_binary(input, count)
+        result = binary_part(result, 0, byte_size(result) - 2) <> "\n"
+        {result, state_after_read(state, remainder, prompt, 1)}
+
+      :error ->
+        {{:error, :collect_line}, state}
     end
-  end
-
-  defp do_get_line('', _encoding) do
-    {:eof, ""}
-  end
-
-  defp do_get_line(chars, encoding) do
-    {line, rest} = collect_line(chars)
-    {:unicode.characters_to_binary(line, encoding),
-      :unicode.characters_to_binary(rest, encoding)}
   end
 
   ## get_until
 
-  defp get_until(encoding, prompt, mod, fun, args,
-                 %{input: input, output: output, capture_prompt: capture_prompt} = s) do
-    case :unicode.characters_to_list(input, encoding) do
-      {:error, _, _} ->
-        {:error, s}
-      {:incomplete, _, _} ->
-        {:error, s}
-      chars ->
-        {result, input, count} = do_get_until(chars, encoding, mod, fun, args)
-
+  defp get_until(encoding, prompt, mod, fun, args, %{input: input} = state) do
+    case get_until(input, encoding, mod, fun, args, [], 0) do
+      {result, input, count} ->
         input =
           case input do
             :eof -> ""
-            _ -> :unicode.characters_to_binary(input, encoding)
+            _ -> list_to_binary(input, encoding)
           end
 
-        s =
-          if capture_prompt do
-            %{s | output: <<output::binary, :binary.copy(IO.chardata_to_string(prompt), count)::binary>>}
-          else
-            s
-          end
+        {get_until_result(result, encoding), state_after_read(state, input, prompt, count)}
 
-        {result, %{s | input: input}}
+      :error ->
+        {:error, state}
     end
   end
 
-  defp do_get_until(chars, encoding, mod, fun, args, continuation \\ [], count \\ 0)
-
-  defp do_get_until('', encoding, mod, fun, args, continuation, count) do
+  defp get_until("", encoding, mod, fun, args, continuation, count) do
     case apply(mod, fun, [continuation, :eof | args]) do
       {:done, result, rest} ->
         {result, rest, count + 1}
+
       {:more, next_continuation} ->
-        do_get_until('', encoding, mod, fun, args, next_continuation, count + 1)
+        get_until("", encoding, mod, fun, args, next_continuation, count + 1)
     end
   end
 
-  defp do_get_until(chars, encoding, mod, fun, args, continuation, count) do
-    {line, rest} = collect_line(chars)
+  defp get_until(chars, encoding, mod, fun, args, continuation, count) do
+    case bytes_until_eol(chars, encoding, 0) do
+      {kind, size} when kind in [:split, :replace_split] ->
+        {line, rest} = :erlang.split_binary(chars, size)
 
-    case apply(mod, fun, [continuation, line | args]) do
-      {:done, result, :eof} ->
-        {result, rest, count + 1}
-      {:done, result, extra} ->
-        {result, extra ++ rest, count + 1}
-      {:more, next_continuation} ->
-        do_get_until(rest, encoding, mod, fun, args, next_continuation, count + 1)
+        case apply(mod, fun, [continuation, binary_to_list(line, encoding) | args]) do
+          {:done, result, :eof} ->
+            {result, rest, count + 1}
+
+          {:done, result, extra} ->
+            {result, extra ++ binary_to_list(rest, encoding), count + 1}
+
+          {:more, next_continuation} ->
+            get_until(rest, encoding, mod, fun, args, next_continuation, count + 1)
+        end
+
+      :error ->
+        :error
     end
   end
+
+  defp binary_to_list(data, _) when is_list(data), do: data
+  defp binary_to_list(data, :unicode) when is_binary(data), do: String.to_charlist(data)
+  defp binary_to_list(data, :latin1) when is_binary(data), do: :erlang.binary_to_list(data)
+
+  defp list_to_binary(data, _) when is_binary(data), do: data
+  defp list_to_binary(data, :unicode) when is_list(data), do: List.to_string(data)
+  defp list_to_binary(data, :latin1) when is_list(data), do: :erlang.list_to_binary(data)
+
+  # From http://erlang.org/doc/apps/stdlib/io_protocol.html: result can be any
+  # Erlang term, but if it is a list(), the I/O server can convert it to a binary().
+  defp get_until_result(data, encoding) when is_list(data), do: list_to_binary(data, encoding)
+  defp get_until_result(data, _), do: data
 
   ## io_requests
 
-  defp io_requests([r | rs], {:ok, s}) do
-    io_requests(rs, io_request(r, s))
+  defp io_requests([req | rest], {:ok, state}) do
+    io_requests(rest, io_request(req, state))
   end
 
   defp io_requests(_, result) do
@@ -359,28 +354,31 @@ defmodule StringIO do
 
   ## helpers
 
-  defp collect_line(chars) do
-    collect_line(chars, [])
+  defp state_after_read(%{capture_prompt: false} = state, remainder, _prompt, _count) do
+    %{state | input: remainder}
   end
 
-  defp collect_line([], stack) do
-    {:lists.reverse(stack), []}
+  defp state_after_read(%{capture_prompt: true, output: output} = state, remainder, prompt, count) do
+    output = <<output::binary, :binary.copy(IO.chardata_to_string(prompt), count)::binary>>
+    %{state | input: remainder, output: output}
   end
 
-  defp collect_line([?\r, ?\n | rest], stack) do
-    {:lists.reverse([?\n | stack]), rest}
+  defp bytes_until_eol("", _, count), do: {:split, count}
+  defp bytes_until_eol(<<"\r\n"::binary, _::binary>>, _, count), do: {:replace_split, count + 2}
+  defp bytes_until_eol(<<"\n"::binary, _::binary>>, _, count), do: {:split, count + 1}
+
+  defp bytes_until_eol(<<head::utf8, tail::binary>>, :unicode, count) do
+    bytes_until_eol(tail, :unicode, count + byte_size(<<head::utf8>>))
   end
 
-  defp collect_line([?\n | rest], stack) do
-    {:lists.reverse([?\n | stack]), rest}
+  defp bytes_until_eol(<<_, tail::binary>>, :latin1, count) do
+    bytes_until_eol(tail, :latin1, count + 1)
   end
 
-  defp collect_line([h | t], stack) do
-    collect_line(t, [h | stack])
-  end
+  defp bytes_until_eol(<<_::binary>>, _, _), do: :error
 
   defp io_reply(from, reply_as, reply) do
-    send from, {:io_reply, reply_as, reply}
+    send(from, {:io_reply, reply_as, reply})
   end
 
   defp to_reply(list) when is_list(list), do: IO.chardata_to_string(list)

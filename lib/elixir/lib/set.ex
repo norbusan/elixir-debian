@@ -6,17 +6,17 @@ defmodule Set do
   """
 
   @type value :: any
-  @type values :: [ value ]
+  @type values :: [value]
   @type t :: map
 
-  # TODO: Deprecate every function by 1.4
+  # TODO: Remove by 2.0
+  # (hard-deprecated in elixir_dispatch)
+
   defmacrop target(set) do
     quote do
       case unquote(set) do
-        %{__struct__: x} when is_atom(x) ->
-          x
-        x ->
-          unsupported_set(x)
+        %module{} -> module
+        set -> unsupported_set(set)
       end
     end
   end
@@ -34,7 +34,8 @@ defmodule Set do
     else
       Enumerable.reduce(set2, {:cont, set1}, fn v, acc ->
         {:cont, target1.delete(acc, v)}
-      end) |> elem(1)
+      end)
+      |> elem(1)
     end
   end
 
@@ -48,9 +49,10 @@ defmodule Set do
       Enumerable.reduce(set2, {:cont, true}, fn member, acc ->
         case target1.member?(set1, member) do
           false -> {:cont, acc}
-          _     -> {:halt, false}
+          _ -> {:halt, false}
         end
-      end) |> elem(1)
+      end)
+      |> elem(1)
     end
   end
 
@@ -75,7 +77,6 @@ defmodule Set do
     end
   end
 
-
   def intersection(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -85,15 +86,14 @@ defmodule Set do
     else
       Enumerable.reduce(set1, {:cont, target1.new}, fn v, acc ->
         {:cont, if(target2.member?(set2, v), do: target1.put(acc, v), else: acc)}
-      end) |> elem(1)
+      end)
+      |> elem(1)
     end
   end
-
 
   def member?(set, value) do
     target(set).member?(set, value)
   end
-
 
   def put(set, value) do
     target(set).put(set, value)
@@ -127,7 +127,8 @@ defmodule Set do
     else
       Enumerable.reduce(set2, {:cont, set1}, fn v, acc ->
         {:cont, target1.put(acc, v)}
-      end) |> elem(1)
+      end)
+      |> elem(1)
     end
   end
 
@@ -135,12 +136,13 @@ defmodule Set do
     Enumerable.reduce(set1, {:cont, true}, fn member, acc ->
       case target2.member?(set2, member) do
         true -> {:cont, acc}
-        _    -> {:halt, false}
+        _ -> {:halt, false}
       end
-    end) |> elem(1)
+    end)
+    |> elem(1)
   end
 
   defp unsupported_set(set) do
-    raise ArgumentError, "unsupported set: #{inspect set}"
+    raise ArgumentError, "unsupported set: #{inspect(set)}"
   end
 end

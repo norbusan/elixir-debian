@@ -24,9 +24,18 @@ defmodule ExUnit.Diff do
 
   # Structs
   def script(%name{} = left, %name{} = right) do
-    left = Map.from_struct(left)
-    right = Map.from_struct(right)
-    script_map(left, right, inspect(name))
+    if Inspect.impl_for(left) != Inspect.Any do
+      inspect_left = inspect(left)
+      inspect_right = inspect(right)
+
+      if inspect_left != inspect_right do
+        script_string(inspect_left, inspect_right)
+      else
+        script_struct(left, right)
+      end
+    else
+      script_struct(left, right)
+    end
   end
 
   # Maps
@@ -40,13 +49,11 @@ defmodule ExUnit.Diff do
 
   # Char lists and lists
   def script(left, right) when is_list(left) and is_list(right) do
-    cond do
-      Inspect.List.printable?(left) and Inspect.List.printable?(right) ->
-        script_string(List.to_string(left), List.to_string(right), ?')
-      Inspect.List.keyword?(left) and Inspect.List.keyword?(right) ->
-        script_keyword(left, right)
-      true ->
-        script_list(left, right, [])
+    if List.ascii_printable?(left) and List.ascii_printable?(right) do
+      script_string(List.to_string(left), List.to_string(right), ?')
+    else
+      keywords? = Inspect.List.keyword?(left) and Inspect.List.keyword?(right)
+      script_list_new(left, right, keywords?)
     end
   end
 
@@ -70,9 +77,12 @@ defmodule ExUnit.Diff do
   defp script_string(string1, string2, token) do
     length1 = String.length(string1)
     length2 = String.length(string2)
+
     if bag_distance(string1, string2) / max(length1, length2) <= 0.6 do
-      string1 = Inspect.BitString.escape(string1, token)
-      string2 = Inspect.BitString.escape(string2, token)
+      {escaped1, _} = Code.Identifier.escape(string1, token)
+      {escaped2, _} = Code.Identifier.escape(string2, token)
+      string1 = IO.iodata_to_binary(escaped1)
+      string2 = IO.iodata_to_binary(escaped2)
       [{:eq, <<token>>}, script_string(string1, string2), {:eq, <<token>>}]
     end
   end
@@ -80,6 +90,13 @@ defmodule ExUnit.Diff do
   defp script_string(string1, string2) do
     String.myers_difference(string1, string2)
   end
+
+  defp check_if_proper_and_get_length([_ | rest], length),
+    do: check_if_proper_and_get_length(rest, length + 1)
+
+  defp check_if_proper_and_get_length([], length), do: {true, length}
+
+  defp check_if_proper_and_get_length(_other, length), do: {false, length + 1}
 
   # The algorithm is outlined in the
   # "String Matching with Metric Trees Using an Approximate Distance"
@@ -103,6 +120,7 @@ defmodule ExUnit.Diff do
       {char, rest} ->
         bag = Map.update(bag, char, 1, fun)
         string_to_bag(rest, bag, fun)
+
       nil ->
         bag
     end
@@ -113,80 +131,104 @@ defmodule ExUnit.Diff do
       case Map.fetch(bag2, char) do
         {:ok, count2} ->
           sum + max(count1 - count2, 0)
+
         :error ->
           sum + count1
       end
     end)
   end
 
-  defp script_keyword(list1, list2) do
-    path = {0, 0, list1, list2, []}
-    result =
-      find_script(0, length(list1) + length(list2), [path])
-      |> format_each_fragment([])
-    [{:eq, "["}, result, {:eq, "]"}]
+  defp script_list_new(list1, list2, keywords?) do
+    {proper1?, length1} = check_if_proper_and_get_length(list1, 0)
+    {proper2?, length2} = check_if_proper_and_get_length(list2, 0)
+
+    if proper1? and proper2? do
+      initial_path = {0, 0, list1, list2, []}
+
+      result =
+        find_script(0, length1 + length2, [initial_path], keywords?)
+        |> format_each_fragment([], keywords?)
+
+      [{:eq, "["}, result, {:eq, "]"}]
+    else
+      script_list(list1, list2, [])
+    end
   end
 
-  defp format_each_fragment([{:diff, script}], []),
-    do: script
+  defp format_each_fragment([{:diff, script}], [], _keywords?), do: script
 
-  defp format_each_fragment([{kind, elems}], []),
-    do: [format_fragment(kind, elems)]
+  defp format_each_fragment([{kind, elems}], [], keywords?),
+    do: [format_fragment(kind, elems, keywords?)]
 
-  defp format_each_fragment([_, _] = fragments, acc) do
+  defp format_each_fragment([_, _] = fragments, acc, keywords?) do
     result =
       case fragments do
         [diff: script1, diff: script2] ->
           [script1, {:eq, ", "}, script2]
 
         [{:diff, script}, {kind, elems}] ->
-          [script, {kind, ", "}, format_fragment(kind, elems)]
+          [script, {kind, ", "}, format_fragment(kind, elems, keywords?)]
 
         [{kind, elems}, {:diff, script}] ->
-          [format_fragment(kind, elems), {kind, ", "}, script]
+          [format_fragment(kind, elems, keywords?), {kind, ", "}, script]
 
         [del: elems1, ins: elems2] ->
-          [format_fragment(:del, elems1), format_fragment(:ins, elems2)]
+          [format_fragment(:del, elems1, keywords?), format_fragment(:ins, elems2, keywords?)]
 
         [{:eq, elems1}, {kind, elems2}] ->
-          [format_fragment(:eq, elems1), {kind, ", "}, format_fragment(kind, elems2)]
+          [
+            format_fragment(:eq, elems1, keywords?),
+            {kind, ", "},
+            format_fragment(kind, elems2, keywords?)
+          ]
 
         [{kind, elems1}, {:eq, elems2}] ->
-          [format_fragment(kind, elems1), {kind, ", "}, format_fragment(:eq, elems2)]
+          [
+            format_fragment(kind, elems1, keywords?),
+            {kind, ", "},
+            format_fragment(:eq, elems2, keywords?)
+          ]
       end
+
     Enum.reverse(acc, result)
   end
 
-  defp format_each_fragment([{:diff, script} | rest], acc) do
-    format_each_fragment(rest, [{:eq, ", "}, script | acc])
+  defp format_each_fragment([{:diff, script} | rest], acc, keywords?) do
+    format_each_fragment(rest, [{:eq, ", "}, script | acc], keywords?)
   end
 
-  defp format_each_fragment([{kind, elems} | rest], acc) do
-    new_acc = [{kind, ", "}, format_fragment(kind, elems) | acc]
-    format_each_fragment(rest, new_acc)
+  defp format_each_fragment([{kind, elems} | rest], acc, keywords?) do
+    new_acc = [{kind, ", "}, format_fragment(kind, elems, keywords?) | acc]
+    format_each_fragment(rest, new_acc, keywords?)
   end
 
-  defp format_fragment(kind, elems) do
-    formatter = fn {key, val} ->
-      format_key_value(key, val, true)
+  defp format_fragment(kind, elems, keywords?) do
+    formatter = fn
+      {key, val} when keywords? ->
+        format_key_value(key, val, true)
+
+      elem ->
+        inspect(elem)
     end
+
     {kind, Enum.map_join(elems, ", ", formatter)}
   end
 
-  defp find_script(envelope, max, _paths) when envelope > max do
+  defp find_script(envelope, max, _paths, _keywords?) when envelope > max do
     nil
   end
 
-  defp find_script(envelope, max, paths) do
-    case each_diagonal(-envelope, envelope, paths, []) do
+  defp find_script(envelope, max, paths, keywords?) do
+    case each_diagonal(-envelope, envelope, paths, [], keywords?) do
       {:done, edits} ->
         compact_reverse(edits, [])
-      {:next, paths} -> find_script(envelope + 1, max, paths)
+
+      {:next, paths} ->
+        find_script(envelope + 1, max, paths, keywords?)
     end
   end
 
-  defp compact_reverse([], acc),
-    do: acc
+  defp compact_reverse([], acc), do: acc
 
   defp compact_reverse([{:diff, _} = fragment | rest], acc),
     do: compact_reverse(rest, [fragment | acc])
@@ -197,70 +239,72 @@ defmodule ExUnit.Diff do
   defp compact_reverse([{kind, char} | rest], acc),
     do: compact_reverse(rest, [{kind, [char]} | acc])
 
-  defp each_diagonal(diag, limit, _paths, next_paths) when diag > limit do
+  defp each_diagonal(diag, limit, _paths, next_paths, _keywords?) when diag > limit do
     {:next, Enum.reverse(next_paths)}
   end
 
-  defp each_diagonal(diag, limit, paths, next_paths) do
-    {path, rest} = proceed_path(diag, limit, paths)
+  defp each_diagonal(diag, limit, paths, next_paths, keywords?) do
+    {path, rest} = proceed_path(diag, limit, paths, keywords?)
+
     with {:cont, path} <- follow_snake(path) do
-      each_diagonal(diag + 2, limit, rest, [path | next_paths])
+      each_diagonal(diag + 2, limit, rest, [path | next_paths], keywords?)
     end
   end
 
-  defp proceed_path(0, 0, [path]), do: {path, []}
+  defp proceed_path(0, 0, [path], _keywords?), do: {path, []}
 
-  defp proceed_path(diag, limit, [path | _] = paths) when diag == -limit do
-    {move_down(path), paths}
+  defp proceed_path(diag, limit, [path | _] = paths, keywords?) when diag == -limit do
+    {move_down(path, keywords?), paths}
   end
 
-  defp proceed_path(diag, limit, [path]) when diag == limit do
-    {move_right(path), []}
+  defp proceed_path(diag, limit, [path], keywords?) when diag == limit do
+    {move_right(path, keywords?), []}
   end
 
-  defp proceed_path(_diag, _limit, [path1, path2 | rest]) do
+  defp proceed_path(_diag, _limit, [path1, path2 | rest], keywords?) do
     if elem(path1, 1) > elem(path2, 1) do
-      {move_right(path1), [path2 | rest]}
+      {move_right(path1, keywords?), [path2 | rest]}
     else
-      {move_down(path2), [path2 | rest]}
+      {move_down(path2, keywords?), [path2 | rest]}
     end
   end
 
-  defp script_keyword_inner({key, val1}, {key, val2}),
+  defp script_keyword_inner({key, val1}, {key, val2}, true),
     do: [{:eq, format_key(key, true)}, script_inner(val1, val2)]
 
-  defp script_keyword_inner(_pair1, _pair2),
-    do: nil
+  defp script_keyword_inner(_pair1, _pair2, true), do: nil
 
-  defp move_right({x, x, [elem1 | rest1] = list1, [elem2 | rest2], edits}) do
-    if result = script_keyword_inner(elem1, elem2) do
+  defp script_keyword_inner(elem1, elem2, false), do: script(elem1, elem2)
+
+  defp move_right({x, x, [elem1 | rest1] = list1, [elem2 | rest2], edits}, keywords?) do
+    if result = script_keyword_inner(elem1, elem2, keywords?) do
       {x + 1, x + 1, rest1, rest2, [{:diff, result} | edits]}
     else
       {x + 1, x, list1, rest2, [{:ins, elem2} | edits]}
     end
   end
 
-  defp move_right({x, y, list1, [elem | rest], edits}) do
+  defp move_right({x, y, list1, [elem | rest], edits}, _keywords?) do
     {x + 1, y, list1, rest, [{:ins, elem} | edits]}
   end
 
-  defp move_right({x, y, list1, [], edits}) do
+  defp move_right({x, y, list1, [], edits}, _keywords?) do
     {x + 1, y, list1, [], edits}
   end
 
-  defp move_down({x, x, [elem1 | rest1], [elem2 | rest2] = list2, edits}) do
-    if result = script_keyword_inner(elem1, elem2) do
+  defp move_down({x, x, [elem1 | rest1], [elem2 | rest2] = list2, edits}, keywords?) do
+    if result = script_keyword_inner(elem1, elem2, keywords?) do
       {x + 1, x + 1, rest1, rest2, [{:diff, result} | edits]}
     else
       {x, x + 1, rest1, list2, [{:del, elem1} | edits]}
     end
   end
 
-  defp move_down({x, y, [elem | rest], list2, edits}) do
+  defp move_down({x, y, [elem | rest], list2, edits}, _keywords?) do
     {x, y + 1, rest, list2, [{:del, elem} | edits]}
   end
 
-  defp move_down({x, y, [], list2, edits}) do
+  defp move_down({x, y, [], list2, edits}, _keywords?) do
     {x, y + 1, [], list2, edits}
   end
 
@@ -320,11 +364,14 @@ defmodule ExUnit.Diff do
       cond do
         last1 == [] ->
           [ins: " | " <> inspect(last2)]
+
         last2 == [] ->
           [del: " | " <> inspect(last1)]
+
         true ->
           [eq: " | "] ++ script_inner(last1, last2)
       end
+
     script_list([], [], [elem_diff | acc])
   end
 
@@ -334,14 +381,14 @@ defmodule ExUnit.Diff do
   end
 
   defp script_tuple({tuple1, index1}, {_, index2} = right, acc)
-      when index1 > index2 do
+       when index1 > index2 do
     elem = elem(tuple1, index1)
     elem_diff = [del: ", ", del: inspect(elem)]
     script_tuple({tuple1, index1 - 1}, right, [elem_diff | acc])
   end
 
   defp script_tuple({_, index1} = left, {tuple2, index2}, acc)
-      when index1 < index2 do
+       when index1 < index2 do
     elem = elem(tuple2, index2)
     elem_diff = [ins: ", ", ins: inspect(elem)]
     script_tuple(left, {tuple2, index2 - 1}, [elem_diff | acc])
@@ -357,16 +404,16 @@ defmodule ExUnit.Diff do
   defp script_map(left, right, name) do
     {surplus, altered, missing, same} = map_difference(left, right)
 
-    keyword? =
-      Inspect.List.keyword?(surplus) and
-      Inspect.List.keyword?(altered) and
-      Inspect.List.keyword?(missing) and
-      Inspect.List.keyword?(same)
+    keywords? =
+      Inspect.List.keyword?(surplus) and Inspect.List.keyword?(altered) and
+        Inspect.List.keyword?(missing) and Inspect.List.keyword?(same)
 
-    result = Enum.reduce(missing, [], fn({key, val}, acc) ->
-      map_pair = format_key_value(key, val, keyword?)
-      [[ins: ", ", ins: map_pair] | acc]
-    end)
+    result =
+      Enum.reduce(missing, [], fn {key, val}, acc ->
+        map_pair = format_key_value(key, val, keywords?)
+        [[ins: ", ", ins: map_pair] | acc]
+      end)
+
     result =
       if same == [] and altered == [] and missing != [] and surplus != [] do
         [[_ | elem_diff] | rest] = result
@@ -375,40 +422,54 @@ defmodule ExUnit.Diff do
         result
       end
 
-    result = Enum.reduce(surplus, result, fn({key, val}, acc) ->
-      map_pair = format_key_value(key, val, keyword?)
-      [[del: ", ", del: map_pair] | acc]
-    end)
+    result =
+      Enum.reduce(surplus, result, fn {key, val}, acc ->
+        map_pair = format_key_value(key, val, keywords?)
+        [[del: ", ", del: map_pair] | acc]
+      end)
 
-    result = Enum.reduce(altered, result, fn({key, {val1, val2}}, acc) ->
-      value_diff = script_inner(val1, val2)
-      [[{:eq, ", "}, {:eq, format_key(key, keyword?)}, value_diff] | acc]
-    end)
+    result =
+      Enum.reduce(altered, result, fn {key, {val1, val2}}, acc ->
+        value_diff = script_inner(val1, val2)
+        [[{:eq, ", "}, {:eq, format_key(key, keywords?)}, value_diff] | acc]
+      end)
 
-    result = Enum.reduce(same, result, fn({key, val}, acc) ->
-      map_pair = format_key_value(key, val, keyword?)
-      [[eq: ", ", eq: map_pair] | acc]
-    end)
+    result =
+      Enum.reduce(same, result, fn {key, val}, acc ->
+        map_pair = format_key_value(key, val, keywords?)
+        [[eq: ", ", eq: map_pair] | acc]
+      end)
 
     [[_ | elem_diff] | rest] = result
     [{:eq, "%" <> name <> "{"}, [elem_diff | rest], {:eq, "}"}]
   end
 
+  defp script_struct(%name{} = left, %name{} = right) do
+    left = Map.from_struct(left)
+    right = Map.from_struct(right)
+    script_map(left, right, inspect(name))
+  end
+
   defp map_difference(map1, map2) do
     {surplus, altered, same} =
-      Enum.reduce(map1, {[], [], []}, fn({key, val1}, {surplus, altered, same}) ->
+      Enum.reduce(map1, {[], [], []}, fn {key, val1}, {surplus, altered, same} ->
         case Map.fetch(map2, key) do
           {:ok, ^val1} ->
             {surplus, altered, [{key, val1} | same]}
+
           {:ok, val2} ->
             {surplus, [{key, {val1, val2}} | altered], same}
+
           :error ->
             {[{key, val1} | surplus], altered, same}
         end
       end)
-    missing = Enum.reduce(map2, [], fn({key, _} = pair, acc) ->
-      if Map.has_key?(map1, key), do: acc, else: [pair | acc]
-    end)
+
+    missing =
+      Enum.reduce(map2, [], fn {key, _} = pair, acc ->
+        if Map.has_key?(map1, key), do: acc, else: [pair | acc]
+      end)
+
     {surplus, altered, missing, same}
   end
 
@@ -416,8 +477,13 @@ defmodule ExUnit.Diff do
     inspect(key) <> " => "
   end
 
+  defp format_key(key, true) when is_nil(key) or is_boolean(key) do
+    inspect(key) <> ": "
+  end
+
   defp format_key(key, true) do
-    Atom.to_string(key) <> ": "
+    ":" <> result = inspect(key)
+    result <> ": "
   end
 
   defp format_key_value(key, value, keyword?) do

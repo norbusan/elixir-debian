@@ -1,18 +1,10 @@
-exclude =
-  case :erlang.system_info(:otp_release) do
-    '19' -> [otp19: false]
-    _    -> []
-  end
-
-ExUnit.start [exclude: exclude, trace: "--trace" in System.argv]
-
 # Beam files compiled on demand
 path = Path.expand("../../tmp/beams", __DIR__)
 File.rm_rf!(path)
 File.mkdir_p!(path)
 Code.prepend_path(path)
 
-Code.compiler_options debug_info: true
+Code.compiler_options(debug_info: true)
 
 defmodule PathHelpers do
   def fixture_path() do
@@ -24,15 +16,15 @@ defmodule PathHelpers do
   end
 
   def fixture_path(extra) do
-    Path.join(fixture_path, extra)
+    Path.join(fixture_path(), extra)
   end
 
   def tmp_path(extra) do
-    Path.join(tmp_path, extra)
+    Path.join(tmp_path(), extra)
   end
 
   def elixir(args) do
-    runcmd(elixir_executable, args)
+    runcmd(elixir_executable(), args)
   end
 
   def elixir_executable do
@@ -40,7 +32,7 @@ defmodule PathHelpers do
   end
 
   def elixirc(args) do
-    runcmd(elixirc_executable, args)
+    runcmd(elixirc_executable(), args)
   end
 
   def elixirc_executable do
@@ -55,14 +47,18 @@ defmodule PathHelpers do
   end
 
   defp runcmd(executable, args) do
-    :os.cmd :binary.bin_to_list("#{executable} #{IO.chardata_to_string(args)}#{redirect_std_err_on_win}")
+    :os.cmd(
+      :binary.bin_to_list(
+        "#{executable} #{IO.chardata_to_string(args)}#{redirect_std_err_on_win()}"
+      )
+    )
   end
 
   defp executable_path(name) do
-    Path.expand("../../../../bin/#{name}#{executable_extension}", __DIR__)
+    Path.expand("../../../../bin/#{name}#{executable_extension()}", __DIR__)
   end
 
-  if match? {:win32, _}, :os.type do
+  if match?({:win32, _}, :os.type()) do
     def windows?, do: true
     def executable_extension, do: ".bat"
     def redirect_std_err_on_win, do: " 2>&1"
@@ -73,39 +69,27 @@ defmodule PathHelpers do
   end
 end
 
-defmodule CompileAssertion do
-  import ExUnit.Assertions
-
-  def assert_compile_fail(given_exception, string) do
-    case format_rescue(string) do
-      {^given_exception, _} -> :ok
-      {exception, _} ->
-        raise ExUnit.AssertionError,
-          left: inspect(exception),
-          right: inspect(given_exception),
-          message: "Expected match"
+defmodule CodeFormatterHelpers do
+  defmacro assert_same(good, opts \\ []) do
+    quote bind_quoted: [good: good, opts: opts] do
+      assert IO.iodata_to_binary(Code.format_string!(good, opts)) == String.trim(good)
     end
   end
 
-  def assert_compile_fail(given_exception, given_message, string) do
-    {exception, message} = format_rescue(string)
-
-    unless exception == given_exception and message =~ given_message do
-      raise ExUnit.AssertionError,
-        left: "#{inspect exception}[message: #{inspect message}]",
-        right: "#{inspect given_exception}[message: #{inspect given_message}]",
-        message: "Expected match"
+  defmacro assert_format(bad, good, opts \\ []) do
+    quote bind_quoted: [bad: bad, good: good, opts: opts] do
+      result = String.trim(good)
+      assert IO.iodata_to_binary(Code.format_string!(bad, opts)) == result
+      assert IO.iodata_to_binary(Code.format_string!(good, opts)) == result
     end
-  end
-
-  defp format_rescue(expr) do
-    result = try do
-      :elixir.eval(to_charlist(expr), [])
-      nil
-    rescue
-      error -> {error.__struct__, Exception.message(error)}
-    end
-
-    result || flunk("Expected expression to fail")
   end
 end
+
+assert_timeout = String.to_integer(System.get_env("ELIXIR_ASSERT_TIMEOUT") || "500")
+exclude = if PathHelpers.windows?(), do: [unix: true], else: [windows: true]
+
+ExUnit.start(
+  trace: "--trace" in System.argv(),
+  assert_receive_timeout: assert_timeout,
+  exclude: exclude
+)

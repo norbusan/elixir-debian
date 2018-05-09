@@ -1,23 +1,23 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Kernel.ComprehensionTest do
   use ExUnit.Case, async: true
 
-  import CompileAssertion
   import ExUnit.CaptureIO
   require Integer
 
-  defmodule PDict do
+  defmodule Pdict do
     defstruct []
 
     defimpl Collectable do
       def into(struct) do
-        {struct,
-         fn
-           _, {:cont, x} -> Process.put(:into_cont, [x | Process.get(:into_cont)])
-           _, :done -> Process.put(:into_done, true)
-           _, :halt -> Process.put(:into_halt, true)
-         end}
+        fun = fn
+          _, {:cont, x} -> Process.put(:into_cont, [x | Process.get(:into_cont)])
+          _, :done -> Process.put(:into_done, true)
+          _, :halt -> Process.put(:into_halt, true)
+        end
+
+        {struct, fun}
       end
     end
   end
@@ -51,6 +51,15 @@ defmodule Kernel.ComprehensionTest do
     assert for(x when x == 3 when x == 7 <- 1..10, do: x) == [3, 7]
   end
 
+  test "for comprehensions with guards and filters" do
+    assert for(
+             {var, _}
+             when is_atom(var) <- [{:foo, 1}, {2, :bar}],
+             var = Atom.to_string(var),
+             do: var
+           ) == ["foo"]
+  end
+
   test "for comprehensions with map key matching" do
     maps = [%{x: 1}, %{y: 2}, %{x: 3}]
     assert for(%{x: v} <- maps, do: v * 2) == [2, 6]
@@ -62,39 +71,70 @@ defmodule Kernel.ComprehensionTest do
     assert for(x <- 1..3, x > 1, x < 3, do: x * 2) == [4]
   end
 
+  test "for comprehensions with unique values" do
+    list = [1, 1, 2, 3]
+    assert for(x <- list, uniq: true, do: x * 2) == [2, 4, 6]
+    assert for(x <- list, uniq: true, into: [], do: x * 2) == [2, 4, 6]
+    assert for(x <- list, uniq: true, into: %{}, do: {x, 1}) == %{1 => 1, 2 => 1, 3 => 1}
+    assert for(x <- list, uniq: true, into: "", do: to_bin(x * 2)) == <<2, 4, 6>>
+    assert for(<<x <- "abcabc">>, uniq: true, into: "", do: to_bin(x)) == "abc"
+
+    Process.put(:into_cont, [])
+    Process.put(:into_done, false)
+    Process.put(:into_halt, false)
+
+    for x <- list, uniq: true, into: %Pdict{} do
+      x * 2
+    end
+
+    assert Process.get(:into_cont) == [6, 4, 2]
+    assert Process.get(:into_done)
+    refute Process.get(:into_halt)
+
+    assert_raise RuntimeError, "oops", fn ->
+      for _ <- [1, 2, 3], uniq: true, into: %Pdict{}, do: raise("oops")
+    end
+
+    assert Process.get(:into_halt)
+  end
+
   test "for comprehensions with nilly filters" do
-    assert for(x <- 1..3, nilly, do: x * 2) == []
+    assert for(x <- 1..3, nilly(), do: x * 2) == []
   end
 
   test "for comprehensions with errors on filters" do
     assert_raise ArgumentError, fn ->
-      for(x <- 1..3, hd(x), do: x * 2)
+      for x <- 1..3, hd(x), do: x * 2
     end
   end
 
   test "for comprehensions with variables in filters" do
-    assert for(x <- 1..3, y = x + 1, y > 2, z = y, do: x * z) ==
-           [6, 12]
+    assert for(x <- 1..3, y = x + 1, y > 2, z = y, do: x * z) == [6, 12]
   end
 
   test "for comprehensions with two enum generators" do
-    assert (for x <- [1, 2, 3], y <- [4, 5, 6], do: x * y) ==
-           [4, 5, 6, 8, 10, 12, 12, 15, 18]
+    assert for(
+             x <- [1, 2, 3],
+             y <- [4, 5, 6],
+             do: x * y
+           ) == [4, 5, 6, 8, 10, 12, 12, 15, 18]
   end
 
   test "for comprehensions with two enum generators and filters" do
-    assert (for x <- [1, 2, 3], y <- [4, 5, 6], y / 2 == x, do: x * y) ==
-           [8, 18]
+    assert for(
+             x <- [1, 2, 3],
+             y <- [4, 5, 6],
+             y / 2 == x,
+             do: x * y
+           ) == [8, 18]
   end
 
   test "for comprehensions generators precedence" do
-    assert (for {_, _} = x <- [foo: :bar], do: x) ==
-           [foo: :bar]
+    assert for({_, _} = x <- [foo: :bar], do: x) == [foo: :bar]
   end
 
   test "for comprehensions with binary, enum generators and filters" do
-    assert (for x <- [1, 2, 3], <<y <- (<<4, 5, 6>>)>>, y / 2 == x, do: x * y) ==
-           [8, 18]
+    assert for(x <- [1, 2, 3], <<(y <- <<4, 5, 6>>)>>, y / 2 == x, do: x * y) == [8, 18]
   end
 
   test "for comprehensions into list" do
@@ -103,17 +143,47 @@ defmodule Kernel.ComprehensionTest do
   end
 
   test "for comprehensions into binary" do
-    enum = 1..3
-    assert for(x <- enum, into: "", do: to_bin(x * 2)) == <<2, 4, 6>>
+    enum = 0..3
+
+    assert (for x <- enum, into: "" do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for x <- enum, into: "" do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+  end
+
+  test "for comprehensions into dynamic binary" do
+    enum = 0..3
+    into = ""
+
+    assert (for x <- enum, into: into do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for x <- enum, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+
+    into = <<7::size(1)>>
+
+    assert (for x <- enum, into: into do
+              to_bin(x * 2)
+            end) == <<7::size(1), 0, 2, 4, 6>>
+
+    assert (for x <- enum, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<7::size(1), 0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
   end
 
   test "for comprehensions where value is not used" do
     enum = 1..3
 
     assert capture_io(fn ->
-      for(x <- enum, do: IO.puts x)
-      nil
-    end) == "1\n2\n3\n"
+             for x <- enum, do: IO.puts(x)
+             nil
+           end) == "1\n2\n3\n"
   end
 
   test "for comprehensions with into" do
@@ -121,7 +191,7 @@ defmodule Kernel.ComprehensionTest do
     Process.put(:into_done, false)
     Process.put(:into_halt, false)
 
-    for x <- 1..3, into: %PDict{} do
+    for x <- 1..3, into: %Pdict{} do
       x * 2
     end
 
@@ -136,7 +206,7 @@ defmodule Kernel.ComprehensionTest do
     Process.put(:into_halt, false)
 
     catch_error(
-      for x <- 1..3, into: %PDict{} do
+      for x <- 1..3, into: %Pdict{} do
         if x > 2, do: raise("oops"), else: x
       end
     )
@@ -149,7 +219,7 @@ defmodule Kernel.ComprehensionTest do
   test "for comprehension with into, generators and filters" do
     Process.put(:into_cont, [])
 
-    for x <- 1..3, Integer.is_odd(x), <<y <- "hello">>, into: %PDict{} do
+    for x <- 1..3, Integer.is_odd(x), <<y <- "hello">>, into: %Pdict{} do
       x + y
     end
 
@@ -168,28 +238,29 @@ defmodule Kernel.ComprehensionTest do
   end
 
   test "list for comprehension matched to '_' on last line of block" do
-    assert (if true do
-      _ = for x <- [1, 2, 3], do: x * 2
-    end) == [2, 4, 6]
+    assert (if true_fun() do
+              _ = for x <- [1, 2, 3], do: x * 2
+            end) == [2, 4, 6]
   end
+
+  defp true_fun(), do: true
 
   test "list for comprehensions with filters" do
     assert for(x <- [1, 2, 3], x > 1, x < 3, do: x * 2) == [4]
   end
 
   test "list for comprehensions with nilly filters" do
-    assert for(x <- [1, 2, 3], nilly, do: x * 2) == []
+    assert for(x <- [1, 2, 3], nilly(), do: x * 2) == []
   end
 
   test "list for comprehensions with errors on filters" do
     assert_raise ArgumentError, fn ->
-      for(x <- [1, 2, 3], hd(x), do: x * 2)
+      for x <- [1, 2, 3], hd(x), do: x * 2
     end
   end
 
   test "list for comprehensions with variables in filters" do
-    assert for(x <- [1, 2, 3], y = x + 1, y > 2, z = y, do: x * z) ==
-           [6, 12]
+    assert for(x <- [1, 2, 3], y = x + 1, y > 2, z = y, do: x * z) == [6, 12]
   end
 
   test "list for comprehensions into list" do
@@ -197,9 +268,39 @@ defmodule Kernel.ComprehensionTest do
     assert for(x <- enum, into: [], do: x * 2) == [2, 4, 6]
   end
 
-  test "list for comprehensions into binaries" do
-    enum = [1, 2, 3]
-    assert for(x <- enum, into: "", do: to_bin(x * 2)) == <<2, 4, 6>>
+  test "list for comprehensions into binary" do
+    enum = [0, 1, 2, 3]
+
+    assert (for x <- enum, into: "" do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for x <- enum, into: "" do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+  end
+
+  test "list for comprehensions into dynamic binary" do
+    enum = [0, 1, 2, 3]
+    into = ""
+
+    assert (for x <- enum, into: into do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for x <- enum, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+
+    into = <<7::size(1)>>
+
+    assert (for x <- enum, into: into do
+              to_bin(x * 2)
+            end) == <<7::size(1), 0, 2, 4, 6>>
+
+    assert (for x <- enum, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<7::size(1), 0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
   end
 
   test "map for comprehensions into map" do
@@ -211,9 +312,9 @@ defmodule Kernel.ComprehensionTest do
     enum = [1, 2, 3]
 
     assert capture_io(fn ->
-      for(x <- enum, do: IO.puts x)
-      nil
-    end) == "1\n2\n3\n"
+             for x <- enum, do: IO.puts(x)
+             nil
+           end) == "1\n2\n3\n"
   end
 
   ## Binary generators (inlined by the compiler)
@@ -225,12 +326,11 @@ defmodule Kernel.ComprehensionTest do
 
   test "binary for comprehensions with inner binary" do
     bin = <<1, 2, 3>>
-    assert for(<<(<<x>>) <- bin>>, do: x * 2) == [2, 4, 6]
+    assert for(<<(<<x>> <- bin)>>, do: x * 2) == [2, 4, 6]
   end
 
   test "binary for comprehensions with two generators" do
-    assert (for <<x <- (<<1, 2, 3>>)>>, <<y <- (<<4, 5, 6>>)>>, y / 2 == x, do: x * y) ==
-           [8, 18]
+    assert for(<<(x <- <<1, 2, 3>>)>>, <<(y <- <<4, 5, 6>>)>>, y / 2 == x, do: x * y) == [8, 18]
   end
 
   test "binary for comprehensions into list" do
@@ -238,9 +338,39 @@ defmodule Kernel.ComprehensionTest do
     assert for(<<x <- bin>>, into: [], do: x * 2) == [2, 4, 6]
   end
 
-  test "binary for comprehensions into binaries" do
-    bin = <<1, 2, 3>>
-    assert for(<<x <- bin>>, into: "", do: to_bin(x * 2)) == <<2, 4, 6>>
+  test "binary for comprehensions into binary" do
+    bin = <<0, 1, 2, 3>>
+
+    assert (for <<x <- bin>>, into: "" do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for <<x <- bin>>, into: "" do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+  end
+
+  test "binary for comprehensions into dynamic binary" do
+    bin = <<0, 1, 2, 3>>
+    into = ""
+
+    assert (for <<x <- bin>>, into: into do
+              to_bin(x * 2)
+            end) == <<0, 2, 4, 6>>
+
+    assert (for <<x <- bin>>, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
+
+    into = <<7::size(1)>>
+
+    assert (for <<x <- bin>>, into: into do
+              to_bin(x * 2)
+            end) == <<7::size(1), 0, 2, 4, 6>>
+
+    assert (for <<x <- bin>>, into: into do
+              if Integer.is_even(x), do: <<x::size(2)>>, else: <<x::size(1)>>
+            end) == <<7::size(1), 0::size(2), 1::size(1), 2::size(2), 3::size(1)>>
   end
 
   test "binary for comprehensions with variable size" do
@@ -253,14 +383,8 @@ defmodule Kernel.ComprehensionTest do
     bin = <<1, 2, 3>>
 
     assert capture_io(fn ->
-      for(<<x <- bin>>, do: IO.puts x)
-      nil
-    end) == "1\n2\n3\n"
-  end
-
-  test "failure on missing do" do
-    assert_compile_fail CompileError,
-      "nofile:1: missing do keyword in for comprehension",
-      "for x <- 1..2"
+             for <<x <- bin>>, do: IO.puts(x)
+             nil
+           end) == "1\n2\n3\n"
   end
 end

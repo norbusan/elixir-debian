@@ -9,7 +9,7 @@ defmodule ExUnit do
       # File: assertion_test.exs
 
       # 1) Start ExUnit.
-      ExUnit.start
+      ExUnit.start()
 
       # 2) Create a new test module (test case) and use "ExUnit.Case".
       defmodule AssertionTest do
@@ -50,16 +50,16 @@ defmodule ExUnit do
   The minimum example of a `test_helper.exs` file would be:
 
       # test/test_helper.exs
-      ExUnit.start
+      ExUnit.start()
 
   Mix will load the `test_helper.exs` file before executing the tests.
   It is not necessary to `require` the `test_helper.exs` file in your test
   files. See `Mix.Tasks.Test` for more information.
   """
 
-  @typedoc "The error state returned by ExUnit.Test and ExUnit.TestCase"
-  @type state  :: nil | {:failed, failed} | {:skip, binary} | {:invalid, module}
-  @type failed :: [{Exception.kind, reason :: term, stacktrace :: [tuple]}]
+  @typedoc "The error state returned by `ExUnit.Test` and `ExUnit.TestModule`"
+  @type state :: nil | {:failed, failed} | {:skip, binary} | {:invalid, module}
+  @type failed :: [{Exception.kind(), reason :: term, Exception.stacktrace()}]
 
   defmodule Test do
     @moduledoc """
@@ -67,50 +67,57 @@ defmodule ExUnit do
 
     It is received by formatters and contains the following fields:
 
-      * `:name`  - the test name
-      * `:case`  - the test case
-      * `:state` - the test error state (see ExUnit.state)
-      * `:time`  - the time to run the test
-      * `:tags`  - the test tags
-      * `:logs`  - the captured logs
+      * `:name` - the test name
+      * `:module` - the test module
+      * `:state` - the test error state (see `t:ExUnit.state/0`)
+      * `:time` - the time to run the test
+      * `:tags` - the test tags
+      * `:logs` - the captured logs
 
     """
-    defstruct [:name, :case, :state, time: 0, tags: %{}, logs: ""]
+    defstruct [:name, :case, :module, :state, time: 0, tags: %{}, logs: ""]
 
+    # TODO: Remove the `:case` field on Elixir v2.0
     @type t :: %__MODULE__{
-                 name: atom,
-                 case: module,
-                 state: ExUnit.state,
-                 time: non_neg_integer,
-                 tags: map}
+            name: atom,
+            case: module,
+            module: module,
+            state: ExUnit.state(),
+            time: non_neg_integer,
+            tags: map
+          }
   end
 
-  defmodule TestCase do
+  defmodule TestModule do
     @moduledoc """
     A struct that keeps information about the test case.
 
     It is received by formatters and contains the following fields:
 
       * `:name`  - the test case name
-      * `:state` - the test error state (see ExUnit.state)
+      * `:state` - the test error state (see `t:ExUnit.state/0`)
       * `:tests` - all tests for this case
 
     """
     defstruct [:name, :state, tests: []]
 
-    @type t :: %__MODULE__{
-                 name: module,
-                 state: ExUnit.state,
-                 tests: [ExUnit.Test.t]}
+    @type t :: %__MODULE__{name: module, state: ExUnit.state(), tests: [ExUnit.Test.t()]}
+  end
+
+  defmodule TestCase do
+    # TODO: Remove this on Elixir v2.0 as well as uses of it.
+    @moduledoc false
+    defstruct [:name, :state, tests: []]
+
+    @type t :: %__MODULE__{name: module, state: ExUnit.state(), tests: [ExUnit.Test.t()]}
   end
 
   defmodule TimeoutError do
-    defexception [:timeout]
+    defexception [:timeout, :type]
 
-    def message(timeout)
-    def message(%{timeout: timeout}) do
+    def message(%{timeout: timeout, type: type}) do
       """
-      test timed out after #{timeout}ms. You can change the timeout:
+      #{type} timed out after #{timeout}ms. You can change the timeout:
 
         1. per test by setting "@tag timeout: x"
         2. per case by setting "@moduletag timeout: x"
@@ -127,12 +134,10 @@ defmodule ExUnit do
 
   @doc false
   def start(_type, []) do
-    import Supervisor.Spec
-
     children = [
-      worker(ExUnit.Server, []),
-      worker(ExUnit.CaptureServer, []),
-      worker(ExUnit.OnExitHandler, [])
+      ExUnit.Server,
+      ExUnit.CaptureServer,
+      ExUnit.OnExitHandler
     ]
 
     opts = [strategy: :one_for_one, name: ExUnit.Supervisor]
@@ -141,10 +146,13 @@ defmodule ExUnit do
 
   @doc """
   Starts ExUnit and automatically runs tests right before the
-  VM terminates. It accepts a set of options to configure `ExUnit`
+  VM terminates.
+
+  It accepts a set of options to configure `ExUnit`
   (the same ones accepted by `configure/1`).
 
-  If you want to run tests manually, you can set `:autorun` to `false`.
+  If you want to run tests manually, you can set the `:autorun` option
+  to `false` and use `run/0` to run tests.
   """
   def start(options \\ []) do
     {:ok, _} = Application.ensure_all_started(:ex_unit)
@@ -154,16 +162,19 @@ defmodule ExUnit do
     if Application.fetch_env!(:ex_unit, :autorun) do
       Application.put_env(:ex_unit, :autorun, false)
 
-      System.at_exit fn
+      System.at_exit(fn
         0 ->
-          time = ExUnit.Server.cases_loaded()
-          %{failures: failures} = ExUnit.Runner.run(configuration(), time)
-          System.at_exit fn _ ->
+          time = ExUnit.Server.modules_loaded()
+          config = persist_defaults(configuration())
+          %{failures: failures} = ExUnit.Runner.run(config, time)
+
+          System.at_exit(fn _ ->
             if failures > 0, do: exit({:shutdown, 1})
-          end
+          end)
+
         _ ->
           :ok
-      end
+      end)
     end
   end
 
@@ -175,52 +186,62 @@ defmodule ExUnit do
   ExUnit supports the following options:
 
     * `:assert_receive_timeout` - the timeout to be used on `assert_receive`
-      calls. Defaults to 100ms.
+      calls, defaults to `100` milliseconds;
+
+    * `:autorun` - if ExUnit should run by default on exit. Defaults to `true`;
 
     * `:capture_log` - if ExUnit should default to keeping track of log messages
       and print them on test failure. Can be overridden for individual tests via
-      `@tag capture_log: false`. Defaults to `false`.
-
-    * `:case_load_timeout` - the timeout to be used when loading a test case.
-      Defaults to `60_000` milliseconds.
+      `@tag capture_log: false`. Defaults to `false`;
 
     * `:colors` - a keyword list of colors to be used by some formatters.
-      The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/0`
+      The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/0`;
 
-    * `:formatters` - the formatters that will print results;
-      defaults to `[ExUnit.CLIFormatter]`
+    * `:exclude` - specifies which tests are run by skipping tests that match the
+      filter;
 
-    * `:max_cases` - maximum number of cases to run in parallel;
-      defaults to `:erlang.system_info(:schedulers_online) * 2` to
-      optimize both CPU-bound and IO-bound tests
+    * `:formatters` - the formatters that will print results,
+      defaults to `[ExUnit.CLIFormatter]`;
 
-    * `:trace` - set ExUnit into trace mode, this sets `:max_cases` to `1` and
-      prints each test case and test while running
-
-    * `:autorun` - if ExUnit should run by default on exit; defaults to `true`
-
-    * `:include` - specify which tests are run by skipping tests that do not
+    * `:include` - specifies which tests are run by skipping tests that do not
       match the filter. Keep in mind that all tests are included by default, so unless they are
-      excluded first, the `:include` option has no effect.
+      excluded first, the `:include` option has no effect. To only run the tests
+      that match the `:include` filter, exclude the `:test` tag first (see the
+      documentation for `ExUnit.Case` for more information on tags);
 
-    * `:exclude` - specify which tests are run by skipping tests that match the
-      filter
+    * `:max_cases` - maximum number of tests to run in parallel. Only tests from
+      different modules run in parallel. It defaults to `System.schedulers_online * 2`
+      to optimize both CPU-bound and IO-bound tests;
+
+    * `:module_load_timeout` - the timeout to be used when loading a test module,
+      defaults to `60_000` milliseconds;
 
     * `:refute_receive_timeout` - the timeout to be used on `refute_receive`
-      calls (defaults to 100ms)
+      calls, defaults to `100` milliseconds;
 
-    * `:seed` - an integer seed value to randomize the test suite
+    * `:seed` - an integer seed value to randomize the test suite. This seed
+      is also mixed with the test module and name to create a new unique seed
+      on every test, which is automatically fed into the `:rand` module. This
+      provides randomness between tests, but predictable and reproducible results;
+
+    * `:slowest` - prints timing information for the N slowest tests. Running
+      ExUnit with slow test reporting automatically runs in `trace` mode. It
+      is disabled by default;
 
     * `:stacktrace_depth` - configures the stacktrace depth to be used
-      on formatting and reporters (defaults to 20)
+      on formatting and reporters, defaults to `20`;
 
-    * `:timeout` - set the timeout for the tests (default 60_000ms)
+    * `:timeout` - sets the timeout for the tests, defaults to `60_000` milliseconds;
+
+    * `:trace` - sets ExUnit into trace mode, this sets `:max_cases` to `1` and
+      prints each test case and test while running. Note that in trace mode test timeouts
+      will be ignored.
 
   """
   def configure(options) do
-    Enum.each options, fn {k, v} ->
+    Enum.each(options, fn {k, v} ->
       Application.put_env(:ex_unit, k, v)
-    end
+    end)
   end
 
   @doc """
@@ -228,6 +249,9 @@ defmodule ExUnit do
   """
   def configuration do
     Application.get_all_env(:ex_unit)
+    |> put_seed()
+    |> put_slowest()
+    |> put_max_cases()
   end
 
   @doc """
@@ -251,17 +275,59 @@ defmodule ExUnit do
     plural_rules =
       Application.get_env(:ex_unit, :plural_rules, %{})
       |> Map.put(word, pluralization)
+
     configure(plural_rules: plural_rules)
   end
 
   @doc """
-  API used to run the tests. It is invoked automatically
-  if ExUnit is started via `ExUnit.start/1`.
+  Runs the tests. It is invoked automatically
+  if ExUnit is started via `start/1`.
 
   Returns a map containing the total number of tests, the number
   of failures and the number of skipped tests.
   """
   def run do
-    ExUnit.Runner.run(configuration(), nil)
+    config = persist_defaults(configuration())
+    ExUnit.Runner.run(config, nil)
+  end
+
+  # Persists default values in application
+  # environment before the test suite starts.
+  defp persist_defaults(config) do
+    config |> Keyword.take([:max_cases, :seed, :trace]) |> configure()
+    config
+  end
+
+  defp put_seed(opts) do
+    Keyword.put_new_lazy(opts, :seed, fn ->
+      # We're using `rem System.system_time()` here
+      # instead of directly using :os.timestamp or using the
+      # :microsecond argument because the VM on Windows has odd
+      # precision. Calling with :microsecond will give us a multiple
+      # of 1000. Calling without it gives actual microsecond precision.
+      System.system_time()
+      |> System.convert_time_unit(:native, :microsecond)
+      |> rem(1_000_000)
+    end)
+  end
+
+  defp put_max_cases(opts) do
+    Keyword.put(opts, :max_cases, max_cases(opts))
+  end
+
+  defp put_slowest(opts) do
+    if opts[:slowest] > 0 do
+      Keyword.put(opts, :trace, true)
+    else
+      opts
+    end
+  end
+
+  defp max_cases(opts) do
+    cond do
+      opts[:trace] -> 1
+      max = opts[:max_cases] -> max
+      true -> System.schedulers_online() * 2
+    end
   end
 end

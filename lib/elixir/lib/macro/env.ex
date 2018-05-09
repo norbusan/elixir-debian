@@ -3,8 +3,8 @@ defmodule Macro.Env do
   A struct that holds compile time environment information.
 
   The current environment can be accessed at any time as
-  `__ENV__`. Inside macros, the caller environment can be
-  accessed as `__CALLER__`.
+  `__ENV__/0`. Inside macros, the caller environment can be
+  accessed as `__CALLER__/0`.
 
   An instance of `Macro.Env` must not be modified by hand. If you need to
   create a custom environment to pass to `Code.eval_quoted/3`, use the
@@ -36,12 +36,20 @@ defmodule Macro.Env do
     * `macros` - a list of macros imported from each module
     * `macro_aliases` - a list of aliases defined inside the current macro
     * `context_modules` - a list of modules defined in the current context
-    * `vars` - a list keeping all defined variables as `{var, context}`
-    * `export_vars` - a list keeping all variables to be exported in a
-      construct (may be `nil`)
     * `lexical_tracker` - PID of the lexical tracker which is responsible for
       keeping user info
-    * `local` - the module to expand local functions to
+    * `vars` - a list keeping all defined variables as `{var, context}`
+
+  The following fields are private and must not be accessed or relied on:
+
+    * `export_vars` - a list keeping all variables to be exported in a
+      construct (may be `nil`)
+    * `match_vars` - controls how "new" variables are handled. Inside a
+      match it is a list with all variables in a match. Outside of a match
+      is either `:warn` or `:apply`
+    * `prematch_vars` - a list of variables defined before a match (is
+      `nil` when not inside a match)
+
   """
 
   @type name_arity :: {atom, arity}
@@ -55,29 +63,36 @@ defmodule Macro.Env do
   @type macros :: [{module, [name_arity]}]
   @type context_modules :: [module]
   @type vars :: [{atom, atom | non_neg_integer}]
-  @type export_vars :: vars | nil
-  @type lexical_tracker :: pid
+  @type lexical_tracker :: pid | nil
   @type local :: atom | nil
 
-  @type t :: %{__struct__: __MODULE__,
-               module: atom,
-               file: file,
-               line: line,
-               function: name_arity | nil,
-               context: context,
-               requires: requires,
-               aliases: aliases,
-               functions: functions,
-               macros: macros,
-               macro_aliases: aliases,
-               context_modules: context_modules,
-               vars: vars,
-               export_vars: export_vars,
-               lexical_tracker: lexical_tracker,
-               local: local}
+  @opaque export_vars :: vars | nil
+  @opaque match_vars :: vars | :warn | :apply
+  @opaque prematch_vars :: vars | nil
+
+  @type t :: %{
+          __struct__: __MODULE__,
+          module: atom,
+          file: file,
+          line: line,
+          function: name_arity | nil,
+          context: context,
+          requires: requires,
+          aliases: aliases,
+          functions: functions,
+          macros: macros,
+          macro_aliases: aliases,
+          context_modules: context_modules,
+          vars: vars,
+          export_vars: export_vars,
+          match_vars: match_vars,
+          prematch_vars: prematch_vars,
+          lexical_tracker: lexical_tracker
+        }
 
   def __struct__ do
-    %{__struct__: __MODULE__,
+    %{
+      __struct__: __MODULE__,
       module: nil,
       file: "nofile",
       line: 0,
@@ -90,22 +105,38 @@ defmodule Macro.Env do
       macro_aliases: [],
       context_modules: [],
       vars: [],
+      lexical_tracker: nil,
       export_vars: nil,
-      lexical_tracker: nil}
+      match_vars: :warn,
+      prematch_vars: nil
+    }
   end
 
   def __struct__(kv) do
-    Enum.reduce kv, __struct__(), fn {k, v}, acc -> :maps.update(k, v, acc) end
+    Enum.reduce(kv, __struct__(), fn {k, v}, acc -> :maps.update(k, v, acc) end)
   end
 
   @doc """
   Returns a keyword list containing the file and line
   information as keys.
   """
-  @spec location(t) :: Keyword.t
+  @spec location(t) :: keyword
   def location(env)
+
   def location(%{__struct__: Macro.Env, file: file, line: line}) do
     [file: file, line: line]
+  end
+
+  @doc """
+  Returns a `Macro.Env` in the match context.
+  """
+  @spec to_match(t) :: t
+  def to_match(%{__struct__: Macro.Env, context: :match} = env) do
+    env
+  end
+
+  def to_match(%{__struct__: Macro.Env, prematch_vars: nil, vars: vars} = env) do
+    %{env | context: :match, match_vars: [], prematch_vars: vars}
   end
 
   @doc """
@@ -132,8 +163,10 @@ defmodule Macro.Env do
     cond do
       is_nil(env.module) ->
         [{:elixir_compiler, :__FILE__, 1, relative_location(env)}]
+
       is_nil(env.function) ->
         [{env.module, :__MODULE__, 0, relative_location(env)}]
+
       true ->
         {name, arity} = env.function
         [{env.module, name, arity, relative_location(env)}]
@@ -141,6 +174,6 @@ defmodule Macro.Env do
   end
 
   defp relative_location(env) do
-    [file: Path.relative_to_cwd(env.file), line: env.line]
+    [file: String.to_charlist(Path.relative_to_cwd(env.file)), line: env.line]
   end
 end

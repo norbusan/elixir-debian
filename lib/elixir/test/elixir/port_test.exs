@@ -1,4 +1,4 @@
-Code.require_file "test_helper.exs", __DIR__
+Code.require_file("test_helper.exs", __DIR__)
 
 defmodule PortTest do
   use ExUnit.Case, async: true
@@ -17,5 +17,18 @@ defmodule PortTest do
 
     assert Port.info(port, :registered_name) == nil
     assert Port.info(port) == nil
+  end
+
+  # In contrast with other inlined functions,
+  # it is important to test that monitor/1 is inlined,
+  # this way we gain the monitor receive optimisation.
+  test "monitor/1 is inlined" do
+    assert expand(quote(do: Port.monitor(port())), __ENV__) ==
+             quote(do: :erlang.monitor(:port, port()))
+  end
+
+  defp expand(expr, env) do
+    {expr, _env} = :elixir_expand.expand(expr, env)
+    expr
   end
 end

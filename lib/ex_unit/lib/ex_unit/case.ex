@@ -2,22 +2,28 @@ defmodule ExUnit.DuplicateTestError do
   defexception [:message]
 end
 
+defmodule ExUnit.DuplicateDescribeError do
+  defexception [:message]
+end
+
 defmodule ExUnit.Case do
   @moduledoc """
-  Sets up an ExUnit test case.
+  Helpers for defining test cases.
 
   This module must be used in other modules as a way to configure
   and prepare them for testing.
 
   When used, it accepts the following options:
 
-    * :async - configure this specific test case to able to run in parallel
+    * `:async` - configure this specific test case to run in parallel
       with other test cases. May be used for performance when this test case
       does not change any global state. Defaults to `false`.
 
   This module automatically includes all callbacks defined in
-  `ExUnit.Callbacks`. See that module's documentation for more
-  information.
+  `ExUnit.Callbacks`. See that module for more information on `setup`,
+  `start_supervised`, `on_exit` and the test process lifecycle.
+
+  For grouping tests together, see `describe/2` in this module.
 
   ## Examples
 
@@ -41,7 +47,7 @@ defmodule ExUnit.Case do
 
         setup do
           {:ok, pid} = KV.start_link
-          {:ok, [pid: pid]}
+          {:ok, pid: pid}
         end
 
         test "stores key-value pairs", context do
@@ -84,7 +90,7 @@ defmodule ExUnit.Case do
         end
 
         @tag cd: "fixtures"
-        test "reads utf-8 fixtures" do
+        test "reads UTF-8 fixtures" do
           File.read("hello")
         end
       end
@@ -104,9 +110,10 @@ defmodule ExUnit.Case do
 
   If a tag is given more than once, the last value wins.
 
-  ### Module tags
+  ### Module and describe tags
 
-  A tag can be set for all tests in a module by setting `@moduletag`:
+  A tag can be set for all tests in a module or describe block by
+  setting `@moduletag` or `@describetag` respectively:
 
       @moduletag :external
 
@@ -118,30 +125,40 @@ defmodule ExUnit.Case do
   The following tags are set automatically by ExUnit and are
   therefore reserved:
 
-    * `:case`       - the test case module
+    * `:module`     - the module on which the test was defined
     * `:file`       - the file on which the test was defined
     * `:line`       - the line on which the test was defined
     * `:test`       - the test name
+    * `:type`       - the type of the test (`:test`, `:doctest`, `:property`, etc)
     * `:async`      - if the test case is in async mode
-    * `:type`       - the type of the test (`:test`, `:property`, etc)
     * `:registered` - used for `ExUnit.Case.register_attribute/3` values
     * `:describe`   - the describe block the test belongs to
 
-  The following tags customize how tests behaves:
+  The following tags customize how tests behave:
 
     * `:capture_log` - see the "Log Capture" section below
     * `:skip` - skips the test with the given reason
     * `:timeout` - customizes the test timeout in milliseconds (defaults to 60000)
-    * `:report` - include the given tags and context keys on error reports,
+    * `:report` - includes the given tags and context keys on error reports,
       see the "Reporting tags" section
 
   ### Reporting tags
 
   ExUnit also allows tags or any other key in your context to be included
-  in error reports, making it easy for developers to see under which circumstances
-  a test was evaluated. To do so, you use the `:report` tag:
+  in error reports, making it easy for developers to see under which
+  circumstances a test was evaluated. To do so, you use the `:report` tag:
 
-      @moduletag report: [:user_id]
+      @moduletag report: [:user_id, :server]
+
+  Now when an error happens, there is a tags section containing the value
+  for each reported field:
+
+     code: flunk "oops"
+     stacktrace:
+       lib/my_lib/source.exs:148
+     tags:
+       user_id: 1
+       server: #PID<0.63.0>
 
   ## Filters
 
@@ -172,39 +189,48 @@ defmodule ExUnit.Case do
 
   ## Log Capture
 
-  ExUnit can optionally suppress printing of log messages that are generated during a test. Log
-  messages generated while running a test are captured and only if the test fails are they printed
-  to aid with debugging.
+  ExUnit can optionally suppress printing of log messages that are generated
+  during a test. Log messages generated while running a test are captured and
+  only if the test fails are they printed to aid with debugging.
 
-  You can opt into this behaviour for individual tests by tagging them with `:capture_log` or enable
-  log capture for all tests in the ExUnit configuration:
+  You can opt into this behaviour for individual tests by tagging them with
+  `:capture_log` or enable log capture for all tests in the ExUnit configuration:
 
       ExUnit.start(capture_log: true)
 
-  This default can be overridden by `@tag capture_log: false` or `@moduletag capture_log: false`.
+  This default can be overridden by `@tag capture_log: false` or
+  `@moduletag capture_log: false`.
 
-  Since `setup_all` blocks don't belong to a specific test, log messages generated in them (or
-  between tests) are never captured. If you want to suppress these messages as well, remove the
-  console backend globally:
+  Since `setup_all` blocks don't belong to a specific test, log messages generated
+  in them (or between tests) are never captured. If you want to suppress these
+  messages as well, remove the console backend globally:
 
       config :logger, backends: []
   """
 
-  @reserved [:case, :file, :line, :test, :async, :registered, :describe, :type]
+  @reserved [:module, :file, :line, :test, :async, :registered, :describe, :type]
 
   @doc false
   defmacro __using__(opts) do
     unless Process.whereis(ExUnit.Server) do
       raise "cannot use ExUnit.Case without starting the ExUnit application, " <>
-            "please call ExUnit.start() or explicitly start the :ex_unit app"
+              "please call ExUnit.start() or explicitly start the :ex_unit app"
     end
 
     quote do
       async = !!unquote(opts)[:async]
 
       unless Module.get_attribute(__MODULE__, :ex_unit_tests) do
-        Enum.each [:ex_unit_tests, :tag, :describetag, :moduletag, :ex_unit_registered],
-          &Module.register_attribute(__MODULE__, &1, accumulate: true)
+        attributes = [
+          :ex_unit_tests,
+          :tag,
+          :describetag,
+          :moduletag,
+          :ex_unit_registered,
+          :ex_unit_used_describes
+        ]
+
+        Enum.each(attributes, &Module.register_attribute(__MODULE__, &1, accumulate: true))
 
         @before_compile ExUnit.Case
         @after_compile ExUnit.Case
@@ -245,6 +271,7 @@ defmodule ExUnit.Case do
             unquote(block)
             :ok
           end
+
         _ ->
           quote do
             try(unquote(contents))
@@ -252,7 +279,7 @@ defmodule ExUnit.Case do
           end
       end
 
-    var      = Macro.escape(var)
+    var = Macro.escape(var)
     contents = Macro.escape(contents, unquote: true)
 
     quote bind_quoted: [var: var, contents: contents, message: message] do
@@ -264,11 +291,10 @@ defmodule ExUnit.Case do
   @doc """
   Defines a not implemented test with a string.
 
-  Provides a convenient macro that allows a test to be
-  defined with a string, but not yet implemented. The
-  resulting test will always fail and print "Not yet
-  implemented" error message. The resulting test case is
-  also tagged with :not_implemented.
+  Provides a convenient macro that allows a test to be defined
+  with a string, but not yet implemented. The resulting test will
+  always fail and print "Not implemented" error message. The
+  resulting test case is also tagged with `:not_implemented`.
 
   ## Examples
 
@@ -276,9 +302,9 @@ defmodule ExUnit.Case do
 
   """
   defmacro test(message) do
-    quote bind_quoted: binding do
+    quote bind_quoted: binding() do
       name = ExUnit.Case.register_test(__ENV__, :test, message, [:not_implemented])
-      def unquote(name)(_), do: flunk("Not yet implemented")
+      def unquote(name)(_), do: flunk("Not implemented")
     end
   end
 
@@ -307,9 +333,13 @@ defmodule ExUnit.Case do
         end
       end
 
-  When using Mix, you can run all tests in a describe block as:
+  When using Mix, you can run all tests in a describe block by name:
 
       mix test --only describe:"String.capitalize/1"
+
+  or by passing the exact line the describe block starts on:
+
+      mix test path/to/file:123
 
   Note describe blocks cannot be nested. Instead of relying on hierarchy
   for composition, developers should build on top of named setups. For
@@ -335,7 +365,7 @@ defmodule ExUnit.Case do
         end
       end
 
-  By forbidding hierarchies in favor of named setups, it is straight-forward
+  By forbidding hierarchies in favor of named setups, it is straightforward
   for the developer to glance at each describe block and know exactly the
   setup steps involved.
   """
@@ -343,13 +373,25 @@ defmodule ExUnit.Case do
     quote do
       if @ex_unit_describe do
         raise "cannot call describe/2 inside another describe. See the documentation " <>
-              "for describe/2 on named setups and how to handle hierarchies"
+                "for describe/2 on named setups and how to handle hierarchies"
       end
 
-      @ex_unit_describe (case unquote(message) do
-        msg when is_binary(msg) -> msg
-        msg -> raise ArgumentError, "describe name must be a string, got: #{inspect msg}"
-      end)
+      message = unquote(message)
+
+      cond do
+        not is_binary(message) ->
+          raise ArgumentError, "describe name must be a string, got: #{inspect(message)}"
+
+        message in @ex_unit_used_describes ->
+          raise ExUnit.DuplicateDescribeError,
+                "describe #{inspect(message)} is already defined in #{inspect(__MODULE__)}"
+
+        true ->
+          :ok
+      end
+
+      @ex_unit_describe {__ENV__.line, message}
+      @ex_unit_used_describes message
       Module.delete_attribute(__ENV__.module, :describetag)
 
       try do
@@ -364,8 +406,8 @@ defmodule ExUnit.Case do
   @doc false
   defmacro __before_compile__(_) do
     quote do
-      def __ex_unit__(:case) do
-        %ExUnit.TestCase{name: __MODULE__, tests: @ex_unit_tests}
+      def __ex_unit__ do
+        %ExUnit.TestModule{name: __MODULE__, tests: @ex_unit_tests}
       end
     end
   end
@@ -373,9 +415,9 @@ defmodule ExUnit.Case do
   @doc false
   def __after_compile__(%{module: module}, _) do
     if Module.get_attribute(module, :ex_unit_async) do
-      ExUnit.Server.add_async_case(module)
+      ExUnit.Server.add_async_module(module)
     else
-      ExUnit.Server.add_sync_case(module)
+      ExUnit.Server.add_sync_module(module)
     end
   end
 
@@ -396,39 +438,49 @@ defmodule ExUnit.Case do
 
     unless moduletag do
       raise "cannot define #{type}. Please make sure you have invoked " <>
-            "\"use ExUnit.Case\" in the current module"
+              "\"use ExUnit.Case\" in the current module"
     end
 
     registered_attributes = Module.get_attribute(mod, :ex_unit_registered)
     registered = Map.new(registered_attributes, &{&1, Module.get_attribute(mod, &1)})
 
-    tag = Module.get_attribute(mod, :tag)
+    tag = Module.delete_attribute(mod, :tag)
     async = Module.get_attribute(mod, :ex_unit_async)
 
-    {name, describe, describetag} =
-      if describe = Module.get_attribute(mod, :ex_unit_describe) do
-        {:"#{type} #{describe} #{name}", describe, Module.get_attribute(mod, :describetag)}
-      else
-        {:"#{type} #{name}", nil, []}
+    {name, describe, describe_line, describetag} =
+      case Module.get_attribute(mod, :ex_unit_describe) do
+        {line, describe} ->
+          description = :"#{type} #{describe} #{name}"
+          {description, describe, line, Module.get_attribute(mod, :describetag)}
+
+        _ ->
+          {:"#{type} #{name}", nil, nil, []}
       end
 
     if Module.defines?(mod, {name, 1}) do
-      raise ExUnit.DuplicateTestError, ~s("#{name}" is already defined in #{inspect mod})
+      raise ExUnit.DuplicateTestError, ~s("#{name}" is already defined in #{inspect(mod)})
     end
 
     tags =
       (tags ++ tag ++ describetag ++ moduletag)
       |> normalize_tags
       |> validate_tags
-      |> Map.merge(%{line: line, file: file, registered: registered,
-                     async: async, describe: describe, type: type})
+      |> Map.merge(%{
+        line: line,
+        file: file,
+        registered: registered,
+        async: async,
+        describe: describe,
+        describe_line: describe_line,
+        type: type
+      })
 
-    test = %ExUnit.Test{name: name, case: mod, tags: tags}
+    test = %ExUnit.Test{name: name, case: mod, tags: tags, module: mod}
     Module.put_attribute(mod, :ex_unit_tests, test)
 
-    Enum.each [:tag | registered_attributes], fn(attribute) ->
+    Enum.each(registered_attributes, fn attribute ->
       Module.delete_attribute(mod, attribute)
-    end
+    end)
 
     name
   end
@@ -438,7 +490,7 @@ defmodule ExUnit.Case do
 
   The attribute values will be available as a key/value pair in
   `context.registered`. The key/value pairs will be cleared
-  after each `ExUnit.Case.test` similar to `@tag`.
+  after each `ExUnit.Case.test/3` similar to `@tag`.
 
   `Module.register_attribute/3` is used to register the attribute,
   this function takes the same options.
@@ -467,21 +519,21 @@ defmodule ExUnit.Case do
   end
 
   defp validate_tags(tags) do
-    for tag <- @reserved,
-        Map.has_key?(tags, tag) do
-      raise "cannot set tag #{inspect tag} because it is reserved by ExUnit"
+    for tag <- @reserved, Map.has_key?(tags, tag) do
+      raise "cannot set tag #{inspect(tag)} because it is reserved by ExUnit"
     end
 
-    unless is_atom(tags[:type]),
-      do: raise "value for tag `:type` must be an atom"
+    unless is_atom(tags[:type]) do
+      raise("value for tag \":type\" must be an atom")
+    end
 
     tags
   end
 
   defp normalize_tags(tags) do
-    Enum.reduce Enum.reverse(tags), %{}, fn
+    Enum.reduce(Enum.reverse(tags), %{}, fn
       tag, acc when is_atom(tag) -> Map.put(acc, tag, true)
       tag, acc when is_list(tag) -> tag |> Enum.into(acc)
-    end
+    end)
   end
 end

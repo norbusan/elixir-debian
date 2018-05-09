@@ -3,7 +3,7 @@ defmodule IO do
   Functions handling input/output (IO).
 
   Many functions in this module expect an IO device as an argument.
-  An IO device must be a pid or an atom representing a process.
+  An IO device must be a PID or an atom representing a process.
   For convenience, Elixir provides `:stdio` and `:stderr` as
   shortcuts to Erlang's `:standard_io` and `:standard_error`.
 
@@ -17,7 +17,7 @@ defmodule IO do
 
   ## IO devices
 
-  An IO device may be an atom or a pid. In case it is an atom,
+  An IO device may be an atom or a PID. In case it is an atom,
   the atom must be the name of a registered process. In addition,
   Elixir provides two shortcuts:
 
@@ -27,9 +27,9 @@ defmodule IO do
     * `:stderr` - a shortcut for the named process `:standard_error`
       provided in Erlang
 
-  IO devices maintain their position, that means subsequent calls to any
-  reading or writing functions will start from the place when the device
-  was last accessed. Position of files can be changed using the
+  IO devices maintain their position, which means subsequent calls to any
+  reading or writing functions will start from the place where the device
+  was last accessed. The position of files can be changed using the
   `:file.position/2` function.
 
   """
@@ -37,8 +37,6 @@ defmodule IO do
   @type device :: atom | pid
   @type nodata :: {:error, term} | :eof
   @type chardata() :: :unicode.chardata()
-
-  import :erlang, only: [group_leader: 0]
 
   defmacrop is_iodata(data) do
     quote do
@@ -55,7 +53,7 @@ defmodule IO do
 
   It returns:
 
-    * `data` - the input characters
+    * `data` - the output characters
 
     * `:eof` - end of file was encountered
 
@@ -67,7 +65,7 @@ defmodule IO do
   empty string in case the device has reached EOF.
   """
   @spec read(device, :all | :line | non_neg_integer) :: chardata | nodata
-  def read(device \\ group_leader(), line_or_chars)
+  def read(device \\ :stdio, line_or_chars)
 
   def read(device, :all) do
     do_read_all(map_dev(device), "")
@@ -92,13 +90,13 @@ defmodule IO do
   @doc """
   Reads from the IO `device`. The operation is Unicode unsafe.
 
-  The `device` is iterated by the given number of characters or line by line if
+  The `device` is iterated by the given number of bytes or line by line if
   `:line` is given.
   Alternatively, if `:all` is given, then whole `device` is returned.
 
   It returns:
 
-    * `data` - the input characters
+    * `data` - the output bytes
 
     * `:eof` - end of file was encountered
 
@@ -113,7 +111,7 @@ defmodule IO do
   as it will return the wrong result.
   """
   @spec binread(device, :all | :line | non_neg_integer) :: iodata | nodata
-  def binread(device \\ group_leader(), line_or_chars)
+  def binread(device \\ :stdio, line_or_chars)
 
   def binread(device, :all) do
     do_binread_all(map_dev(device), "")
@@ -145,8 +143,7 @@ defmodule IO do
   @doc """
   Writes `item` to the given `device`.
 
-  By default the `device` is the standard output.
-  It returns `:ok` if it succeeds.
+  By default, the `device` is the standard output.
 
   ## Examples
 
@@ -157,9 +154,9 @@ defmodule IO do
       #=> error
 
   """
-  @spec write(device, chardata | String.Chars.t) :: :ok
-  def write(device \\ group_leader(), item) do
-    :io.put_chars map_dev(device), to_chardata(item)
+  @spec write(device, chardata | String.Chars.t()) :: :ok
+  def write(device \\ :stdio, item) do
+    :io.put_chars(map_dev(device), to_chardata(item))
   end
 
   @doc """
@@ -173,17 +170,29 @@ defmodule IO do
   as it will return the wrong result.
   """
   @spec binwrite(device, iodata) :: :ok | {:error, term}
-  def binwrite(device \\ group_leader(), item) when is_iodata(item) do
-    :file.write map_dev(device), item
+  def binwrite(device \\ :stdio, item) when is_iodata(item) do
+    :file.write(map_dev(device), item)
   end
 
   @doc """
   Writes `item` to the given `device`, similar to `write/2`,
   but adds a newline at the end.
+
+  By default, the `device` is the standard output. It returns `:ok`
+  if it succeeds.
+
+  ## Examples
+
+      IO.puts "Hello World!"
+      #=> Hello World!
+
+      IO.puts :stderr, "error"
+      #=> error
+
   """
-  @spec puts(device, chardata | String.Chars.t) :: :ok
-  def puts(device \\ group_leader(), item) do
-    :io.put_chars map_dev(device), [to_chardata(item), ?\n]
+  @spec puts(device, chardata | String.Chars.t()) :: :ok
+  def puts(device \\ :stdio, item) do
+    :io.put_chars(map_dev(device), [to_chardata(item), ?\n])
   end
 
   @doc """
@@ -203,13 +212,17 @@ defmodule IO do
       #=>   my_app.ex:4: MyApp.main/1
 
   """
-  @spec warn(chardata | String.Chars.t, Exception.stacktrace) :: :ok
+  @spec warn(chardata | String.Chars.t(), Exception.stacktrace()) :: :ok
   def warn(message, []) do
-    :elixir_errors.warn([to_chardata(message), ?\n])
+    :elixir_errors.bare_warn(nil, nil, [to_chardata(message), ?\n])
   end
-  def warn(message, stacktrace) when is_list(stacktrace) do
-    formatted = Enum.map_join(stacktrace, "\n  ", &Exception.format_stacktrace_entry(&1))
-    :elixir_errors.warn([to_chardata(message), ?\n, "  ", formatted, ?\n])
+
+  def warn(message, [{_, _, _, opts} | _] = stacktrace) do
+    formatted_trace = Enum.map_join(stacktrace, "\n  ", &Exception.format_stacktrace_entry(&1))
+    message = [to_chardata(message), ?\n, "  ", formatted_trace, ?\n]
+    line = opts[:line]
+    file = opts[:file]
+    :elixir_errors.bare_warn(line, file && List.to_string(file), message)
   end
 
   @doc """
@@ -224,7 +237,7 @@ defmodule IO do
       #=>   (iex) evaluator.ex:108: IEx.Evaluator.eval/4
 
   """
-  @spec warn(chardata | String.Chars.t) :: :ok
+  @spec warn(chardata | String.Chars.t()) :: :ok
   def warn(message) do
     {:current_stacktrace, stacktrace} = Process.info(self(), :current_stacktrace)
     warn(message, Enum.drop(stacktrace, 2))
@@ -233,32 +246,68 @@ defmodule IO do
   @doc """
   Inspects and writes the given `item` to the device.
 
+  It's important to note that it returns the given `item` unchanged.
+  This makes it possible to "spy" on values by inserting an
+  `IO.inspect/2` call almost anywhere in your code, for example,
+  in the middle of a pipeline.
+
   It enables pretty printing by default with width of
   80 characters. The width can be changed by explicitly
   passing the `:width` option.
 
-  See `Inspect.Opts` for a full list of options.
+  The output can be decorated with a label, by providing the `:label`
+  option to easily distinguish it from other `IO.inspect/2` calls.
+  The label will be printed before the inspected `item`.
+
+  See `Inspect.Opts` for a full list of remaining formatting options.
 
   ## Examples
 
-      IO.inspect Process.list, width: 40
+      IO.inspect <<0, 1, 2>>, width: 40
+
+  Prints:
+
+      <<0, 1, 2>>
+
+  We can use the `:label` option to decorate the output:
+
+      IO.inspect 1..100, label: "a wonderful range"
+
+  Prints:
+
+      a wonderful range: 1..100
+
+  The `:label` option is especially useful with pipelines:
+
+      [1, 2, 3]
+      |> IO.inspect(label: "before")
+      |> Enum.map(&(&1 * 2))
+      |> IO.inspect(label: "after")
+      |> Enum.sum
+
+  Prints:
+
+      before: [1, 2, 3]
+      after: [2, 4, 6]
 
   """
-  @spec inspect(item, Keyword.t) :: item when item: var
+  @spec inspect(item, keyword) :: item when item: var
   def inspect(item, opts \\ []) do
-    inspect group_leader(), item, opts
+    inspect(:stdio, item, opts)
   end
 
   @doc """
   Inspects `item` according to the given options using the IO `device`.
 
-  See `Inspect.Opts` for a full list of options.
+  See `inspect/2` for a full list of options.
   """
-  @spec inspect(device, item, Keyword.t) :: item when item: var
+  @spec inspect(device, item, keyword) :: item when item: var
   def inspect(device, item, opts) when is_list(opts) do
-    opts   = struct(Inspect.Opts, opts)
-    iodata = Inspect.Algebra.format(Inspect.Algebra.to_doc(item, opts), opts.width)
-    puts device, iodata
+    label = if label = opts[:label], do: [to_chardata(label), ": "], else: []
+    opts = struct(Inspect.Opts, opts)
+    doc = Inspect.Algebra.group(Inspect.Algebra.to_doc(item, opts))
+    chardata = Inspect.Algebra.format(doc, opts.width)
+    puts(device, [label, chardata])
     item
   end
 
@@ -272,12 +321,12 @@ defmodule IO do
   See `IO.getn/3` for a description of return values.
 
   """
-  @spec getn(chardata | String.Chars.t, pos_integer) :: chardata | nodata
-  @spec getn(device, chardata | String.Chars.t) :: chardata | nodata
+  @spec getn(chardata | String.Chars.t(), pos_integer) :: chardata | nodata
+  @spec getn(device, chardata | String.Chars.t()) :: chardata | nodata
   def getn(prompt, count \\ 1)
 
   def getn(prompt, count) when is_integer(count) and count > 0 do
-    getn(group_leader, prompt, count)
+    getn(:stdio, prompt, count)
   end
 
   def getn(device, prompt) when not is_integer(prompt) do
@@ -302,12 +351,12 @@ defmodule IO do
       NFS volume
 
   """
-  @spec getn(device, chardata | String.Chars.t, pos_integer) :: chardata | nodata
+  @spec getn(device, chardata | String.Chars.t(), pos_integer) :: chardata | nodata
   def getn(device, prompt, count) when is_integer(count) and count > 0 do
     :io.get_chars(map_dev(device), to_chardata(prompt), count)
   end
 
-  @doc """
+  @doc ~S"""
   Reads a line from the IO `device`.
 
   It returns:
@@ -328,8 +377,8 @@ defmodule IO do
       IO.gets "What is your name?\n"
 
   """
-  @spec gets(device, chardata | String.Chars.t) :: chardata | nodata
-  def gets(device \\ group_leader(), prompt) do
+  @spec gets(device, chardata | String.Chars.t()) :: chardata | nodata
+  def gets(device \\ :stdio, prompt) do
     :io.get_line(map_dev(device), to_chardata(prompt))
   end
 
@@ -343,7 +392,7 @@ defmodule IO do
   The `device` is iterated by the given number of characters or line by line if
   `:line` is given.
 
-  This reads from the IO as utf-8. Check out
+  This reads from the IO as UTF-8. Check out
   `IO.binstream/2` to handle the IO as a raw binary.
 
   Note that an IO stream has side effects and every time
@@ -357,7 +406,7 @@ defmodule IO do
       Enum.each IO.stream(:stdio, :line), &IO.write(&1)
 
   """
-  @spec stream(device, :line | pos_integer) :: Enumerable.t
+  @spec stream(device, :line | pos_integer) :: Enumerable.t()
   def stream(device, line_or_codepoints)
       when line_or_codepoints == :line
       when is_integer(line_or_codepoints) and line_or_codepoints > 0 do
@@ -382,7 +431,7 @@ defmodule IO do
   mode as it will return the wrong result.
 
   """
-  @spec binstream(device, :line | pos_integer) :: Enumerable.t
+  @spec binstream(device, :line | pos_integer) :: Enumerable.t()
   def binstream(device, line_or_bytes)
       when line_or_bytes == :line
       when is_integer(line_or_bytes) and line_or_bytes > 0 do
@@ -408,7 +457,7 @@ defmodule IO do
       "string"
 
   """
-  @spec chardata_to_string(chardata) :: String.t | no_return
+  @spec chardata_to_string(chardata) :: String.t() | no_return
   def chardata_to_string(string) when is_binary(string) do
     string
   end
@@ -470,8 +519,10 @@ defmodule IO do
     case read(device, line_or_codepoints) do
       :eof ->
         {:halt, device}
+
       {:error, reason} ->
         raise IO.StreamError, reason: reason
+
       data ->
         {[data], device}
     end
@@ -482,8 +533,10 @@ defmodule IO do
     case binread(device, line_or_chars) do
       :eof ->
         {:halt, device}
+
       {:error, reason} ->
         raise IO.StreamError, reason: reason
+
       data ->
         {[data], device}
     end
@@ -492,7 +545,7 @@ defmodule IO do
   @compile {:inline, map_dev: 1, to_chardata: 1}
 
   # Map the Elixir names for standard IO and error to Erlang names
-  defp map_dev(:stdio),  do: :standard_io
+  defp map_dev(:stdio), do: :standard_io
   defp map_dev(:stderr), do: :standard_error
   defp map_dev(other) when is_atom(other) or is_pid(other) or is_tuple(other), do: other
 

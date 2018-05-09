@@ -94,12 +94,12 @@ defmodule TestOneOfEach do
   end
 
   test "19. refute a message is received within a timeout" do
-    send self, {:hello, "Dave"}
+    send self(), {:hello, "Dave"}
     refute_receive {:hello, _}, 1000
   end
 
   test "20. refute a message is ready to be received" do
-    send self, :hello_again
+    send self(), :hello_again
     refute_received :hello_again
   end
 
@@ -116,7 +116,7 @@ defmodule TestOneOfEach do
   end
 
   test "24. exception raised while running test" do
-    assert blows_up
+    assert blows_up()
   end
 
   test "25. error due to exit" do
@@ -153,6 +153,10 @@ defmodule TestOneOfEach do
     require Logger
     Logger.debug "this will be logged"
     flunk "oops"
+  end
+
+  test "29. function clause error" do
+    Access.fetch(:foo, :bar)
   end
 
   defp blows_up do

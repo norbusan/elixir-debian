@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Mix.LocalTest do
   use MixTest.Case
@@ -66,10 +66,13 @@ defmodule Mix.LocalTest do
   llLXgJJE2tGpDhEXBA3idg==
   """
 
-  setup_all do
-    File.mkdir_p!(Mix.PublicKey.public_keys_path)
+  # We don't actually use it but it exists for documentation purposes.
+  _ = @private_key
 
-    Mix.PublicKey.public_keys_path
+  setup_all do
+    File.mkdir_p!(Mix.PublicKey.public_keys_path())
+
+    Mix.PublicKey.public_keys_path()
     |> Path.join("test_key.pub")
     |> File.write!(@public_key)
   end
@@ -80,7 +83,7 @@ defmodule Mix.LocalTest do
       File.write!("csv.signed", @csv_signed)
 
       assert {"1.0.0", "1.2.4", "GHI"} =
-        Mix.Local.find_matching_versions_from_signed_csv!("name", "csv")
+               Mix.Local.find_matching_versions_from_signed_csv!("name", "csv")
     end
   end
 

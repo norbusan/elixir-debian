@@ -24,14 +24,14 @@
 #    are processed on the local node and not the remote one. For such,
 #    one can replace the last line above by:
 #
-#      $ iex --sname bar --remsh foo@localhost -e IO.inspect node
+#      $ iex --sname bar --remsh foo@localhost -e 'IO.inspect node()'
 #
 #    And verify that the local node name is printed.
 #
 # 4. Finally, in some other circumstances, printing messages may become
 #    borked. This can be verified with:
 #
-#      $ iex -e ":error_logger.info_msg("foo~nbar", [])"
+#      $ iex -e ':error_logger.info_msg("foo~nbar", [])'
 #
 # By the time those instructions have been written, all tests above pass.
 defmodule IEx.CLI do
@@ -50,15 +50,15 @@ defmodule IEx.CLI do
   a dumb terminal version is started instead.
   """
   def start do
-    if tty_works? do
-      :user_drv.start([:"tty_sl -c -e", tty_args])
+    if tty_works?() do
+      :user_drv.start([:"tty_sl -c -e", tty_args()])
     else
-      :application.set_env(:stdlib, :shell_prompt_func,
-                           {__MODULE__, :prompt})
+      :application.set_env(:stdlib, :shell_prompt_func, {__MODULE__, :prompt})
       :user.start()
       local_start()
     end
   end
+
   def prompt(_n) do
     []
   end
@@ -69,7 +69,7 @@ defmodule IEx.CLI do
   # to do it just once.
   defp tty_works? do
     try do
-      port = Port.open {:spawn, 'tty_sl -c -e'}, [:eof]
+      port = Port.open({:spawn, 'tty_sl -c -e'}, [:eof])
       Port.close(port)
     catch
       _, _ -> false
@@ -77,22 +77,37 @@ defmodule IEx.CLI do
   end
 
   defp tty_args do
-    if remote = get_remsh(:init.get_plain_arguments) do
-      if Node.alive? do
-        case :rpc.call remote, :code, :ensure_loaded, [IEx] do
+    if remote = get_remsh(:init.get_plain_arguments()) do
+      if Node.alive?() do
+        case :rpc.call(remote, :code, :ensure_loaded, [IEx]) do
           {:badrpc, reason} ->
-            abort "Could not contact remote node #{remote}, reason: #{inspect reason}. Aborting..."
+            suggestion =
+              if Atom.to_string(remote) =~ "@" do
+                ""
+              else
+                "Make sure the node given to --remsh is in the node@host format. "
+              end
+
+            message =
+              "Could not contact remote node #{remote}, reason: #{inspect(reason)}. " <>
+                suggestion <> "Aborting..."
+
+            abort(message)
+
           {:module, IEx} ->
             {mod, fun, args} = remote_start_mfa()
             {remote, mod, fun, args}
+
           _ ->
-            abort "Could not find IEx on remote node #{remote}. Aborting..."
+            abort("Could not find IEx on remote node #{remote}. Aborting...")
         end
       else
-        abort "In order to use --remsh, you need to name the current node using --name or --sname. Aborting..."
+        abort(
+          "In order to use --remsh, you need to name the current node using --name or --sname. Aborting..."
+        )
       end
     else
-      {:erlang, :apply, [local_start_function, []]}
+      {:erlang, :apply, [local_start_function(), []]}
     end
   end
 
@@ -101,7 +116,7 @@ defmodule IEx.CLI do
   end
 
   def remote_start(parent, ref) do
-    send parent, {:begin, ref, self}
+    send(parent, {:begin, ref, self()})
     receive do: ({:done, ^ref} -> :ok)
   end
 
@@ -110,22 +125,23 @@ defmodule IEx.CLI do
   end
 
   defp remote_start_mfa do
-    ref    = make_ref
+    ref = make_ref()
     opts = options()
 
-    parent = spawn_link fn ->
-      receive do
-        {:begin, ^ref, other} ->
-          :elixir.start_cli
-          send other, {:done, ref}
-      end
-    end
+    parent =
+      spawn_link(fn ->
+        receive do
+          {:begin, ^ref, other} ->
+            :elixir.start_cli()
+            send(other, {:done, ref})
+        end
+      end)
 
     {IEx, :start, [opts, {__MODULE__, :remote_start, [parent, ref]}]}
   end
 
   defp options do
-    [dot_iex_path: find_dot_iex(:init.get_plain_arguments)]
+    [dot_iex_path: find_dot_iex(:init.get_plain_arguments())]
   end
 
   defp abort(msg) do
@@ -133,6 +149,7 @@ defmodule IEx.CLI do
       IO.puts(:stderr, msg)
       System.halt(1)
     end
+
     {:erlang, :apply, [function, []]}
   end
 

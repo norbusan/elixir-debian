@@ -8,6 +8,7 @@ defmodule ExUnit.CaptureLog do
         use ExUnit.Case
 
         import ExUnit.CaptureLog
+        require Logger
 
         test "example" do
           assert capture_log(fn ->
@@ -36,11 +37,21 @@ defmodule ExUnit.CaptureLog do
 
   Returns the binary which is the captured output.
 
-  This function mutes the `:console` backend
-  and captures any log messages sent to Logger.
+  This function mutes the `:console` backend and captures any log
+  messages sent to Logger from the calling processes. It is possible
+  to ensure explicit log messages from other processes are captured
+  by waiting for their exit or monitor signal.
 
-  Note that when the `async` is set to `true`,
-  the messages from another test might be captured.
+  However, `capture_log` does not guarantee to capture log messages
+  originated from processes spawned using a low level `Kernel` spawn
+  function (e.g. `Kernel.spawn/1`) and such processes exit with an
+  exception or a throw. Therefore, prefer using a `Task`, or other OTP
+  process, will send explicit logs before its exit or monitor signals
+  and will not cause VM generated log messages.
+
+  Note that when the `async` is set to `true`, the messages from another
+  test might be captured. This is OK as long you consider such cases in
+  your assertions.
 
   It is possible to configure the level to capture with `:level`,
   which will set the capturing level for the duration of the
@@ -53,12 +64,13 @@ defmodule ExUnit.CaptureLog do
   `:metadata` and `:colors` respectively. These three options
   defaults to the `:console` backend configuration parameters.
   """
-  @spec capture_log(Keyword.t, (() -> any)) :: String.t
+  @spec capture_log(keyword, (() -> any)) :: String.t()
   def capture_log(opts \\ [], fun) do
     opts = Keyword.put_new(opts, :level, nil)
     {:ok, string_io} = StringIO.open("")
 
     try do
+      _ = :gen_event.which_handlers(:error_logger)
       :ok = add_capture(string_io, opts)
       ref = ExUnit.CaptureServer.log_capture_on(self())
 
@@ -84,24 +96,49 @@ defmodule ExUnit.CaptureLog do
   end
 
   defp add_capture(pid, opts) do
-    GenEvent.add_mon_handler(Logger, {Console, pid}, {pid, opts})
+    case :proc_lib.start(__MODULE__, :init_proxy, [pid, opts, self()]) do
+      :ok ->
+        :ok
+
+      :noproc ->
+        raise "cannot capture_log/2 because the :logger application was not started"
+
+      {:error, reason} ->
+        mfa = {ExUnit.CaptureLog, :add_capture, [pid, opts]}
+        exit({reason, mfa})
+    end
+  end
+
+  @doc false
+  def init_proxy(pid, opts, parent) do
+    case :gen_event.add_sup_handler(Logger, {Console, pid}, {Console, [device: pid] ++ opts}) do
+      :ok ->
+        ref = Process.monitor(parent)
+        :proc_lib.init_ack(:ok)
+
+        receive do
+          {:DOWN, ^ref, :process, ^parent, _reason} -> :ok
+          {:gen_event_EXIT, {Console, ^pid}, _reason} -> :ok
+        end
+
+      {:EXIT, reason} ->
+        :proc_lib.init_ack({:error, reason})
+
+      {:error, reason} ->
+        :proc_lib.init_ack({:error, reason})
+    end
+  catch
+    :exit, :noproc -> :proc_lib.init_ack(:noproc)
   end
 
   defp remove_capture(pid) do
-    case GenEvent.remove_handler(Logger, {Console, pid}, nil) do
+    case :gen_event.delete_handler(Logger, {Console, pid}, :ok) do
       :ok ->
-        receive do
-          {:gen_event_EXIT, {Console, ^pid}, _reason} -> :ok
-        end
-      {:error, :not_found} = error ->
+        :ok
+
+      {:error, :module_not_found} = error ->
         mfa = {ExUnit.CaptureLog, :remove_capture, [pid]}
-        receive do
-          {:gen_event_EXIT, {Console, ^pid}, reason} -> exit({reason, mfa})
-        after
-          # In case someone accidentally flushed the message,
-          # let's raise not found.
-          0 -> exit({error, mfa})
-        end
+        exit({error, mfa})
     end
   end
 end
