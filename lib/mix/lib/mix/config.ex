@@ -43,7 +43,7 @@ defmodule Mix.Config do
   defmacro __using__(_) do
     quote do
       import Mix.Config, only: [config: 2, config: 3, import_config: 1]
-      {:ok, agent} = Mix.Config.Agent.start_link
+      {:ok, agent} = Mix.Config.Agent.start_link()
       var!(config_agent, Mix.Config) = agent
     end
   end
@@ -78,7 +78,7 @@ defmodule Mix.Config do
   """
   defmacro config(app, opts) do
     quote do
-      Mix.Config.Agent.merge var!(config_agent, Mix.Config), [{unquote(app), unquote(opts)}]
+      Mix.Config.Agent.merge(var!(config_agent, Mix.Config), [{unquote(app), unquote(opts)}])
     end
   end
 
@@ -91,28 +91,32 @@ defmodule Mix.Config do
 
   The given `opts` are merged into the existing values for `key`
   in the given `app`. Conflicting keys are overridden by the
-  ones specified in `opts`. For example, the declaration below:
+  ones specified in `opts`. For example, given the two configurations
+  below:
 
       config :ecto, Repo,
-        log_level: :warn
+        log_level: :warn,
+        adapter: Ecto.Adapters.Postgres
 
       config :ecto, Repo,
         log_level: :info,
         pool_size: 10
 
-  Will have a final value for `Repo` of:
+  the final value of the configuration for the `Repo` key in the `:ecto`
+  application will be:
 
-      [log_level: :info, pool_size: 10]
+      [log_level: :info, pool_size: 10, adapter: Ecto.Adapters.Postgres]
 
-  This final value can be retrieved at run or compile time:
+  This final value can be retrieved at runtime or compile time with:
 
       Application.get_env(:ecto, Repo)
 
   """
   defmacro config(app, key, opts) do
     quote do
-      Mix.Config.Agent.merge var!(config_agent, Mix.Config),
-        [{unquote(app), [{unquote(key), unquote(opts)}]}]
+      Mix.Config.Agent.merge(var!(config_agent, Mix.Config), [
+        {unquote(app), [{unquote(key), unquote(opts)}]}
+      ])
     end
   end
 
@@ -141,10 +145,22 @@ defmodule Mix.Config do
 
   """
   defmacro import_config(path_or_wildcard) do
+    loaded_paths_quote =
+      unless {:loaded_paths, Mix.Config} in __CALLER__.vars do
+        quote do
+          var!(loaded_paths, Mix.Config) = [__ENV__.file]
+        end
+      end
+
     quote do
+      unquote(loaded_paths_quote)
+
       Mix.Config.Agent.merge(
         var!(config_agent, Mix.Config),
-         Mix.Config.read_wildcard!(Path.expand(unquote(path_or_wildcard), __DIR__))
+        Mix.Config.read_wildcard!(
+          Path.expand(unquote(path_or_wildcard), __DIR__),
+          var!(loaded_paths, Mix.Config)
+        )
       )
     end
   end
@@ -155,21 +171,38 @@ defmodule Mix.Config do
   `file` is the path to the configuration file to be read. If that file doesn't
   exist or if there's an error loading it, a `Mix.Config.LoadError` exception
   will be raised.
-  """
-  def read!(file) do
-    try do
-      {config, binding} = Code.eval_file(file)
 
-      config = case List.keyfind(binding, {:config_agent, Mix.Config}, 0) do
-        {_, agent} -> get_config_and_stop_agent(agent)
-        nil        -> config
+  `loaded_paths` is a list of configuration files that have been previously
+  read. If `file` exists in `loaded_paths`, a `Mix.Config.LoadError` exception
+  will be raised.
+  """
+  def read!(file, loaded_paths \\ []) do
+    try do
+      if file in loaded_paths do
+        raise ArgumentError, message: "recursive load of #{file} detected"
       end
+
+      binding = [{{:loaded_paths, Mix.Config}, [file | loaded_paths]}]
+
+      {config, binding} =
+        Code.eval_string(
+          File.read!(file),
+          binding,
+          file: file,
+          line: 1
+        )
+
+      config =
+        case List.keyfind(binding, {:config_agent, Mix.Config}, 0) do
+          {_, agent} -> get_config_and_stop_agent(agent)
+          nil -> config
+        end
 
       validate!(config)
       config
     rescue
-      e in [LoadError] -> reraise(e, System.stacktrace)
-      e -> reraise(LoadError, [file: file, error: e], System.stacktrace)
+      e in [LoadError] -> reraise(e, System.stacktrace())
+      e -> reraise(LoadError, [file: file, error: e], System.stacktrace())
     end
   end
 
@@ -185,14 +218,19 @@ defmodule Mix.Config do
   Raises an error if `path` is a concrete filename (with no wildcards)
   but the corresponding file does not exist; if `path` matches no files,
   no errors are raised.
+
+  `loaded_paths` is a list of configuration files that have been previously
+  read.
   """
-  def read_wildcard!(path) do
-    paths = if String.contains?(path, ~w(* ? [ {))do
-      Path.wildcard(path)
-    else
-      [path]
-    end
-    Enum.reduce(paths, [], &merge(&2, read!(&1)))
+  def read_wildcard!(path, loaded_paths \\ []) do
+    paths =
+      if String.contains?(path, ~w(* ? [ {)) do
+        Path.wildcard(path)
+      else
+        [path]
+      end
+
+    Enum.reduce(paths, [], &merge(&2, read!(&1, loaded_paths)))
   end
 
   @doc """
@@ -217,6 +255,7 @@ defmodule Mix.Config do
       for {k, v} <- kw do
         Application.put_env(app, k, v, persistent: true)
       end
+
       app
     end
   end
@@ -232,14 +271,15 @@ defmodule Mix.Config do
             true
           else
             raise ArgumentError,
-              "expected config for app #{inspect app} to return keyword list, got: #{inspect value}"
+                  "expected config for app #{inspect(app)} to return keyword list, " <>
+                    "got: #{inspect(value)}"
           end
+
         _ ->
           false
       end)
     else
-      raise ArgumentError,
-        "expected config file to return keyword list, got: #{inspect config}"
+      raise ArgumentError, "expected config file to return keyword list, got: #{inspect(config)}"
     end
   end
 

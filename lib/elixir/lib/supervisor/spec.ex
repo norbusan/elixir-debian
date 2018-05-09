@@ -1,5 +1,11 @@
 defmodule Supervisor.Spec do
   @moduledoc """
+  WARNING: this module is deprecated.
+
+  The functions in this module are deprecated and they do not work
+  with the module-based child specs introduced in Elixir v1.5.
+  Please see the `Supervisor` documentation instead.
+
   Convenience functions for defining supervisor specifications.
 
   ## Example
@@ -38,7 +44,7 @@ defmodule Supervisor.Spec do
   Notice in this case we don't have to explicitly import
   `Supervisor.Spec` as `use Supervisor` automatically does so.
   Defining a module-based supervisor can be useful, for example,
-  to perform initialization tasks in the `init/1` callback.
+  to perform initialization tasks in the `c:init/1` callback.
 
   ## Supervisor and worker options
 
@@ -76,12 +82,16 @@ defmodule Supervisor.Spec do
       terminates abnormally, i.e., with an exit reason other than
       `:normal`, `:shutdown` or `{:shutdown, term}`
 
+  Notice that supervisor that reached maximum restart intensity will exit with `:shutdown` reason.
+  In this case the supervisor will only be restarted if its child specification was defined with
+  the `:restart` option is set to `:permanent` (the default).
+
   ### Shutdown values (:shutdown)
 
   The following shutdown values are supported in the `:shutdown` option:
 
     * `:brutal_kill` - the child process is unconditionally terminated
-      using `exit(child, :kill)`
+      using `Process.exit(child, :kill)`
 
     * `:infinity` - if the child process is a supervisor, this is a mechanism
       to give the subtree enough time to shutdown; it can also be used with
@@ -96,7 +106,8 @@ defmodule Supervisor.Spec do
 
   """
 
-  # TODO: Update and provide a digest of strategies once we include DynamicSupervisor.
+  # TODO: Deprecate all functions in this module on Elixir v1.8.
+  # Also deprecate entry in Supervisor.Default.
 
   @typedoc "Supported strategies"
   @type strategy :: :simple_one_for_one | :one_for_one | :one_for_all | :rest_for_one
@@ -105,7 +116,7 @@ defmodule Supervisor.Spec do
   @type restart :: :permanent | :transient | :temporary
 
   @typedoc "Supported shutdown values"
-  @type shutdown :: :brutal_kill | :infinity | non_neg_integer
+  @type shutdown :: timeout | :brutal_kill
 
   @typedoc "Supported worker values"
   @type worker :: :worker | :supervisor
@@ -117,19 +128,15 @@ defmodule Supervisor.Spec do
   @type child_id :: term
 
   @typedoc "The supervisor specification"
-  @type spec :: {child_id,
-                  start_fun :: {module, atom, [term]},
-                  restart,
-                  shutdown,
-                  worker,
-                  modules}
+  @type spec ::
+          {child_id, start_fun :: {module, atom, [term]}, restart, shutdown, worker, modules}
 
   @doc """
   Receives a list of children (workers or supervisors) to
   supervise and a set of options.
 
   Returns a tuple containing the supervisor specification. This tuple can be
-  used as the return value of the `init/1` callback when implementing a
+  used as the return value of the `c:init/1` callback when implementing a
   module-based supervisor.
 
   ## Examples
@@ -143,7 +150,7 @@ defmodule Supervisor.Spec do
       `:simple_one_for_one`. You can learn more about strategies
       in the `Supervisor` module docs.
 
-    * `:max_restarts` - the maximum amount of restarts allowed in
+    * `:max_restarts` - the maximum number of restarts allowed in
       a time frame. Defaults to `3`.
 
     * `:max_seconds` - the time frame in which `:max_restarts` applies.
@@ -153,11 +160,12 @@ defmodule Supervisor.Spec do
   allowed within 5 seconds. Check the `Supervisor` module for a detailed
   description of the available strategies.
   """
-  @spec supervise([spec], strategy: strategy,
-                          max_restarts: non_neg_integer,
-                          max_seconds: non_neg_integer) :: {:ok, tuple}
-  # TODO: Make it return a tuple of format {:ok, children, opts}
-  # TODO: Deprecate once the new tuple format has been established
+  @spec supervise(
+          [spec],
+          strategy: strategy,
+          max_restarts: non_neg_integer,
+          max_seconds: pos_integer
+        ) :: {:ok, tuple}
   def supervise(children, options) do
     unless strategy = options[:strategy] do
       raise ArgumentError, "expected :strategy option to be given"
@@ -166,15 +174,27 @@ defmodule Supervisor.Spec do
     maxR = Keyword.get(options, :max_restarts, 3)
     maxS = Keyword.get(options, :max_seconds, 5)
 
-    assert_unique_ids(Enum.map(children, &elem(&1, 0)))
+    assert_unique_ids(Enum.map(children, &get_id/1))
     {:ok, {{strategy, maxR, maxS}, children}}
+  end
+
+  defp get_id({id, _, _, _, _, _}) do
+    id
+  end
+
+  defp get_id(other) do
+    raise ArgumentError,
+          "invalid tuple specification given to supervise/2. If you are trying to use " <>
+            "the map child specification that is part of the Elixir v1.5, use Supervisor.init/2 " <>
+            "instead of Supervisor.Spec.supervise/2. See the Supervisor module for more information. " <>
+            "Got: #{inspect(other)}"
   end
 
   defp assert_unique_ids([id | rest]) do
     if id in rest do
       raise ArgumentError,
-        "duplicated id #{inspect id} found in the supervisor specification, " <>
-        "please explicitly pass the :id option when defining this worker/supervisor"
+            "duplicated id #{inspect(id)} found in the supervisor specification, " <>
+              "please explicitly pass the :id option when defining this worker/supervisor"
     else
       assert_unique_ids(rest)
     end
@@ -202,8 +222,15 @@ defmodule Supervisor.Spec do
   Check the documentation for the `Supervisor.Spec` module for more
   information on the options.
   """
-  @spec worker(module, [term], [restart: restart, shutdown: shutdown,
-                                id: term, function: atom, modules: modules]) :: spec
+  @spec worker(
+          module,
+          [term],
+          restart: restart,
+          shutdown: shutdown,
+          id: term,
+          function: atom,
+          modules: modules
+        ) :: spec
   def worker(module, args, options \\ []) do
     child(:worker, module, args, options)
   end
@@ -226,26 +253,30 @@ defmodule Supervisor.Spec do
   Check the documentation for the `Supervisor.Spec` module for more
   information on the options.
   """
-  @spec supervisor(module, [term], [restart: restart, shutdown: shutdown,
-                                    id: term, function: atom, modules: modules]) :: spec
+  @spec supervisor(
+          module,
+          [term],
+          restart: restart,
+          shutdown: shutdown,
+          id: term,
+          function: atom,
+          modules: modules
+        ) :: spec
   def supervisor(module, args, options \\ []) do
     options = Keyword.put_new(options, :shutdown, :infinity)
     child(:supervisor, module, args, options)
   end
 
-  # TODO: Do and expose proper child validation
   defp child(type, module, args, options) do
-    id       = Keyword.get(options, :id, module)
-    modules  = Keyword.get(options, :modules, modules(module))
+    id = Keyword.get(options, :id, module)
+    modules = Keyword.get(options, :modules, modules(module))
     function = Keyword.get(options, :function, :start_link)
-    restart  = Keyword.get(options, :restart, :permanent)
+    restart = Keyword.get(options, :restart, :permanent)
     shutdown = Keyword.get(options, :shutdown, 5000)
 
-    {id, {module, function, args},
-      restart, shutdown, type, modules}
+    {id, {module, function, args}, restart, shutdown, type, modules}
   end
 
-  # TODO: Remove GenEvent when there is no more GenEvent v2.0
   defp modules(GenEvent), do: :dynamic
-  defp modules(module),   do: [module]
+  defp modules(module), do: [module]
 end

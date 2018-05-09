@@ -1,17 +1,17 @@
 defmodule Mix.SCM do
   @moduledoc """
   This module provides helper functions and defines the
-  behaviour required by any SCM used by Mix.
+  behaviour required by any source code manager (SCM) used by Mix.
   """
 
-  @type opts :: Keyword.t
+  @type opts :: keyword
 
   @doc """
   Returns a boolean if the dependency can be fetched
   or it is meant to be previously available in the
   filesystem.
 
-  Local dependencies (i.e. non fetchable ones) are automatically
+  Local dependencies (i.e. non-fetchable ones) are automatically
   recompiled every time the parent project is compiled.
   """
   @callback fetchable? :: boolean
@@ -22,7 +22,7 @@ defmodule Mix.SCM do
   so the amount of information should be concise and
   easy to spot.
   """
-  @callback format(opts) :: String.t
+  @callback format(opts) :: String.t()
 
   @doc """
   Returns a string representing the SCM. This is used
@@ -32,7 +32,7 @@ defmodule Mix.SCM do
 
   If nil is returned, it means no lock information is available.
   """
-  @callback format_lock(opts) :: String.t | nil
+  @callback format_lock(opts) :: String.t() | nil
 
   @doc """
   This behaviour function receives a keyword list of `opts`
@@ -96,13 +96,13 @@ defmodule Mix.SCM do
 
   The lock is sent via `opts[:lock]` but it may not always be
   available. In such cases, if the SCM requires a lock, it must
-  return `:lockmismatch`, otherwise simply `:ok`.
+  return `:mismatch`, otherwise simply `:ok`.
 
   Note the lock may also belong to another SCM and as such, an
   structural check is required. A structural mismatch should always
   return `:outdated`.
   """
-  @callback lock_status(opts) :: :mismatch | :outdated | :nolock | :ok
+  @callback lock_status(opts) :: :mismatch | :outdated | :ok
 
   @doc """
   Receives two options and must return `true` if they refer to the

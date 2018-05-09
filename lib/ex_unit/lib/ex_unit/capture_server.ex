@@ -1,41 +1,45 @@
 defmodule ExUnit.CaptureServer do
   @moduledoc false
-  @timeout 10_000
+  @timeout 30000
+  @name __MODULE__
 
   use GenServer
 
-  def start_link() do
-    GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  def start_link(_opts) do
+    GenServer.start_link(__MODULE__, :ok, name: @name)
   end
 
   def device_capture_on(device, pid) do
-    GenServer.call(__MODULE__, {:device_capture_on, device, pid}, @timeout)
+    GenServer.call(@name, {:device_capture_on, device, pid}, @timeout)
   end
 
   def device_capture_off(ref) do
-    GenServer.call(__MODULE__, {:device_capture_off, ref}, @timeout)
+    GenServer.call(@name, {:device_capture_off, ref}, @timeout)
   end
 
   def log_capture_on(pid) do
-    GenServer.call(__MODULE__, {:log_capture_on, pid}, @timeout)
+    GenServer.call(@name, {:log_capture_on, pid}, @timeout)
   end
 
   def log_capture_off(ref) do
-    GenServer.call(__MODULE__, {:log_capture_off, ref}, @timeout)
+    GenServer.call(@name, {:log_capture_off, ref}, @timeout)
   end
 
   ## Callbacks
 
   def init(:ok) do
-    {:ok, %{
+    state = %{
       devices: {%{}, %{}},
       log_captures: %{},
       log_status: nil
-    }}
+    }
+
+    {:ok, state}
   end
 
   def handle_call({:device_capture_on, name, pid}, _from, config) do
     {names, refs} = config.devices
+
     if Map.has_key?(names, name) do
       {:reply, {:error, :already_captured}, config}
     else
@@ -55,7 +59,7 @@ defmodule ExUnit.CaptureServer do
   end
 
   def handle_call({:log_capture_on, pid}, _from, config) do
-    ref  = Process.monitor(pid)
+    ref = Process.monitor(pid)
     refs = Map.put(config.log_captures, ref, true)
 
     if map_size(refs) == 1 do
@@ -78,15 +82,12 @@ defmodule ExUnit.CaptureServer do
     {:noreply, config}
   end
 
-  def handle_info(msg, state) do
-    super(msg, state)
-  end
-
   defp release_device(ref, %{devices: {names, refs}} = config) do
     case Map.pop(refs, ref) do
       {{name, pid}, refs} ->
         names = Map.delete(names, name)
         Process.demonitor(ref, [:flush])
+
         try do
           try do
             Process.unregister(name)
@@ -96,18 +97,22 @@ defmodule ExUnit.CaptureServer do
         rescue
           ArgumentError -> nil
         end
+
         %{config | devices: {names, refs}}
-      {nil, _refs} -> config
+
+      {nil, _refs} ->
+        config
     end
   end
 
   defp remove_log_capture(ref, %{log_captures: refs} = config) do
-    if Map.has_key?(refs, ref) do
-      refs = Map.delete(refs, ref)
-      maybe_add_console(refs, config.log_status)
-      %{config | log_captures: refs}
-    else
-      config
+    case Map.pop(refs, ref, false) do
+      {true, refs} ->
+        maybe_add_console(refs, config.log_status)
+        %{config | log_captures: refs}
+
+      {false, _refs} ->
+        config
     end
   end
 

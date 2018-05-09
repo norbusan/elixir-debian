@@ -5,13 +5,13 @@ defmodule Range do
   A range represents a discrete number of values where
   the first and last values are integers.
 
-  Ranges can be either increasing (first <= last) or
-  decreasing (first > last). Ranges are also always
+  Ranges can be either increasing (`first <= last`) or
+  decreasing (`first > last`). Ranges are also always
   inclusive.
 
-  A Range is represented internally as a struct. However,
+  A range is represented internally as a struct. However,
   the most common form of creating and matching on ranges
-  is via the `../2` macro, auto-imported from Kernel:
+  is via the `../2` macro, auto-imported from `Kernel`:
 
       iex> range = 1..3
       1..3
@@ -21,8 +21,9 @@ defmodule Range do
       iex> last
       3
 
-  A Range implements the Enumerable protocol, which means
-  all of the functions in the Enum module is available:
+  A range implements the `Enumerable` protocol, which means
+  functions in the `Enum` module can be used to work with
+  ranges:
 
       iex> range = 1..10
       1..10
@@ -42,7 +43,6 @@ defmodule Range do
   @type t :: %Range{first: integer, last: integer}
   @type t(first, last) :: %Range{first: first, last: last}
 
-
   @doc """
   Creates a new range.
   """
@@ -53,22 +53,12 @@ defmodule Range do
 
   def new(first, last) do
     raise ArgumentError,
-      "ranges (first..last) expect both sides to be integers, " <>
-      "got: #{inspect first}..#{inspect last}"
+          "ranges (first..last) expect both sides to be integers, " <>
+            "got: #{inspect(first)}..#{inspect(last)}"
   end
 
-  @doc """
-  Returns `true` if the given `term` is a valid range.
-
-  ## Examples
-
-      iex> Range.range?(1..3)
-      true
-
-      iex> Range.range?(0)
-      false
-
-  """
+  # TODO: Remove by 2.0
+  @doc false
   @spec range?(term) :: boolean
   def range?(term)
   def range?(first..last) when is_integer(first) and is_integer(last), do: true
@@ -77,23 +67,23 @@ end
 
 defimpl Enumerable, for: Range do
   def reduce(first..last, acc, fun) do
-    reduce(first, last, acc, fun, last >= first)
+    reduce(first, last, acc, fun, _up? = last >= first)
   end
 
-  defp reduce(_x, _y, {:halt, acc}, _fun, _up) do
+  defp reduce(_x, _y, {:halt, acc}, _fun, _up?) do
     {:halted, acc}
   end
 
-  defp reduce(x, y, {:suspend, acc}, fun, up) do
-    {:suspended, acc, &reduce(x, y, &1, fun, up)}
+  defp reduce(x, y, {:suspend, acc}, fun, up?) do
+    {:suspended, acc, &reduce(x, y, &1, fun, up?)}
   end
 
-  defp reduce(x, y, {:cont, acc}, fun, true) when x <= y do
-    reduce(x + 1, y, fun.(x, acc), fun, true)
+  defp reduce(x, y, {:cont, acc}, fun, _up? = true) when x <= y do
+    reduce(x + 1, y, fun.(x, acc), fun, _up? = true)
   end
 
-  defp reduce(x, y, {:cont, acc}, fun, false) when x >= y do
-    reduce(x - 1, y, fun.(x, acc), fun, false)
+  defp reduce(x, y, {:cont, acc}, fun, _up? = false) when x >= y do
+    reduce(x - 1, y, fun.(x, acc), fun, _up? = false)
   end
 
   defp reduce(_, _, {:cont, acc}, _fun, _up) do
@@ -119,12 +109,26 @@ defimpl Enumerable, for: Range do
       {:ok, first - last + 1}
     end
   end
+
+  def slice(first..last) do
+    if first <= last do
+      {:ok, last - first + 1, &slice_asc(first + &1, &2)}
+    else
+      {:ok, first - last + 1, &slice_desc(first - &1, &2)}
+    end
+  end
+
+  defp slice_asc(current, 1), do: [current]
+  defp slice_asc(current, remaining), do: [current | slice_asc(current + 1, remaining - 1)]
+
+  defp slice_desc(current, 1), do: [current]
+  defp slice_desc(current, remaining), do: [current | slice_desc(current - 1, remaining - 1)]
 end
 
 defimpl Inspect, for: Range do
   import Inspect.Algebra
 
   def inspect(first..last, opts) do
-    concat [to_doc(first, opts), "..", to_doc(last, opts)]
+    concat([to_doc(first, opts), "..", to_doc(last, opts)])
   end
 end

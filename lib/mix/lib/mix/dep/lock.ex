@@ -5,7 +5,7 @@
 defmodule Mix.Dep.Lock do
   @moduledoc false
 
-  @manifest ".compile.lock"
+  @manifest "compile.lock"
 
   @doc """
   Returns the manifest file for dependencies.
@@ -13,7 +13,7 @@ defmodule Mix.Dep.Lock do
   The manifest is used to check if the lockfile
   itself is up to date.
   """
-  def manifest(path \\ Mix.Project.manifest_path) do
+  def manifest(path \\ Mix.Project.manifest_path()) do
     Path.join(path, @manifest)
   end
 
@@ -21,7 +21,7 @@ defmodule Mix.Dep.Lock do
   Touches the manifest file to force recompilation.
   """
   def touch_manifest do
-    path = Mix.Project.manifest_path
+    path = Mix.Project.manifest_path()
     File.mkdir_p!(path)
     File.touch!(manifest(path))
   end
@@ -32,13 +32,17 @@ defmodule Mix.Dep.Lock do
   """
   @spec read() :: map
   def read() do
+    lockfile = lockfile()
+
     case File.read(lockfile) do
       {:ok, info} ->
         assert_no_merge_conflicts_in_lockfile(lockfile, info)
+
         case Code.eval_string(info, [], file: lockfile) do
-          {lock, _binding} when is_map(lock)  -> lock
+          {lock, _binding} when is_map(lock) -> lock
           {_, _binding} -> %{}
         end
+
       {:error, _} ->
         %{}
     end
@@ -49,25 +53,29 @@ defmodule Mix.Dep.Lock do
   """
   @spec write(map) :: :ok
   def write(map) do
-    unless map == read do
+    unless map == read() do
       lines =
         for {app, rev} <- Enum.sort(map), rev != nil do
-          ~s("#{app}": #{inspect rev, limit: :infinity})
+          ~s(  "#{app}": #{inspect(rev, limit: :infinity)},\n)
         end
-      File.write! lockfile, "%{" <> Enum.join(lines, ",\n  ") <> "}\n"
+
+      File.write!(lockfile(), ["%{\n", lines, "}\n"])
       touch_manifest()
     end
+
     :ok
   end
 
   defp lockfile do
-    Mix.Project.config[:lockfile]
+    Mix.Project.config()[:lockfile]
   end
 
   defp assert_no_merge_conflicts_in_lockfile(lockfile, info) do
     if String.contains?(info, ~w(<<<<<<< ======= >>>>>>>)) do
-      Mix.raise "Your #{lockfile} contains merge conflicts. Please resolve the conflicts " <>
-                "and run the command again"
+      Mix.raise(
+        "Your #{lockfile} contains merge conflicts. Please resolve the conflicts " <>
+          "and run the command again"
+      )
     end
   end
 end

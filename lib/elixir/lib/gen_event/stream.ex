@@ -1,19 +1,8 @@
 defmodule GenEvent.Stream do
-  @moduledoc """
-  Defines a `GenEvent` stream.
-
-  This is a struct returned by `GenEvent.stream/2`. The struct is public and
-  contains the following fields:
-
-    * `:manager`  - the manager reference given to `GenEvent.stream/2`
-    * `:timeout`  - the timeout between events, defaults to `:infinity`
-
-  """
+  @moduledoc false
   defstruct manager: nil, timeout: :infinity
 
-  @type t :: %__MODULE__{
-               manager: GenEvent.manager,
-               timeout: timeout}
+  @type t :: %__MODULE__{manager: GenEvent.manager(), timeout: timeout}
 
   @doc false
   def init({_pid, _ref} = state) do
@@ -33,6 +22,7 @@ defmodule GenEvent.Stream do
   def handle_call(msg, _state) do
     # We do this to trick Dialyzer to not complain about non-local returns.
     reason = {:bad_call, msg}
+
     case :erlang.phash2(1, 1) do
       0 -> exit(reason)
       1 -> {:remove_handler, reason}
@@ -57,7 +47,7 @@ end
 
 defimpl Enumerable, for: GenEvent.Stream do
   def reduce(stream, acc, fun) do
-    start_fun = fn() -> start(stream) end
+    start_fun = fn -> start(stream) end
     next_fun = &next(stream, &1)
     stop_fun = &stop(stream, &1)
     Stream.resource(start_fun, next_fun, stop_fun).(acc, wrap_reducer(fun))
@@ -71,26 +61,33 @@ defimpl Enumerable, for: GenEvent.Stream do
     {:error, __MODULE__}
   end
 
+  def slice(_stream) do
+    {:error, __MODULE__}
+  end
+
   defp wrap_reducer(fun) do
     fn
       {:ack, manager, ref, event}, acc ->
-        send manager, {ref, :ok}
+        send(manager, {ref, :ok})
         fun.(event, acc)
+
       {:async, _manager, _ref, event}, acc ->
         fun.(event, acc)
+
       {:sync, manager, ref, event}, acc ->
         try do
           fun.(event, acc)
         after
-          send manager, {ref, :ok}
+          send(manager, {ref, :ok})
         end
     end
   end
 
   defp start(%{manager: manager} = stream) do
     try do
-      {:ok, {pid, ref}} = :gen.call(manager, self(),
-                                    {:add_process_handler, self(), self()}, :infinity)
+      {:ok, {pid, ref}} =
+        :gen.call(manager, self(), {:add_process_handler, self(), self()}, :infinity)
+
       mon_ref = Process.monitor(pid)
       {pid, ref, mon_ref}
     catch
@@ -138,6 +135,7 @@ defimpl Enumerable, for: GenEvent.Stream do
     case wait_for_handler_removal(pid, ref, mon_ref) do
       :ok ->
         flush_events(ref)
+
       {:error, reason} ->
         exit({reason, {__MODULE__, :stop, [stream, acc]}})
     end
@@ -146,7 +144,7 @@ defimpl Enumerable, for: GenEvent.Stream do
   # If we reach this branch, the handler was not removed yet,
   # so we trigger a request for doing so.
   defp stop(stream, {pid, ref, _} = acc) do
-    _ = GenEvent.remove_handler(pid, {pid, ref}, :shutdown)
+    _ = :gen_event.delete_handler(pid, {pid, ref}, :shutdown)
     stop(stream, {:removed, acc})
   end
 
@@ -155,6 +153,7 @@ defimpl Enumerable, for: GenEvent.Stream do
       {:gen_event_EXIT, {^pid, ^ref}, _reason} ->
         Process.demonitor(mon_ref, [:flush])
         :ok
+
       {:DOWN, ^mon_ref, _, _, reason} ->
         {:error, reason}
     end
@@ -162,7 +161,8 @@ defimpl Enumerable, for: GenEvent.Stream do
 
   defp flush_events(ref) do
     receive do
-      {_from, {_pid, ^ref}, {notify, _event}} when notify in [:notify, :ack_notify, :sync_notify] ->
+      {_from, {_pid, ^ref}, {notify, _event}}
+      when notify in [:notify, :ack_notify, :sync_notify] ->
         flush_events(ref)
     after
       0 -> :ok

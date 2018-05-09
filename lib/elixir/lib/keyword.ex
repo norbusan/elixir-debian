@@ -6,6 +6,31 @@ defmodule Keyword do
   element of the tuple is an atom and the second element
   can be any value.
 
+  For example, the following is a keyword list:
+
+      [{:exit_on_close, true}, {:active, :once}, {:packet_size, 1024}]
+
+  Elixir provides a special and more concise syntax for keyword lists
+  that looks like this:
+
+      [exit_on_close: true, active: :once, packet_size: 1024]
+
+  This is also the syntax that Elixir uses to inspect keyword lists:
+
+      iex> [{:active, :once}]
+      [active: :once]
+
+  The two syntaxes are completely equivalent. Note that when keyword
+  lists are passed as the last argument to a function, if the short-hand
+  syntax is used then the square brackets around the keyword list can
+  be omitted as well. For example, the following:
+
+      String.split("1-0", "-", trim: true, parts: 2)
+
+  is equivalent to:
+
+      String.split("1-0", "-", [trim: true, parts: 2])
+
   A keyword may have duplicated keys so it is not strictly
   a key-value store. However most of the functions in this module
   behave exactly as a dictionary so they work similarly to
@@ -15,6 +40,10 @@ defmodule Keyword do
   the given key, regardless if duplicated entries exist.
   Similarly, `Keyword.put/3` and `Keyword.delete/3` ensure all
   duplicated entries for a given key are removed when invoked.
+  Note that operations that require keys to be found in the keyword
+  list (like `Keyword.get/3`) need to traverse the list in order
+  to find keys, so these operations may be slower than their map
+  counterparts.
 
   A handful of functions exist to handle duplicated keys, in
   particular, `Enum.into/2` allows creating new keywords without
@@ -22,10 +51,10 @@ defmodule Keyword do
   a given key and `delete_first/2` deletes just one of the existing
   entries.
 
-  The functions in Keyword do not guarantee any property when
+  The functions in `Keyword` do not guarantee any property when
   it comes to ordering. However, since a keyword list is simply a
   list, all the operations defined in `Enum` and `List` can be
-  applied too, specially when ordering is required.
+  applied too, especially when ordering is required.
   """
 
   @compile :inline_list_funcs
@@ -59,7 +88,7 @@ defmodule Keyword do
   def keyword?(term)
 
   def keyword?([{key, _value} | rest]) when is_atom(key), do: keyword?(rest)
-  def keyword?([]),     do: true
+  def keyword?([]), do: true
   def keyword?(_other), do: false
 
   @doc """
@@ -90,7 +119,7 @@ defmodule Keyword do
       [a: 3]
 
   """
-  @spec new(Enum.t) :: t
+  @spec new(Enum.t()) :: t
   def new(pairs) do
     new(pairs, fn pair -> pair end)
   end
@@ -108,12 +137,13 @@ defmodule Keyword do
       [a: :a, b: :b]
 
   """
-  @spec new(Enum.t, (term -> {key, value})) :: t
+  @spec new(Enum.t(), (term -> {key, value})) :: t
   def new(pairs, transform) do
     fun = fn el, acc ->
       {k, v} = transform.(el)
       put_new(acc, k, v)
     end
+
     :lists.foldl(fun, [], Enum.reverse(pairs))
   end
 
@@ -145,7 +175,6 @@ defmodule Keyword do
       3
 
   """
-  @spec get(t, key) :: value
   @spec get(t, key, value) :: value
   def get(keywords, key, default \\ nil) when is_list(keywords) and is_atom(key) do
     case :lists.keyfind(key, 1, keywords) do
@@ -221,23 +250,34 @@ defmodule Keyword do
   """
   @spec get_and_update(t, key, (value -> {get, value} | :pop)) :: {get, t} when get: term
   def get_and_update(keywords, key, fun)
-    when is_list(keywords) and is_atom(key),
-    do: get_and_update(keywords, [], key, fun)
+      when is_list(keywords) and is_atom(key),
+      do: get_and_update(keywords, [], key, fun)
 
   defp get_and_update([{key, current} | t], acc, key, fun) do
     case fun.(current) do
-      {get, value} -> {get, :lists.reverse(acc, [{key, value} | t])}
-      :pop         -> {current, :lists.reverse(acc, t)}
+      {get, value} ->
+        {get, :lists.reverse(acc, [{key, value} | t])}
+
+      :pop ->
+        {current, :lists.reverse(acc, t)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
     end
   end
 
-  defp get_and_update([h | t], acc, key, fun),
-    do: get_and_update(t, [h | acc], key, fun)
+  defp get_and_update([{_, _} = h | t], acc, key, fun), do: get_and_update(t, [h | acc], key, fun)
 
   defp get_and_update([], acc, key, fun) do
     case fun.(nil) do
-      {get, update} -> {get, [{key, update} | :lists.reverse(acc)]}
-      :pop -> {nil, :lists.reverse(acc)}
+      {get, update} ->
+        {get, [{key, update} | :lists.reverse(acc)]}
+
+      :pop ->
+        {nil, :lists.reverse(acc)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
     end
   end
 
@@ -279,8 +319,12 @@ defmodule Keyword do
     case fun.(value) do
       {get, value} ->
         {get, :lists.reverse(acc, [{key, value} | delete(keywords, key)])}
+
       :pop ->
         {value, :lists.reverse(acc, keywords)}
+
+      other ->
+        raise "the given function must return a two-element tuple or :pop, got: #{inspect(other)}"
     end
   end
 
@@ -353,6 +397,7 @@ defmodule Keyword do
       {^key, val} -> {true, val}
       {_, _} -> false
     end
+
     :lists.filtermap(fun, keywords)
   end
 
@@ -411,8 +456,19 @@ defmodule Keyword do
   """
   @spec delete(t, key, value) :: t
   def delete(keywords, key, value) when is_list(keywords) and is_atom(key) do
-    :lists.filter(fn {k, v} -> k != key or v != value end, keywords)
+    delete_key_value(keywords, key, value, _deleted? = false)
+  catch
+    :not_deleted -> keywords
   end
+
+  defp delete_key_value([{key, value} | rest], key, value, _deleted?),
+    do: delete_key_value(rest, key, value, true)
+
+  defp delete_key_value([{_, _} = pair | rest], key, value, deleted?),
+    do: [pair | delete_key_value(rest, key, value, deleted?)]
+
+  defp delete_key_value([], _key, _value, _deleted? = true), do: []
+  defp delete_key_value([], _key, _value, _deleted? = false), do: throw(:not_deleted)
 
   @doc """
   Deletes the entries in the keyword list for a specific `key`.
@@ -432,9 +488,20 @@ defmodule Keyword do
 
   """
   @spec delete(t, key) :: t
+  @compile {:inline, delete: 2}
   def delete(keywords, key) when is_list(keywords) and is_atom(key) do
-    :lists.filter(fn {k, _} -> k != key end, keywords)
+    delete_key(keywords, key, _deleted? = false)
+  catch
+    :not_deleted -> keywords
   end
+
+  defp delete_key([{key, _} | rest], key, _deleted?), do: delete_key(rest, key, true)
+
+  defp delete_key([{_, _} = pair | rest], key, deleted?),
+    do: [pair | delete_key(rest, key, deleted?)]
+
+  defp delete_key([], _key, _deleted? = true), do: []
+  defp delete_key([], _key, _deleted? = false), do: throw(:not_deleted)
 
   @doc """
   Deletes the first entry in the keyword list for a specific `key`.
@@ -451,8 +518,14 @@ defmodule Keyword do
   """
   @spec delete_first(t, key) :: t
   def delete_first(keywords, key) when is_list(keywords) and is_atom(key) do
-    :lists.keydelete(key, 1, keywords)
+    delete_first_key(keywords, key)
+  catch
+    :not_deleted -> keywords
   end
+
+  defp delete_first_key([{key, _} | rest], key), do: rest
+  defp delete_first_key([{_, _} = pair | rest], key), do: [pair | delete_first_key(rest, key)]
+  defp delete_first_key([], _key), do: throw(:not_deleted)
 
   @doc """
   Puts the given `value` under `key`.
@@ -524,6 +597,37 @@ defmodule Keyword do
     end
   end
 
+  @doc false
+  def replace(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> [{key, value} | delete(keywords, key)]
+      false -> keywords
+    end
+  end
+
+  @doc """
+  Alters the value stored under `key` to `value`, but only
+  if the entry `key` already exists in `keywords`.
+
+  If `key` is not present in `keywords`, a `KeyError` exception is raised.
+
+  ## Examples
+
+      iex> Keyword.replace!([a: 1, b: 2, a: 4], :a, 3)
+      [a: 3, b: 2]
+
+      iex> Keyword.replace!([a: 1], :b, 2)
+      ** (KeyError) key :b not found in: [a: 1]
+
+  """
+  @spec replace!(t, key, value) :: t
+  def replace!(keywords, key, value) when is_list(keywords) and is_atom(key) do
+    case :lists.keyfind(key, 1, keywords) do
+      {^key, _} -> [{key, value} | delete(keywords, key)]
+      false -> raise KeyError, key: key, term: keywords
+    end
+  end
+
   @doc """
   Checks if two keywords are equal.
 
@@ -561,11 +665,27 @@ defmodule Keyword do
       iex> Keyword.merge([a: 1, b: 2], [a: 3, d: 4, a: 5])
       [b: 2, a: 3, d: 4, a: 5]
 
+      iex> Keyword.merge([a: 1], [2, 3])
+      ** (ArgumentError) expected a keyword list as the second argument, got: [2, 3]
+
   """
   @spec merge(t, t) :: t
   def merge(keywords1, keywords2) when is_list(keywords1) and is_list(keywords2) do
-    fun = fn {k, _v} -> not has_key?(keywords2, k) end
-    :lists.filter(fun, keywords1) ++ keywords2
+    if keyword?(keywords2) do
+      fun = fn
+        {key, _value} when is_atom(key) ->
+          not has_key?(keywords2, key)
+
+        _ ->
+          raise ArgumentError,
+            message: "expected a keyword list as the first argument, got: #{inspect(keywords1)}"
+      end
+
+      :lists.filter(fun, keywords1) ++ keywords2
+    else
+      raise ArgumentError,
+        message: "expected a keyword list as the second argument, got: #{inspect(keywords2)}"
+    end
   end
 
   @doc """
@@ -596,24 +716,42 @@ defmodule Keyword do
       ...> end)
       [b: 2, a: 4, d: 4, a: 8]
 
+      iex> Keyword.merge([a: 1, b: 2], [:a, :b], fn :a, v1, v2 ->
+      ...>  v1 + v2
+      ...> end)
+      ** (ArgumentError) expected a keyword list as the second argument, got: [:a, :b]
+
   """
   @spec merge(t, t, (key, value, value -> value)) :: t
-  def merge(keywords1, keywords2, fun) when is_list(keywords1) and is_list(keywords2) do
-    do_merge(keywords2, [], keywords1, keywords1, fun)
-  end
-
-  defp do_merge([{k, v2} | t], acc, rest, original, fun) do
-    case :lists.keyfind(k, 1, original) do
-      {^k, v1} ->
-        do_merge(t, [{k, fun.(k, v1, v2)} | acc],
-                 delete(rest, k), :lists.keydelete(k, 1, original), fun)
-      false ->
-        do_merge(t, [{k, v2} | acc], rest, original, fun)
+  def merge(keywords1, keywords2, fun)
+      when is_list(keywords1) and is_list(keywords2) and is_function(fun, 3) do
+    if keyword?(keywords1) do
+      do_merge(keywords2, [], keywords1, keywords1, fun, keywords2)
+    else
+      raise ArgumentError,
+        message: "expected a keyword list as the first argument, got: #{inspect(keywords1)}"
     end
   end
 
-  defp do_merge([], acc, rest, _original, _fun) do
+  defp do_merge([{key, value2} | tail], acc, rest, original, fun, keywords2) when is_atom(key) do
+    case :lists.keyfind(key, 1, original) do
+      {^key, value1} ->
+        acc = [{key, fun.(key, value1, value2)} | acc]
+        original = :lists.keydelete(key, 1, original)
+        do_merge(tail, acc, delete(rest, key), original, fun, keywords2)
+
+      false ->
+        do_merge(tail, [{key, value2} | acc], rest, original, fun, keywords2)
+    end
+  end
+
+  defp do_merge([], acc, rest, _original, _fun, _keywords2) do
     rest ++ :lists.reverse(acc)
+  end
+
+  defp do_merge(_other, _acc, _rest, _original, _fun, keywords2) do
+    raise ArgumentError,
+      message: "expected a keyword list as the second argument, got: #{inspect(keywords2)}"
   end
 
   @doc """
@@ -719,10 +857,11 @@ defmodule Keyword do
       {[a: 1, c: 3, a: 4], [b: 2]}
 
   """
+  @spec split(t, [key]) :: {t, t}
   def split(keywords, keys) when is_list(keywords) do
     fun = fn {k, v}, {take, drop} ->
       case k in keys do
-        true  -> {[{k, v} | take], drop}
+        true -> {[{k, v} | take], drop}
         false -> {take, [{k, v} | drop]}
       end
     end
@@ -746,6 +885,7 @@ defmodule Keyword do
       [a: 1, c: 3, a: 5]
 
   """
+  @spec take(t, [key]) :: t
   def take(keywords, keys) when is_list(keywords) do
     :lists.filter(fn {k, _} -> k in keys end, keywords)
   end
@@ -763,8 +903,9 @@ defmodule Keyword do
       [a: 1, c: 3, a: 5]
 
   """
+  @spec drop(t, [key]) :: t
   def drop(keywords, keys) when is_list(keywords) do
-    :lists.filter(fn {k, _} -> not k in keys end, keywords)
+    :lists.filter(fn {key, _} -> key not in keys end, keywords)
   end
 
   @doc """
@@ -790,6 +931,7 @@ defmodule Keyword do
     case fetch(keywords, key) do
       {:ok, value} ->
         {value, delete(keywords, key)}
+
       :error ->
         {default, keywords}
     end
@@ -823,6 +965,7 @@ defmodule Keyword do
     case fetch(keywords, key) do
       {:ok, value} ->
         {value, delete(keywords, key)}
+
       :error ->
         {fun.(), keywords}
     end
@@ -835,13 +978,13 @@ defmodule Keyword do
 
   ## Examples
 
-      iex> Keyword.pop_first [a: 1], :a
+      iex> Keyword.pop_first([a: 1], :a)
       {1, []}
-      iex> Keyword.pop_first [a: 1], :b
+      iex> Keyword.pop_first([a: 1], :b)
       {nil, [a: 1]}
-      iex> Keyword.pop_first [a: 1], :b, 3
+      iex> Keyword.pop_first([a: 1], :b, 3)
       {3, [a: 1]}
-      iex> Keyword.pop_first [a: 1, a: 2], :a
+      iex> Keyword.pop_first([a: 1, a: 2], :a)
       {1, [a: 2]}
 
   """
@@ -862,14 +1005,15 @@ defmodule Keyword do
       [a: 1]
 
   """
+  @spec to_list(t) :: t
   def to_list(keyword) when is_list(keyword) do
     keyword
   end
 
   @doc false
   # TODO: Remove on 2.0
+  # (hard-deprecated in elixir_dispatch)
   def size(keyword) do
-    IO.warn "Keyword.size/1 is deprecated, please use Kernel.length/1"
     length(keyword)
   end
 end

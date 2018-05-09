@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 alias Kernel.AliasTest.Nested, as: Nested
 
@@ -18,17 +18,17 @@ defmodule Kernel.AliasTest do
 
   test "double alias" do
     alias Kernel.AliasTest.Nested, as: Nested2
-    assert Nested.value  == 1
-    assert Nested2.value == 1
+    assert Nested.value() == 1
+    assert Nested2.value() == 1
   end
 
-  test "overwriten alias" do
-    assert List = alias List, as: Nested
+  test "overwritten alias" do
+    assert alias(List, as: Nested) == List
     assert Nested.flatten([[13]]) == [13]
   end
 
   test "lexical" do
-    if true do
+    if true_fun() do
       alias OMG, as: List, warn: false
     else
       alias ABC, as: List, warn: false
@@ -37,21 +37,29 @@ defmodule Kernel.AliasTest do
     assert List.flatten([1, [2], 3]) == [1, 2, 3]
   end
 
+  defp true_fun(), do: true
+
   defmodule Elixir do
     def sample, do: 1
   end
 
   test "nested elixir alias" do
-    assert Kernel.AliasTest.Elixir.sample == 1
+    assert Kernel.AliasTest.Elixir.sample() == 1
   end
 
   test "multi-call" do
-    result = alias unquote(Inspect).{
-      Opts, Algebra,
-    }
+    result = alias unquote(Inspect).{Opts, Algebra}
     assert result == [Inspect.Opts, Inspect.Algebra]
     assert %Opts{} == %Inspect.Opts{}
-    assert Algebra.empty == :doc_nil
+    assert Algebra.empty() == :doc_nil
+  end
+
+  test "alias removal" do
+    alias __MODULE__.Foo
+    assert Foo == __MODULE__.Foo
+    alias Elixir.Foo
+    assert Foo == Elixir.Foo
+    alias Elixir.Bar
   end
 end
 
@@ -63,7 +71,7 @@ defmodule Kernel.AliasNestingGenerator do
       end
 
       defmodule Parent.Child do
-        def b, do: Parent.a
+        def b, do: Parent.a()
       end
     end
   end
@@ -73,11 +81,11 @@ defmodule Kernel.AliasNestingTest do
   use ExUnit.Case, async: true
 
   require Kernel.AliasNestingGenerator
-  Kernel.AliasNestingGenerator.create
+  Kernel.AliasNestingGenerator.create()
 
   test "aliases nesting" do
-    assert Parent.a == :a
-    assert Parent.Child.b == :a
+    assert Parent.a() == :a
+    assert Parent.Child.b() == :a
   end
 
   defmodule Nested do
@@ -85,7 +93,7 @@ defmodule Kernel.AliasNestingTest do
   end
 
   test "aliases nesting with previous alias" do
-    assert Nested.value == 2
+    assert Nested.value() == 2
   end
 end
 
@@ -105,6 +113,7 @@ defmodule Macro.AliasTest.Definer do
       defmodule First do
         defstruct foo: :bar
       end
+
       defmodule Second do
         defstruct baz: %First{}
       end
@@ -127,7 +136,7 @@ defmodule Macro.AliasTest.User do
   use Macro.AliasTest.Aliaser
 
   test "has a struct defined from after compile" do
-    assert is_map struct(Macro.AliasTest.User.First, [])
-    assert is_map struct(Macro.AliasTest.User.Second, []).baz
+    assert is_map(struct(Macro.AliasTest.User.First, []))
+    assert is_map(struct(Macro.AliasTest.User.Second, []).baz)
   end
 end
