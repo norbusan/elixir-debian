@@ -11,7 +11,7 @@ Build-Depends: debhelper (>= 9~),
                erlang-src (>= 1:19),
                git,
                rebar
-Standards-Version: 3.9.8
+Standards-Version: 4.1.4
 Vcs-Git: https://anonscm.debian.org/git/pkg-elixir/elixir.git
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-elixir/elixir.git
 Homepage: http://elixir-lang.org/
