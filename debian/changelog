@@ -1,8 +1,17 @@
-elixir-lang (1.3.3-3) UNRELEASED; urgency=medium
+elixir-lang (1.6.5-1) unstable; urgency=medium
 
+  [ Antonio Terceiro ]
   * Drop myself from the Uploaders field
 
- -- Antonio Terceiro <terceiro@debian.org>  Mon, 14 Aug 2017 14:58:12 -0400
+  [ Evgeny Golyshev ]
+  * New upstream release (Closes: #869030)
+    - The tests from the latest version with newer dependencies seem to be
+      fine again (Closes: #871120)
+  * Bump Standards-Version to 4.1.4
+  * Disable one more rebar3 related test
+  * Temporarily disable rebar related test
+
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Wed, 09 May 2018 23:22:08 +0300
 
 elixir-lang (1.3.3-2) unstable; urgency=medium
 
