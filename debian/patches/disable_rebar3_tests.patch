@@ -7,7 +7,7 @@ Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
 ===================================================================
 --- elixir-lang.orig/lib/mix/test/mix/rebar_test.exs
 +++ elixir-lang/lib/mix/test/mix/rebar_test.exs
-@@ -266,36 +266,36 @@ defmodule Mix.RebarTest do
+@@ -266,53 +266,53 @@ defmodule Mix.RebarTest do
        end
      end
  
@@ -73,6 +73,37 @@ Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
  
      # We run only on Unix because Windows has a hard time
      # removing the rebar executable after executed.
+-    @tag [unix: true]
+-    test "applies variables from :system_env option when compiling dependencies for rebar3" do
+-      Mix.Project.push(Rebar3AsDep)
+-
+-      in_tmp "applies variables from system_env for rebar3", fn ->
+-        expected_file = Path.join(tmp_path("rebar_dep"), "rebar-test-rebar3")
+-        File.rm(expected_file)
+-
+-        Mix.Tasks.Deps.Get.run([])
+-        Mix.Tasks.Deps.Compile.run([])
+-
+-        assert {:ok, "rebar3"} = File.read(expected_file)
+-      end
+-    end
++    #@tag [unix: true]
++    #test "applies variables from :system_env option when compiling dependencies for rebar3" do
++    #  Mix.Project.push(Rebar3AsDep)
++
++    #  in_tmp "applies variables from system_env for rebar3", fn ->
++    #    expected_file = Path.join(tmp_path("rebar_dep"), "rebar-test-rebar3")
++    #    File.rm(expected_file)
++
++    #    Mix.Tasks.Deps.Get.run([])
++    #    Mix.Tasks.Deps.Compile.run([])
++
++    #    assert {:ok, "rebar3"} = File.read(expected_file)
++    #  end
++    #end
+ 
+     test "gets and compiles dependencies for Rebar with Mix" do
+       Mix.Project.push(RebarAsDep)
 Index: elixir-lang/lib/mix/test/test_helper.exs
 ===================================================================
 --- elixir-lang.orig/lib/mix/test/test_helper.exs
