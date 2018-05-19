@@ -7,6 +7,7 @@ elixir-lang (1.6.5-1) unstable; urgency=medium
   * New upstream release (Closes: #869030)
     - The tests from the latest version with newer dependencies seem to be
       fine again (Closes: #871120)
+  * Substitute alioth for salsa in Vcs-Browser and Vcs-Git fields
   * Bump Standards-Version to 4.1.4
   * Add docs file containing NOTICE
   * Disable one more rebar3 related test

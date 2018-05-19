@@ -12,8 +12,8 @@ Build-Depends: debhelper (>= 9~),
                git,
                rebar
 Standards-Version: 4.1.4
-Vcs-Git: https://anonscm.debian.org/git/pkg-elixir/elixir.git
-Vcs-Browser: https://anonscm.debian.org/cgit/pkg-elixir/elixir.git
+Vcs-Git: https://salsa.debian.org/eugulixes-guest/elixir-lang.git
+Vcs-Browser: https://salsa.debian.org/eugulixes-guest/elixir-lang
 Homepage: http://elixir-lang.org/
 Testsuite: autopkgtest
 
