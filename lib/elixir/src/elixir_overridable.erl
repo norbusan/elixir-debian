@@ -4,29 +4,34 @@
 -include("elixir.hrl").
 -define(attr, {elixir, overridable}).
 
-setup(Module) ->
-  overridable(Module, #{}).
+%% TODO: Use DataSet/DataBag for overridables
+setup({DataSet, _DataBag}) ->
+  ets:insert(DataSet, {?attr, #{}}).
 
 overridable(Module) ->
-  ets:lookup_element(elixir_module:data_table(Module), ?attr, 2).
+  {Set, _} = elixir_module:data_tables(Module),
+  ets:lookup_element(Set, ?attr, 2).
 
 overridable(Module, Value) ->
-  ets:insert(elixir_module:data_table(Module), {?attr, Value}).
+  {Set, _} = elixir_module:data_tables(Module),
+  ets:insert(Set, {?attr, Value}).
 
-super(Meta, File, Module, Function) ->
+super(Meta, Module, Function, E) ->
   case store(Module, Function, true) of
-    {_, _} = KindName ->
-      KindName;
+    {_, _, _} = KindNameMeta ->
+      KindNameMeta;
     error ->
-      elixir_errors:form_error(Meta, File, ?MODULE, {no_super, Module, Function})
+      elixir_errors:form_error(Meta, ?key(E, file), ?MODULE, {no_super, Module, Function})
   end.
 
 store_pending(Module) ->
+  {Set, _} = elixir_module:data_tables(Module),
+
   [begin
-    {_, _} = store(Module, Pair, false),
+    {_, _, _} = store(Module, Pair, false),
     Pair
    end || {Pair, {_, _, _, false}} <- maps:to_list(overridable(Module)),
-          not 'Elixir.Module':'defines?'(Module, Pair)].
+          not ets:member(Set, {def, Pair})].
 
 %% Private
 
@@ -59,7 +64,7 @@ store(Module, Function, Hidden) ->
           ok
       end,
 
-      {FinalKind, FinalName};
+      {FinalKind, FinalName, Meta};
     error ->
       error
   end.

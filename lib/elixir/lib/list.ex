@@ -2,6 +2,19 @@ defmodule List do
   @moduledoc """
   Functions that work on (linked) lists.
 
+  Many of the functions provided for lists, which implement
+  the `Enumerable` protocol, are found in the `Enum` module.
+
+  Additionally, the following functions and operators for lists are
+  found in `Kernel`:
+
+    * `++/2`
+    * `--/2`
+    * `hd/1`
+    * `tl/1`
+    * `in/2`
+    * `length/1`
+
   Lists in Elixir are specified between square brackets:
 
       iex> [1, "two", 3, :four]
@@ -45,17 +58,15 @@ defmodule List do
   slower as the list grows in size (linear time):
 
       iex> list = [1, 2, 3]
-      iex> [0 | list]   # fast
+      iex> [0 | list] # fast
       [0, 1, 2, 3]
-      iex> list ++ [4]  # slow
+      iex> list ++ [4] # slow
       [1, 2, 3, 4]
 
-  The `Kernel` module contains many functions to manipulate lists
-  and that are allowed in guards. For example, `Kernel.hd/1` to
-  retrieve the head, `Kernel.tl/1` to fetch the tail and
-  `Kernel.length/1` for calculating the length. Keep in mind that,
-  similar to appending to a list, calculating the length needs to
-  traverse the whole list.
+  Additonally, getting a list's length and accessing it by index are
+  linear time operations. Negative indexes are also supported but
+  they imply the list will be iterated twice, once to calculate the
+  proper index and another time to perform the operation.
 
   ## Charlists
 
@@ -85,19 +96,6 @@ defmodule List do
 
   A list can be checked if it is made of printable ascii
   codepoints with `ascii_printable?/2`.
-
-  ## List and Enum modules
-
-  This module aims to provide operations that are specific
-  to lists, like conversion between data types, updates,
-  deletions and key lookups (for lists of tuples). For traversing
-  lists in general, developers should use the functions in the
-  `Enum` module that work across a variety of data types.
-
-  In both `Enum` and `List` modules, any kind of index access
-  on a list is linear. Negative indexes are also supported but
-  they imply the list will be iterated twice, one to calculate
-  the proper index and another to perform the operation.
   """
 
   @compile :inline_list_funcs
@@ -177,10 +175,10 @@ defmodule List do
 
   ## Examples
 
-      iex> List.foldl([5, 5], 10, fn(x, acc) -> x + acc end)
+      iex> List.foldl([5, 5], 10, fn x, acc -> x + acc end)
       20
 
-      iex> List.foldl([1, 2, 3, 4], 0, fn(x, acc) -> x - acc end)
+      iex> List.foldl([1, 2, 3, 4], 0, fn x, acc -> x - acc end)
       2
 
   """
@@ -195,7 +193,7 @@ defmodule List do
 
   ## Examples
 
-      iex> List.foldr([1, 2, 3, 4], 0, fn(x, acc) -> x - acc end)
+      iex> List.foldr([1, 2, 3, 4], 0, fn x, acc -> x - acc end)
       -2
 
   """
@@ -390,10 +388,10 @@ defmodule List do
   end
 
   @doc """
-  Wraps the argument in a list.
+  Wraps `term` in a list if this is not list.
 
-  If the argument is already a list, returns the list.
-  If the argument is `nil`, returns an empty list.
+  If `term` is already a list, it returns the list.
+  If `term` is `nil`, it returns an empty list.
 
   ## Examples
 
@@ -407,7 +405,11 @@ defmodule List do
       []
 
   """
-  @spec wrap(list | any) :: list
+  @spec wrap(nil) :: []
+  @spec wrap(list) :: list when list: maybe_improper_list()
+  @spec wrap(term) :: nonempty_list(term) when term: any()
+  def wrap(term)
+
   def wrap(list) when is_list(list) do
     list
   end
@@ -466,6 +468,7 @@ defmodule List do
       false
 
   """
+  @doc since: "1.6.0"
   def ascii_printable?(list, counter \\ :infinity)
 
   def ascii_printable?(_, 0) do
@@ -647,6 +650,7 @@ defmodule List do
       {3, [1, 2]}
 
   """
+  @doc since: "1.4.0"
   @spec pop_at(list, integer, any) :: {any, list}
   def pop_at(list, index, default \\ nil) when is_integer(index) do
     if index < 0 do
@@ -676,6 +680,7 @@ defmodule List do
       false
 
   """
+  @doc since: "1.5.0"
   @spec starts_with?(list, list) :: boolean
   @spec starts_with?(list, []) :: true
   @spec starts_with?([], nonempty_list) :: false
@@ -862,14 +867,11 @@ defmodule List do
       [eq: [1], del: [4], eq: [2, 3], ins: [4]]
 
   """
-  @spec myers_difference(list, list) :: [{:eq | :ins | :del, list}] | nil
+  @doc since: "1.4.0"
+  @spec myers_difference(list, list) :: [{:eq | :ins | :del, list}]
   def myers_difference(list1, list2) when is_list(list1) and is_list(list2) do
-    path = {0, 0, list1, list2, []}
+    path = {0, list1, list2, []}
     find_script(0, length(list1) + length(list2), [path])
-  end
-
-  defp find_script(envelope, max, _paths) when envelope > max do
-    nil
   end
 
   defp find_script(envelope, max, paths) do
@@ -917,34 +919,34 @@ defmodule List do
   end
 
   defp proceed_path(_diag, _limit, [path1, path2 | rest]) do
-    if elem(path1, 1) > elem(path2, 1) do
+    if elem(path1, 0) > elem(path2, 0) do
       {move_right(path1), [path2 | rest]}
     else
       {move_down(path2), [path2 | rest]}
     end
   end
 
-  defp move_right({x, y, list1, [elem | rest], edits}) do
-    {x + 1, y, list1, rest, [{:ins, elem} | edits]}
+  defp move_right({y, list1, [elem | rest], edits}) do
+    {y, list1, rest, [{:ins, elem} | edits]}
   end
 
-  defp move_right({x, y, list1, [], edits}) do
-    {x + 1, y, list1, [], edits}
+  defp move_right({y, list1, [], edits}) do
+    {y, list1, [], edits}
   end
 
-  defp move_down({x, y, [elem | rest], list2, edits}) do
-    {x, y + 1, rest, list2, [{:del, elem} | edits]}
+  defp move_down({y, [elem | rest], list2, edits}) do
+    {y + 1, rest, list2, [{:del, elem} | edits]}
   end
 
-  defp move_down({x, y, [], list2, edits}) do
-    {x, y + 1, [], list2, edits}
+  defp move_down({y, [], list2, edits}) do
+    {y + 1, [], list2, edits}
   end
 
-  defp follow_snake({x, y, [elem | rest1], [elem | rest2], edits}) do
-    follow_snake({x + 1, y + 1, rest1, rest2, [{:eq, elem} | edits]})
+  defp follow_snake({y, [elem | rest1], [elem | rest2], edits}) do
+    follow_snake({y + 1, rest1, rest2, [{:eq, elem} | edits]})
   end
 
-  defp follow_snake({_x, _y, [], [], edits}) do
+  defp follow_snake({_y, [], [], edits}) do
     {:done, edits}
   end
 

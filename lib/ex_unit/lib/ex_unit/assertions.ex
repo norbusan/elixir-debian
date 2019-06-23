@@ -5,7 +5,11 @@ defmodule ExUnit.AssertionError do
 
   @no_value :ex_unit_no_meaningful_value
 
-  defexception left: @no_value, right: @no_value, message: @no_value, expr: @no_value
+  defexception left: @no_value,
+               right: @no_value,
+               message: @no_value,
+               expr: @no_value,
+               args: @no_value
 
   @doc """
   Indicates no meaningful value for a field.
@@ -14,6 +18,7 @@ defmodule ExUnit.AssertionError do
     @no_value
   end
 
+  @impl true
   def message(exception) do
     "\n\n" <> ExUnit.Formatter.format_assertion_error(exception)
   end
@@ -26,6 +31,7 @@ defmodule ExUnit.MultiError do
 
   defexception errors: []
 
+  @impl true
   def message(%{errors: errors}) do
     "got the following errors:\n\n" <>
       Enum.map_join(errors, "\n\n", fn {kind, error, stack} ->
@@ -100,7 +106,7 @@ defmodule ExUnit.Assertions do
 
     left = expand_pattern(left, __CALLER__)
     vars = collect_vars_from_pattern(left)
-    pins = collect_pins_from_pattern(left, __CALLER__.vars)
+    pins = collect_pins_from_pattern(left, Macro.Env.vars(__CALLER__))
 
     # If the match works, we need to check if the value
     # is not nil nor false. We need to rewrite the if
@@ -148,7 +154,7 @@ defmodule ExUnit.Assertions do
   defmacro assert({:match?, meta, [left, right]} = assertion) do
     code = escape_quoted(:assert, assertion)
     match? = {:match?, meta, [left, Macro.var(:right, __MODULE__)]}
-    pins = collect_pins_from_pattern(left, __CALLER__.vars)
+    pins = collect_pins_from_pattern(left, Macro.Env.vars(__CALLER__))
 
     quote do
       right = unquote(right)
@@ -161,22 +167,23 @@ defmodule ExUnit.Assertions do
   end
 
   defmacro assert(assertion) do
-    case translate_assertion(:assert, assertion, __CALLER__) do
-      nil ->
-        quote do
-          value = unquote(assertion)
+    if translated = translate_assertion(:assert, assertion, __CALLER__) do
+      translated
+    else
+      {args, value} = extract_args(assertion, __CALLER__)
 
-          unless value do
-            raise ExUnit.AssertionError,
-              expr: unquote(escape_quoted(:assert, assertion)),
-              message: "Expected truthy, got #{inspect(value)}"
-          end
+      quote do
+        value = unquote(value)
 
-          value
+        unless value do
+          raise ExUnit.AssertionError,
+            args: unquote(args),
+            expr: unquote(escape_quoted(:assert, assertion)),
+            message: "Expected truthy, got #{inspect(value)}"
         end
 
-      value ->
         value
+      end
     end
   end
 
@@ -204,7 +211,7 @@ defmodule ExUnit.Assertions do
   defmacro refute({:match?, meta, [left, right]} = assertion) do
     code = escape_quoted(:refute, assertion)
     match? = {:match?, meta, [left, Macro.var(:right, __MODULE__)]}
-    pins = collect_pins_from_pattern(left, __CALLER__.vars)
+    pins = collect_pins_from_pattern(left, Macro.Env.vars(__CALLER__))
 
     quote do
       right = unquote(right)
@@ -219,22 +226,23 @@ defmodule ExUnit.Assertions do
   end
 
   defmacro refute(assertion) do
-    case translate_assertion(:refute, assertion, __CALLER__) do
-      nil ->
-        quote do
-          value = unquote(assertion)
+    if translated = translate_assertion(:refute, assertion, __CALLER__) do
+      {:!, [], [translated]}
+    else
+      {args, value} = extract_args(assertion, __CALLER__)
 
-          if value do
-            raise ExUnit.AssertionError,
-              expr: unquote(escape_quoted(:refute, assertion)),
-              message: "Expected false or nil, got #{inspect(value)}"
-          end
+      quote do
+        value = unquote(value)
 
-          value
+        if value do
+          raise ExUnit.AssertionError,
+            args: unquote(args),
+            expr: unquote(escape_quoted(:refute, assertion)),
+            message: "Expected false or nil, got #{inspect(value)}"
         end
 
-      value ->
-        {:!, [], [value]}
+        value
+      end
     end
   end
 
@@ -249,7 +257,7 @@ defmodule ExUnit.Assertions do
     call = {operator, meta, [left, right]}
     equality_check? = operator in [:<, :>, :!==, :!=]
     message = "Assertion with #{operator} failed"
-    translate_assertion(:assert, expr, call, message, equality_check?, caller)
+    translate_operator(:assert, expr, call, message, equality_check?, caller)
   end
 
   defp translate_assertion(:refute, {operator, meta, [_, _]} = expr, caller)
@@ -259,14 +267,14 @@ defmodule ExUnit.Assertions do
     call = {:not, meta, [{operator, meta, [left, right]}]}
     equality_check? = operator in [:<=, :>=, :===, :==, :=~]
     message = "Refute with #{operator} failed"
-    translate_assertion(:refute, expr, call, message, equality_check?, caller)
+    translate_operator(:refute, expr, call, message, equality_check?, caller)
   end
 
   defp translate_assertion(_kind, _expected, _caller) do
     nil
   end
 
-  defp translate_assertion(kind, {_, _, [left, right]} = expr, call, message, true, _caller) do
+  defp translate_operator(kind, {_, _, [left, right]} = expr, call, message, true, _caller) do
     expr = escape_quoted(kind, expr)
 
     quote do
@@ -288,7 +296,7 @@ defmodule ExUnit.Assertions do
     end
   end
 
-  defp translate_assertion(kind, {_, _, [left, right]} = expr, call, message, false, _caller) do
+  defp translate_operator(kind, {_, _, [left, right]} = expr, call, message, false, _caller) do
     expr = escape_quoted(kind, expr)
 
     quote do
@@ -309,7 +317,36 @@ defmodule ExUnit.Assertions do
   end
 
   defp escape_quoted(kind, expr) do
-    Macro.escape({kind, [], [expr]})
+    Macro.escape({kind, [], [expr]}, prune_metadata: true)
+  end
+
+  defp extract_args({root, meta, [_ | _] = args} = expr, env) do
+    arity = length(args)
+
+    reserved? =
+      is_atom(root) and (Macro.special_form?(root, arity) or Macro.operator?(root, arity))
+
+    all_quoted_literals? = Enum.all?(args, &Macro.quoted_literal?/1)
+
+    case Macro.expand_once(expr, env) do
+      ^expr when not reserved? and not all_quoted_literals? ->
+        vars = for i <- 1..arity, do: Macro.var(:"arg#{i}", __MODULE__)
+
+        quoted =
+          quote do
+            {unquote_splicing(vars)} = {unquote_splicing(args)}
+            unquote({root, meta, vars})
+          end
+
+        {vars, quoted}
+
+      other ->
+        {ExUnit.AssertionError.no_value(), other}
+    end
+  end
+
+  defp extract_args(expr, _env) do
+    {ExUnit.AssertionError.no_value(), expr}
   end
 
   ## END HELPERS
@@ -402,7 +439,7 @@ defmodule ExUnit.Assertions do
     caller = Macro.Env.to_match(caller)
     expanded = expand_pattern(pattern, caller)
     vars = collect_vars_from_pattern(expanded)
-    pins = collect_pins_from_pattern(expanded, caller.vars)
+    pins = collect_pins_from_pattern(expanded, Macro.Env.vars(caller))
 
     pattern =
       case pattern do
@@ -432,24 +469,22 @@ defmodule ExUnit.Assertions do
         end
       end
 
-    failure_message_hit =
+    timeout =
+      if is_integer(timeout) do
+        timeout
+      else
+        quote do: ExUnit.Assertions.__timeout__(unquote(timeout))
+      end
+
+    failure_message =
       failure_message ||
         quote do
-          """
-          Found message matching #{unquote(binary)} after #{timeout}ms.
-
-          This means the message was delivered too close to the timeout value, you may want to either:
-
-            1. Give an increased timeout to `assert_receive/2`
-            2. Increase the default timeout to all `assert_receive` in your
-               test_helper.exs by setting ExUnit.configure(assert_receive_timeout: ...)
-          """
-        end
-
-    failure_message_miss =
-      failure_message ||
-        quote do
-          "No message matching #{unquote(binary)} after #{timeout}ms."
+          ExUnit.Assertions.__timeout__(
+            unquote(binary),
+            unquote(pins),
+            unquote(pattern_finder),
+            timeout
+          )
         end
 
     quote do
@@ -457,21 +492,9 @@ defmodule ExUnit.Assertions do
 
       {received, unquote(vars)} =
         receive do
-          unquote(pattern) ->
-            {received, unquote(vars)}
+          unquote(pattern) -> {received, unquote(vars)}
         after
-          timeout ->
-            {:messages, messages} = Process.info(self(), :messages)
-
-            if Enum.any?(messages, unquote(pattern_finder)) do
-              flunk(unquote(failure_message_hit))
-            else
-              flunk(
-                unquote(failure_message_miss) <>
-                  ExUnit.Assertions.__pins__(unquote(pins)) <>
-                  ExUnit.Assertions.__mailbox__(messages)
-              )
-            end
+          timeout -> flunk(unquote(failure_message))
         end
 
       received
@@ -482,15 +505,29 @@ defmodule ExUnit.Assertions do
   @max_mailbox_length 10
 
   @doc false
-  def __mailbox__(messages) do
-    length = length(messages)
+  def __timeout__(timeout) when is_integer(timeout) and timeout >= 0, do: timeout
 
-    mailbox =
-      messages
-      |> Enum.take(@max_mailbox_length)
-      |> Enum.map_join(@indent, &inspect/1)
+  def __timeout__(timeout),
+    do: raise(ArgumentError, "timeout must be a non-negative integer, got: #{inspect(timeout)}")
 
-    mailbox_message(length, @indent <> mailbox)
+  @doc false
+  def __timeout__(binary, pins, pattern_finder, timeout) do
+    {:messages, messages} = Process.info(self(), :messages)
+
+    if Enum.any?(messages, pattern_finder) do
+      """
+      Found message matching #{binary} after #{timeout}ms.
+
+      This means the message was delivered too close to the timeout value, you may want to either:
+
+        1. Give an increased timeout to `assert_receive/2`
+        2. Increase the default timeout to all `assert_receive` in your
+           test_helper.exs by setting ExUnit.configure(assert_receive_timeout: ...)
+      """
+    else
+      "No message matching #{binary} after #{timeout}ms." <>
+        __pins__(pins) <> format_mailbox(messages)
+    end
   end
 
   @doc false
@@ -503,6 +540,17 @@ defmodule ExUnit.Assertions do
       |> Enum.map_join(@indent, fn {name, var} -> "#{name} = #{inspect(var)}" end)
 
     "\nThe following variables were pinned:" <> @indent <> content
+  end
+
+  defp format_mailbox(messages) do
+    length = length(messages)
+
+    mailbox =
+      messages
+      |> Enum.take(@max_mailbox_length)
+      |> Enum.map_join(@indent, &inspect/1)
+
+    mailbox_message(length, @indent <> mailbox)
   end
 
   defp mailbox_message(0, _mailbox), do: "\nThe process mailbox is empty."
@@ -595,6 +643,7 @@ defmodule ExUnit.Assertions do
       assert_raise RuntimeError, ~r/^today's lucky number is 0\.\d+!$/, fn ->
         raise "today's lucky number is #{:rand.uniform()}!"
       end
+
   """
   def assert_raise(exception, message, function) when is_function(function) do
     error = assert_raise(exception, function)
@@ -610,7 +659,7 @@ defmodule ExUnit.Assertions do
         "expected:\n  #{inspect(message)}\n" <>
         "actual:\n" <> "  #{inspect(Exception.message(error))}"
 
-    assert match?, message: message
+    unless match?, do: flunk(message)
 
     error
   end
@@ -631,7 +680,6 @@ defmodule ExUnit.Assertions do
       function.()
     rescue
       error ->
-        stacktrace = System.stacktrace()
         name = error.__struct__
 
         cond do
@@ -640,14 +688,14 @@ defmodule ExUnit.Assertions do
             error
 
           name == ExUnit.AssertionError ->
-            reraise(error, stacktrace)
+            reraise(error, __STACKTRACE__)
 
           true ->
             message =
               "Expected exception #{inspect(exception)} " <>
                 "but got #{inspect(name)} (#{Exception.message(error)})"
 
-            reraise ExUnit.AssertionError, [message: message], stacktrace
+            reraise ExUnit.AssertionError, [message: message], __STACKTRACE__
         end
     else
       _ -> flunk("Expected exception #{inspect(exception)} but nothing was raised")
@@ -658,11 +706,9 @@ defmodule ExUnit.Assertions do
     module.message(error)
   catch
     kind, reason ->
-      stacktrace = System.stacktrace()
-
       message =
         "Got exception #{inspect(module)} but it failed to produce a message with:\n\n" <>
-          Exception.format(kind, reason, stacktrace)
+          Exception.format(kind, reason, __STACKTRACE__)
 
       flunk(message)
   end
@@ -699,6 +745,7 @@ defmodule ExUnit.Assertions do
 
   @doc """
   Asserts `expression` will throw a value.
+
   Returns the thrown value or fails otherwise.
 
   ## Examples
@@ -712,11 +759,19 @@ defmodule ExUnit.Assertions do
 
   @doc """
   Asserts `expression` will exit.
-  Returns the exit status/message or fails otherwise.
+
+  Returns the exit status/message of the current process or fails otherwise.
 
   ## Examples
 
       assert catch_exit(exit 1) == 1
+      
+  To assert exits from linked processes started from the test, trap exits
+  with `Process.flag/2` and assert the exit message with `assert_received/2`.
+
+      Process.flag(:trap_exit, true)
+      pid = spawn_link(fn -> Process.exit(self(), :normal) end)
+      assert_receive {:EXIT, ^pid, :normal}
 
   """
   defmacro catch_exit(expression) do
@@ -725,6 +780,7 @@ defmodule ExUnit.Assertions do
 
   @doc """
   Asserts `expression` will cause an error.
+
   Returns the error or fails otherwise.
 
   ## Examples
@@ -743,7 +799,7 @@ defmodule ExUnit.Assertions do
         flunk("Expected to catch #{unquote(kind)}, got nothing")
       rescue
         e in [ExUnit.AssertionError] ->
-          reraise(e, System.stacktrace())
+          reraise(e, __STACKTRACE__)
       catch
         unquote(kind), we_got -> we_got
       end

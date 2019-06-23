@@ -75,7 +75,7 @@ case_ignorable_categories = :binary.compile_pattern(["Mn", "Me", "Cf", "Lm", "Sk
       title
     ] = :binary.split(line, ";", [:global])
 
-    title = :binary.part(title, 0, byte_size(title) - 1)
+    title = binary_part(title, 0, byte_size(title) - 1)
 
     cacc =
       if upper != "" or lower != "" or title != "" do
@@ -136,9 +136,19 @@ defmodule String.Casing do
 
   codes =
     Enum.reduce(File.stream!(special_path), codes, fn line, acc ->
-      [codepoint, lower, title, upper, _] = :binary.split(line, "; ", [:global])
-      key = to_binary.(codepoint)
-      :lists.keystore(key, 1, acc, {key, to_binary.(upper), to_binary.(lower), to_binary.(title)})
+      if String.starts_with?(line, ["#", "\n"]) do
+        acc
+      else
+        [codepoint, lower, title, upper, _] = :binary.split(line, "; ", [:global])
+        key = to_binary.(codepoint)
+
+        :lists.keystore(
+          key,
+          1,
+          acc,
+          {key, to_binary.(upper), to_binary.(lower), to_binary.(title)}
+        )
+      end
     end)
 
   # Downcase
@@ -391,7 +401,7 @@ defmodule String.Normalizer do
 
   defp normalize_nfd(binary, acc) do
     {n, rest} = String.Unicode.next_grapheme_size(binary)
-    part = :binary.part(binary, 0, n)
+    part = binary_part(binary, 0, n)
 
     case n do
       1 -> normalize_nfd(rest, acc <> part)
@@ -407,7 +417,7 @@ defmodule String.Normalizer do
 
   defp normalize_nfc(binary, acc) do
     {n, rest} = String.Unicode.next_grapheme_size(binary)
-    part = :binary.part(binary, 0, n)
+    part = binary_part(binary, 0, n)
 
     case n do
       1 -> normalize_nfc(rest, acc <> part)

@@ -158,8 +158,39 @@ defmodule Mix do
   Where `&clean_extra/1` would be a function in your `mix.exs`
   with extra cleanup logic.
 
-  Note aliases do not show up on `mix help`.
-  Aliases defined in the current project do not affect its dependencies and aliases defined in dependencies are not accessible from the current project.
+  Aliases defined in the current project do not affect its dependencies and
+  aliases defined in dependencies are not accessible from the current project.
+
+  Aliases can be used very powerfully to also run Elixir scripts and
+  bash commands, for example:
+
+      # priv/hello.exs
+      IO.puts("hello")
+
+      # priv/world.sh
+      #!/bin/sh
+      echo "world!"
+
+      # mix.exs
+      defp create_aliases do
+        [
+          "taskalias": ["hex.info", "run priv/hello.exs", "cmd priv/world.sh"],
+          "taskalias2": ["run priv/hello1.exs", "run priv/hello2.exs"]
+        ]
+      end
+
+  In the example above we have created 2 aliases, the first example
+  `taskalias` will run task `hex.info`, then (`run`)[`Mix.Tasks.Run`]
+  to run an Elixir script, then (`cmd`)[`Mix.Tasks.Cmd`] to run a
+  command line bash script. This shows how powerful aliases mixed
+  with mix tasks can be.
+
+  `taskalias2` shows a limitation of tasks where only one of the given
+  tasks will run, the execution of `run priv/hello2.exs` will not run.
+  The `run` command, however, can accept multiple files, so in case
+  of running multiple files, it can be rewritten to:
+
+      "taskalias2": ["run -r priv/hello1.exs -r priv/hello2.exs"]
 
   ## Environment variables
 
@@ -168,6 +199,7 @@ defmodule Mix do
   Mix responds to the following variables:
 
     * `MIX_ARCHIVES` - specifies the directory into which the archives should be installed
+    * `MIX_BUILD_PATH` - sets the project build_path config
     * `MIX_DEBUG` - outputs debug information about each task before running it
     * `MIX_ENV` - specifies which environment should be used. See [Environments](#module-environments)
     * `MIX_EXS` - changes the full path to the `mix.exs` file
@@ -270,7 +302,7 @@ defmodule Mix do
   end
 
   @doc """
-  Returns true if Mix is in debug mode.
+  Returns `true` if Mix is in debug mode.
   """
   def debug? do
     Mix.State.get(:debug, false)

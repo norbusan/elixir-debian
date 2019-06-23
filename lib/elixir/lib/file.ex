@@ -90,8 +90,13 @@ defmodule File do
           | :read
           | :read_ahead
           | :sync
-          | :utf8
           | :write
+          | {:read_ahead, pos_integer}
+          | {:delayed_write, non_neg_integer, non_neg_integer}
+          | encoding_mode()
+
+  @type encoding_mode ::
+          :utf8
           | {
               :encoding,
               :latin1
@@ -102,7 +107,11 @@ defmodule File do
               | {:utf16, :big | :little}
               | {:utf32, :big | :little}
             }
-          | {:read_ahead, pos_integer}
+
+  @type stream_mode ::
+          encoding_mode()
+          | :trim_bom
+          | {:read_ahead, pos_integer | false}
           | {:delayed_write, non_neg_integer, non_neg_integer}
 
   @doc """
@@ -428,6 +437,7 @@ defmodule File do
     * `:enotsup` - symbolic links are not supported on the current platform
 
   """
+  @doc since: "1.5.0"
   @spec read_link(Path.t()) :: {:ok, binary} | {:error, posix}
   def read_link(path) do
     case path |> IO.chardata_to_string() |> :file.read_link() do
@@ -440,6 +450,7 @@ defmodule File do
   Same as `read_link/1` but returns the target directly or throws `File.Error` if an error is
   returned.
   """
+  @doc since: "1.5.0"
   @spec read_link!(Path.t()) :: binary | no_return
   def read_link!(path) do
     case read_link(path) do
@@ -525,6 +536,8 @@ defmodule File do
   If the operating system does not support hard links, returns
   `{:error, :enotsup}`.
   """
+  @doc since: "1.5.0"
+  @spec ln(Path.t(), Path.t()) :: :ok | {:error, posix}
   def ln(existing, new) do
     :file.make_link(IO.chardata_to_string(existing), IO.chardata_to_string(new))
   end
@@ -534,6 +547,8 @@ defmodule File do
 
   Returns `:ok` otherwise
   """
+  @doc since: "1.5.0"
+  @spec ln!(Path.t(), Path.t()) :: :ok | no_return
   def ln!(existing, new) do
     case ln(existing, new) do
       :ok ->
@@ -555,6 +570,8 @@ defmodule File do
   If the operating system does not support symlinks, returns
   `{:error, :enotsup}`.
   """
+  @doc since: "1.5.0"
+  @spec ln_s(Path.t(), Path.t()) :: :ok | {:error, posix}
   def ln_s(existing, new) do
     :file.make_symlink(IO.chardata_to_string(existing), IO.chardata_to_string(new))
   end
@@ -564,6 +581,7 @@ defmodule File do
 
   Returns `:ok` otherwise
   """
+  @spec ln_s!(Path.t(), Path.t()) :: :ok | no_return
   def ln_s!(existing, new) do
     case ln_s(existing, new) do
       :ok ->
@@ -645,6 +663,7 @@ defmodule File do
 
       # Rename directory "samples" to "tmp"
       File.rename "samples", "tmp"
+
   """
   @spec rename(Path.t(), Path.t()) :: :ok | {:error, posix}
   def rename(source, destination) do
@@ -1014,14 +1033,19 @@ defmodule File do
 
   @doc """
   Tries to delete the dir at `path`.
+
   Returns `:ok` if successful, or `{:error, reason}` if an error occurs.
+  It returns `{:error, :eexist}` if the directory is not empty.
 
   ## Examples
 
-      File.rmdir('tmp_dir')
+      File.rmdir("tmp_dir")
       #=> :ok
 
-      File.rmdir('file.txt')
+      File.rmdir("non_empty_dir")
+      #=> {:error, :eexist}
+
+      File.rmdir("file.txt")
       #=> {:error, :enotdir}
 
   """
@@ -1488,7 +1512,8 @@ defmodule File do
   in raw mode for performance reasons. Therefore, Elixir **will** open
   streams in `:raw` mode with the `:read_ahead` option unless an encoding
   is specified. This means any data streamed into the file must be
-  converted to `t:iodata/0` type. If you pass `[:utf8]` in the modes parameter,
+  converted to `t:iodata/0` type. If you pass e.g. `[encoding: :utf8]`
+  or `[encoding: {:utf16, :little}]` in the modes parameter,
   the underlying stream will use `IO.write/2` and the `String.Chars` protocol
   to convert the data. See `IO.binwrite/2` and `IO.write/2` .
 
@@ -1500,6 +1525,9 @@ defmodule File do
   If you pass `:trim_bom` in the modes parameter, the stream will
   trim UTF-8, UTF-16 and UTF-32 byte order marks when reading from file.
 
+  Note that this function does not try to discover the file encoding basing
+  on BOM.
+
   ## Examples
 
       # Read in 2048 byte chunks rather than lines
@@ -1510,6 +1538,7 @@ defmodule File do
   See `Stream.run/1` for an example of streaming into a file.
 
   """
+  @spec stream!(Path.t(), stream_mode, :line | pos_integer) :: File.Stream.t()
   def stream!(path, modes \\ [], line_or_bytes \\ :line) do
     modes = normalize_modes(modes, true)
     File.Stream.__build__(IO.chardata_to_string(path), modes, line_or_bytes)

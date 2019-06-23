@@ -56,8 +56,18 @@ defmodule Task do
 
   ## Supervised tasks
 
-  It is also possible to spawn a task under a supervisor.
-  It is often done by defining the task in its own module:
+  It is also possible to spawn a task under a supervisor. The `Task`
+  module implements the `child_spec/1` function, which allows it to
+  be started directly under a supervisor by passing a tuple with
+  a function to run:
+
+      Supervisor.start_link([
+        {Task, fn -> ... some function ... end}
+      ])
+
+  However, if you want to invoke a specific module, function and
+  arguments, or give the task process a name, you need to define
+  the task in its own module:
 
       defmodule MyTask do
         use Task
@@ -73,7 +83,9 @@ defmodule Task do
 
   And then passing it to the supervisor:
 
-      Supervisor.start_link([MyTask])
+      Supervisor.start_link([
+        {MyTask, arg}
+      ])
 
   Since these tasks are supervised and not directly linked to
   the caller, they cannot be awaited on. Note `start_link/1`,
@@ -84,7 +96,7 @@ defmodule Task do
   defined module to be put under a supervision tree. The generated
   `child_spec/1` can be customized with the following options:
 
-    * `:id` - the child specification id, defaults to the current module
+    * `:id` - the child specification identifier, defaults to the current module
     * `:start` - how to start the child process (defaults to calling `__MODULE__.start_link/1`)
     * `:restart` - when the child should be restarted, defaults to `:temporary`
     * `:shutdown` - how to shut down the child
@@ -178,7 +190,7 @@ defmodule Task do
 
   See `Supervisor`.
   """
-  @since "1.5.0"
+  @doc since: "1.5.0"
   def child_spec(arg) do
     %{
       id: Task,
@@ -195,7 +207,7 @@ defmodule Task do
 
       See `Supervisor`.
       """
-      @since "1.5.0"
+      @doc since: "1.5.0"
       def child_spec(arg) do
         default = %{
           id: __MODULE__,
@@ -376,7 +388,7 @@ defmodule Task do
       Defaults to `true`.
     * `:timeout` - the maximum amount of time (in milliseconds) each
       task is allowed to execute for. Defaults to `5000`.
-    * `:on_timeout` - what do to when a task times out. The possible
+    * `:on_timeout` - what to do when a task times out. The possible
       values are:
       * `:exit` (default) - the process that spawned the tasks exits.
       * `:kill_task` - the task that timed out is killed. The value
@@ -397,6 +409,7 @@ defmodule Task do
       Enum.to_list(stream)
 
   """
+  @doc since: "1.4.0"
   @spec async_stream(Enumerable.t(), module, atom, [term], keyword) :: Enumerable.t()
   def async_stream(enumerable, module, function, args, options \\ [])
       when is_atom(module) and is_atom(function) and is_list(args) do
@@ -416,12 +429,13 @@ defmodule Task do
   Count the codepoints in each string asynchronously, then add the counts together using reduce.
 
       iex> strings = ["long string", "longer string", "there are many of these"]
-      iex> stream = Task.async_stream(strings, fn text -> text |> String.codepoints |> Enum.count end)
+      iex> stream = Task.async_stream(strings, fn text -> text |> String.codepoints() |> Enum.count() end)
       iex> Enum.reduce(stream, 0, fn {:ok, num}, acc -> num + acc end)
       47
 
   See `async_stream/5` for discussion, options, and more examples.
   """
+  @doc since: "1.4.0"
   @spec async_stream(Enumerable.t(), (term -> term), keyword) :: Enumerable.t()
   def async_stream(enumerable, fun, options \\ []) when is_function(fun, 1) do
     build_stream(enumerable, fun, options)
@@ -504,7 +518,7 @@ defmodule Task do
 
   @doc false
   # TODO: Remove on 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Pattern match on the message directly instead"
   def find(tasks, {ref, reply}) when is_reference(ref) do
     Enum.find_value(tasks, fn
       %Task{ref: ^ref} = task ->

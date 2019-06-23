@@ -1,10 +1,10 @@
-REBAR ?= "$(CURDIR)/rebar"
 PREFIX ?= /usr/local
 SHARE_PREFIX ?= $(PREFIX)/share
-CANONICAL := v1.6/
+CANONICAL := v1.7/
 ELIXIRC := bin/elixirc --verbose --ignore-module-conflict
 ERLC := erlc -I lib/elixir/include
 ERL := erl -I lib/elixir/include -noshell -pa lib/elixir/ebin
+GENERATE_APP := $(CURDIR)/lib/elixir/generate_app.escript
 VERSION := $(strip $(shell cat VERSION))
 Q := @
 LIBDIR := lib
@@ -16,7 +16,7 @@ INSTALL_PROGRAM = $(INSTALL) -m755
 GIT_REVISION = $(strip $(shell git rev-parse HEAD 2> /dev/null ))
 GIT_TAG = $(strip $(shell head="$(call GIT_REVISION)"; git tag --points-at $$head 2> /dev/null | tail -1) )
 
-.PHONY: install compile erlang elixir build_plt clean_plt dialyze test clean clean_residual_files install_man clean_man docs Docs.zip Precompiled.zip zips
+.PHONY: install compile erlang elixir unicode app build_plt clean_plt dialyze test clean clean_residual_files install_man clean_man docs Docs.zip Precompiled.zip zips
 .NOTPARALLEL: compile
 
 #==> Functions
@@ -24,7 +24,7 @@ GIT_TAG = $(strip $(shell head="$(call GIT_REVISION)"; git tag --points-at $$hea
 define CHECK_ERLANG_RELEASE
 	erl -noshell -eval '{V,_} = string:to_integer(erlang:system_info(otp_release)), io:fwrite("~s", [is_integer(V) and (V >= 19)])' -s erlang halt | grep -q '^true'; \
 		if [ $$? != 0 ]; then \
-		  echo "At least Erlang 19.0 is required to build Elixir"; \
+		  echo "At least Erlang/OTP 19.0 is required to build Elixir"; \
 		  exit 1; \
 		fi
 endef
@@ -51,25 +51,30 @@ endef
 
 #==> Compilation tasks
 
-KERNEL:=lib/elixir/ebin/Elixir.Kernel.beam
-UNICODE:=lib/elixir/ebin/Elixir.String.Unicode.beam
+APP := lib/elixir/ebin/elixir.app
+PARSER := lib/elixir/src/elixir_parser.erl
+KERNEL := lib/elixir/ebin/Elixir.Kernel.beam
+UNICODE := lib/elixir/ebin/Elixir.String.Unicode.beam
 
 default: compile
 
-compile: erlang elixir
+compile: erlang $(APP) elixir
 
-erlang:
-	$(Q) cd lib/elixir && $(REBAR) compile
+erlang: $(PARSER)
+	$(Q) if [ ! -f $(APP) ]; then $(call CHECK_ERLANG_RELEASE); fi
+	$(Q) cd lib/elixir && mkdir -p ebin && erl -make
+
+$(PARSER): lib/elixir/src/elixir_parser.yrl
+	$(Q) erlc -o $@ +'{verbose,true}' +'{report,true}' $<
 
 # Since Mix depends on EEx and EEx depends on Mix,
 # we first compile EEx without the .app file,
-# then mix and then compile EEx fully
+# then Mix and then compile EEx fully
 elixir: stdlib lib/eex/ebin/Elixir.EEx.beam mix ex_unit logger eex iex
 
 stdlib: $(KERNEL) VERSION
 $(KERNEL): lib/elixir/lib/*.ex lib/elixir/lib/*/*.ex lib/elixir/lib/*/*/*.ex
 	$(Q) if [ ! -f $(KERNEL) ]; then \
-	  $(call CHECK_ERLANG_RELEASE); \
 		echo "==> bootstrap (compile)"; \
 		$(ERL) -s elixir_compiler bootstrap -s erlang halt; \
 	fi
@@ -77,8 +82,11 @@ $(KERNEL): lib/elixir/lib/*.ex lib/elixir/lib/*/*.ex lib/elixir/lib/*/*/*.ex
 	$(Q) cd lib/elixir && ../../$(ELIXIRC) "lib/kernel.ex" -o ebin;
 	$(Q) cd lib/elixir && ../../$(ELIXIRC) "lib/**/*.ex" -o ebin;
 	$(Q) $(MAKE) unicode
-	$(Q) rm -f lib/elixir/ebin/elixir.app
-	$(Q) cd lib/elixir && $(REBAR) compile
+	$(Q) $(MAKE) app
+
+app: $(APP)
+$(APP): lib/elixir/src/elixir.app.src lib/elixir/ebin VERSION $(GENERATE_APP)
+	$(Q) $(GENERATE_APP) $< $@ $(VERSION)
 
 unicode: $(UNICODE)
 $(UNICODE): lib/elixir/unicode/*
@@ -109,9 +117,9 @@ install: compile
 	$(MAKE) install_man
 
 clean:
-	cd lib/elixir && $(REBAR) clean
 	rm -rf ebin
 	rm -rf lib/*/ebin
+	rm -rf $(PARSER)
 	$(Q) $(MAKE) clean_residual_files
 
 clean_elixir:
@@ -184,10 +192,18 @@ Precompiled.zip: build_man compile
 	@ echo "Precompiled file created $(CURDIR)/Precompiled-v$(VERSION).zip"
 
 zips: Precompiled.zip Docs.zip
+	@ echo ""
+	@ echo "## Checksums"
+	@ echo ""
+	@ shasum -a 1 < Precompiled-v$(VERSION).zip | sed -e "s/-//" | xargs echo "  * Precompiled.zip SHA1:"
+	@ shasum -a 512 < Precompiled-v$(VERSION).zip | sed -e "s/-//" | xargs echo "  * Precompiled.zip SHA512:"
+	@ shasum -a 1 < Docs-v$(VERSION).zip | sed -e "s/-//" | xargs echo "  * Docs.zip SHA1:"
+	@ shasum -a 512 < Docs-v$(VERSION).zip | sed -e "s/-//" | xargs echo "  * Docs.zip SHA512:"
+	@ echo ""
 
 #==> Test tasks
 
-test: test_erlang test_elixir
+test: test_formatted test_erlang test_elixir
 
 test_windows: test test_taskkill
 
@@ -198,6 +214,9 @@ test_taskkill:
 TEST_ERL = lib/elixir/test/erlang
 TEST_EBIN = lib/elixir/test/ebin
 TEST_ERLS = $(addprefix $(TEST_EBIN)/, $(addsuffix .beam, $(basename $(notdir $(wildcard $(TEST_ERL)/*.erl)))))
+
+test_formatted: compile
+	bin/elixir bin/mix format --check-formatted
 
 test_erlang: compile $(TEST_ERLS)
 	@ echo "==> elixir (eunit)"

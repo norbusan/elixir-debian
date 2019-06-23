@@ -10,10 +10,9 @@
   caller=false,            %% when true, it means caller was invoked
   vars=#{},                %% a map of defined variables and their alias
   backup_vars=nil,         %% a copy of vars to be used on ^var
-  export_vars=nil,         %% a dict of all variables defined in a particular clause
   extra_guards=[],         %% extra guards from args expansion
   counter=#{},             %% a map counting the variables defined
-  file=(<<"nofile">>)      %% the current scope filename
+  stacktrace=false         %% holds information about the stacktrace variable
 }).
 
 -record(elixir_quote, {
@@ -25,7 +24,6 @@
   imports_hygiene=true,
   unquote=true,
   unquoted=false,
-  escape=false,
   generated=false
 }).
 
@@ -36,5 +34,8 @@
   check_terminators=true,
   existing_atoms_only=false,
   preserve_comments=nil,
-  identifier_tokenizer=elixir_tokenizer
+  identifier_tokenizer=elixir_tokenizer,
+  indentation=0,
+  mismatch_hints=[],
+  warn_on_unnecessary_quotes=true
 }).

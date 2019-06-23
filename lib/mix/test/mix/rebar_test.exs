@@ -85,35 +85,30 @@ defmodule Mix.RebarTest do
   @git_rebar_string "../../test/fixtures/git_rebar"
 
   describe "deps/1" do
+    defp parse_dep(dep) do
+      [deps: [dep]] |> Mix.Rebar.deps() |> hd()
+    end
+
     test "parses Rebar dependencies" do
-      config = [deps: [{:git_rebar, '~> 1.0'}]]
-      assert Mix.Rebar.deps(config) == [{:git_rebar, "~> 1.0"}]
+      assert parse_dep({:git_rebar, '~> 1.0'}) == {:git_rebar, "~> 1.0", override: true}
 
-      config = [deps: [{:git_rebar, '~> 1.0', {:pkg, :rebar_fork}}]]
-      assert Mix.Rebar.deps(config) == [{:git_rebar, "~> 1.0", hex: :rebar_fork}]
+      assert parse_dep({:git_rebar, '~> 1.0', {:pkg, :rebar_fork}}) ==
+               {:git_rebar, "~> 1.0", override: true, hex: :rebar_fork}
 
-      config = [deps: [{:git_rebar, {:pkg, :rebar_fork}}]]
-      assert Mix.Rebar.deps(config) == [{:git_rebar, ">= 0.0.0", hex: :rebar_fork}]
+      assert parse_dep({:git_rebar, {:pkg, :rebar_fork}}) ==
+               {:git_rebar, ">= 0.0.0", override: true, hex: :rebar_fork}
 
-      config = [deps: [{:git_rebar, '0.1..*', {:git, @git_rebar_charlist, :master}}]]
+      assert parse_dep({:git_rebar, '0.1..*', {:git, @git_rebar_charlist, :master}}) ==
+               {:git_rebar, ~r"0.1..*", override: true, git: @git_rebar_string, ref: "master"}
 
-      assert Mix.Rebar.deps(config) ==
-               [{:git_rebar, ~r"0.1..*", [git: @git_rebar_string, ref: "master"]}]
+      assert parse_dep({:git_rebar, {:git, @git_rebar_charlist, :master}}) ==
+               {:git_rebar, ">= 0.0.0", override: true, git: @git_rebar_string, ref: "master"}
 
-      config = [deps: [{:git_rebar, {:git, @git_rebar_charlist, :master}}]]
+      assert parse_dep({:git_rebar, '0.1..*', {:git, @git_rebar_charlist}, [:raw]}) ==
+               {:git_rebar, ~r"0.1..*", override: true, git: @git_rebar_string, compile: false}
 
-      assert Mix.Rebar.deps(config) ==
-               [{:git_rebar, ">= 0.0.0", [git: @git_rebar_string, ref: "master"]}]
-
-      config = [deps: [{:git_rebar, '0.1..*', {:git, @git_rebar_charlist}, [:raw]}]]
-
-      assert Mix.Rebar.deps(config) ==
-               [{:git_rebar, ~r"0.1..*", [git: @git_rebar_string, compile: false]}]
-
-      config = [deps: [{:git_rebar, '', {:git, @git_rebar_charlist, {:ref, '64691eb'}}}]]
-
-      assert Mix.Rebar.deps(config) ==
-               [{:git_rebar, ~r"", [git: @git_rebar_string, ref: "64691eb"]}]
+      assert parse_dep({:git_rebar, '', {:git, @git_rebar_charlist, {:ref, '64691eb'}}}) ==
+               {:git_rebar, ~r"", override: true, git: @git_rebar_string, ref: "64691eb"}
     end
   end
 
@@ -186,14 +181,14 @@ defmodule Mix.RebarTest do
   describe "integration with Mix" do
     test "inherits Rebar manager" do
       Mix.Project.push(Rebar3AsDep)
-      deps = Mix.Dep.loaded([])
+      deps = Mix.Dep.load_on_environment([])
       assert Enum.all?(deps, &(&1.manager == :rebar3))
     end
 
     test "parses Rebar dependencies from rebar.config" do
       Mix.Project.push(RebarAsDep)
 
-      deps = Mix.Dep.loaded([])
+      deps = Mix.Dep.load_on_environment([])
       assert Enum.find(deps, &(&1.app == :rebar_dep))
 
       assert Enum.find(deps, fn %Mix.Dep{app: app, opts: opts} ->
@@ -208,12 +203,12 @@ defmodule Mix.RebarTest do
     test "handles Rebar overrides" do
       Mix.Project.push(RebarOverrideAsDep)
 
-      in_tmp "Rebar overrides", fn ->
+      in_tmp("Rebar overrides", fn ->
         Mix.Tasks.Deps.Get.run([])
 
-        assert Mix.Dep.loaded([]) |> Enum.map(& &1.app) ==
+        assert Mix.Dep.load_on_environment([]) |> Enum.map(& &1.app) ==
                  [:git_repo, :git_rebar, :rebar_override]
-      end
+      end)
     after
       purge([GitRepo.MixProject])
     end
@@ -221,7 +216,7 @@ defmodule Mix.RebarTest do
     test "gets and compiles dependencies for Rebar" do
       Mix.Project.push(RebarAsDep)
 
-      in_tmp "get and compile dependencies for Rebar", fn ->
+      in_tmp("get and compile dependencies for Rebar", fn ->
         Mix.Tasks.Deps.Get.run([])
         assert_received {:mix_shell, :info, ["* Getting git_rebar" <> _]}
 
@@ -232,7 +227,7 @@ defmodule Mix.RebarTest do
         assert :rebar_dep.any_function() == :ok
 
         load_paths =
-          Mix.Dep.loaded([])
+          Mix.Dep.load_on_environment([])
           |> Enum.map(&Mix.Dep.load_paths(&1))
           |> Enum.concat()
 
@@ -246,7 +241,7 @@ defmodule Mix.RebarTest do
 
         assert Enum.any?(load_paths, &String.ends_with?(&1, "git_rebar/ebin"))
         assert Enum.any?(load_paths, &String.ends_with?(&1, "rebar_dep/ebin"))
-      end
+      end)
     end
 
     # We run only on Unix because Windows has a hard time
@@ -255,7 +250,7 @@ defmodule Mix.RebarTest do
     test "applies variables from :system_env option when compiling dependencies for Rebar" do
       Mix.Project.push(RebarAsDepWithEnv)
 
-      in_tmp "applies variables from system_env for Rebar", fn ->
+      in_tmp("applies variables from system_env for Rebar", fn ->
         expected_file = Path.join(tmp_path("rebar_dep"), "rebar-test-rebar")
         File.rm(expected_file)
 
@@ -263,13 +258,13 @@ defmodule Mix.RebarTest do
         Mix.Tasks.Deps.Compile.run([])
 
         assert {:ok, "rebar"} = File.read(expected_file)
-      end
+      end)
     end
 
     test "gets and compiles dependencies for rebar3" do
       Mix.Project.push(Rebar3AsDep)
 
-      in_tmp "get and compile dependencies for rebar3", fn ->
+      in_tmp("get and compile dependencies for rebar3", fn ->
         Mix.Tasks.Deps.Get.run([])
         assert_received {:mix_shell, :info, ["* Getting git_rebar " <> _]}
 
@@ -280,7 +275,7 @@ defmodule Mix.RebarTest do
         assert :rebar_dep.any_function() == :ok
 
         load_paths =
-          Mix.Dep.loaded([])
+          Mix.Dep.load_on_environment([])
           |> Enum.map(&Mix.Dep.load_paths(&1))
           |> Enum.concat()
 
@@ -294,7 +289,7 @@ defmodule Mix.RebarTest do
 
         assert Enum.any?(load_paths, &String.ends_with?(&1, "git_rebar/ebin"))
         assert Enum.any?(load_paths, &String.ends_with?(&1, "rebar_dep/ebin"))
-      end
+      end)
     end
 
     # We run only on Unix because Windows has a hard time
@@ -303,7 +298,7 @@ defmodule Mix.RebarTest do
     test "applies variables from :system_env option when compiling dependencies for rebar3" do
       Mix.Project.push(Rebar3AsDep)
 
-      in_tmp "applies variables from system_env for rebar3", fn ->
+      in_tmp("applies variables from system_env for rebar3", fn ->
         expected_file = Path.join(tmp_path("rebar_dep"), "rebar-test-rebar3")
         File.rm(expected_file)
 
@@ -311,13 +306,13 @@ defmodule Mix.RebarTest do
         Mix.Tasks.Deps.Compile.run([])
 
         assert {:ok, "rebar3"} = File.read(expected_file)
-      end
+      end)
     end
 
     test "gets and compiles dependencies for Rebar with Mix" do
       Mix.Project.push(RebarAsDep)
 
-      in_tmp "get and compile dependencies for Rebar with Mix", fn ->
+      in_tmp("get and compile dependencies for Rebar with Mix", fn ->
         File.write!(MixTest.Case.tmp_path("rebar_dep/mix.exs"), """
         defmodule RebarDep.MixProject do
           use Mix.Project
@@ -333,7 +328,7 @@ defmodule Mix.RebarTest do
         assert_received {:mix_shell, :info, ["==> rebar_dep"]}
         assert_received {:mix_shell, :info, ["Generated rebar_dep app"]}
         assert File.regular?("_build/dev/lib/rebar_dep/ebin/rebar_dep.app")
-      end
+      end)
     after
       File.rm(MixTest.Case.tmp_path("rebar_dep/mix.exs"))
     end

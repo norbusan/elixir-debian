@@ -6,12 +6,24 @@ defmodule Kernel.DeprecatedTest do
   import PathHelpers
 
   test "raises on invalid @deprecated" do
-    assert_raise ArgumentError, ~r"@deprecated expects a string with the reason", fn ->
+    assert_raise ArgumentError, ~r"should be a string with the reason", fn ->
       defmodule InvalidDeprecated do
         @deprecated 1.2
         def foo, do: :bar
       end
     end
+  end
+
+  test "takes into account deprecated from defaults" do
+    defmodule DefaultDeprecated do
+      @deprecated "reason"
+      def foo(x \\ true), do: x
+    end
+
+    assert DefaultDeprecated.__info__(:deprecated) == [
+             {{:foo, 0}, "reason"},
+             {{:foo, 1}, "reason"}
+           ]
   end
 
   test "add deprecated to __info__ and beam chuncks" do

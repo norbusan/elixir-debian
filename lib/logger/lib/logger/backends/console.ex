@@ -191,7 +191,9 @@ defmodule Logger.Backends.Console do
     |> color_event(level, colors, md)
   end
 
-  defp take_metadata(metadata, :all), do: metadata
+  defp take_metadata(metadata, :all) do
+    Keyword.drop(metadata, [:crash_reason])
+  end
 
   defp take_metadata(metadata, keys) do
     Enum.reduce(keys, [], fn key, acc ->
@@ -236,7 +238,13 @@ defmodule Logger.Backends.Console do
   defp retry_log(error, %{device: device, ref: ref, output: dirty} = state) do
     Process.demonitor(ref, [:flush])
 
-    case :unicode.characters_to_binary(dirty) do
+    try do
+      :unicode.characters_to_binary(dirty)
+    rescue
+      ArgumentError ->
+        clean = ["failure while trying to log malformed data: ", inspect(dirty), ?\n]
+        %{state | ref: async_io(device, clean), output: clean}
+    else
       {_, good, bad} ->
         clean = [good | Logger.Formatter.prune(bad)]
         %{state | ref: async_io(device, clean), output: clean}

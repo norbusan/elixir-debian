@@ -9,6 +9,7 @@ end
 defmodule ExUnit.AssertionsTest.BrokenError do
   defexception [:message]
 
+  @impl true
   def message(_) do
     raise "error"
   end
@@ -52,6 +53,28 @@ defmodule ExUnit.AssertionsTest do
       error in [ExUnit.AssertionError] ->
         "assert(Value.falsy())" = error.expr |> Macro.to_string()
         "Expected truthy, got false" = error.message
+    end
+  end
+
+  test "assert arguments in special form" do
+    true =
+      assert (case :ok do
+                :ok -> true
+              end)
+  end
+
+  test "assert arguments semantics on function call" do
+    x = 1
+    true = assert not_equal(x = 2, x)
+    2 = x
+  end
+
+  test "assert arguments are not kept for operators" do
+    try do
+      "This should never be tested" = assert not Value.truthy()
+    rescue
+      error in [ExUnit.AssertionError] ->
+        false = is_list(error.args)
     end
   end
 
@@ -228,6 +251,17 @@ defmodule ExUnit.AssertionsTest do
     assert_receive {~l(a)}, 0, "failure message"
 
     assert a == :hello
+  end
+
+  test "assert_receive raises on invalid timeout" do
+    timeout = ok(1)
+
+    try do
+      assert_receive {~l(a)}, timeout
+    rescue
+      error in [ArgumentError] ->
+        "timeout must be a non-negative integer, got: {:ok, 1}" = error.message
+    end
   end
 
   require Record
@@ -524,8 +558,7 @@ defmodule ExUnit.AssertionsTest do
       assert_raise ArgumentError, fn -> Not.Defined.function(1, 2, 3) end
   rescue
     ExUnit.AssertionError ->
-      stacktrace = System.stacktrace()
-      [{Not.Defined, :function, [1, 2, 3], _} | _] = stacktrace
+      [{Not.Defined, :function, [1, 2, 3], _} | _] = __STACKTRACE__
   end
 
   test "assert raise with Erlang error" do
@@ -774,4 +807,5 @@ defmodule ExUnit.AssertionsTest do
 
   defp ok(val), do: {:ok, val}
   defp error(val), do: {:error, val}
+  defp not_equal(left, right), do: left != right
 end

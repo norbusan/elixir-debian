@@ -75,7 +75,7 @@ defmodule Kernel.SpecialForms do
   defmacro unquote(:%{})(args), do: error!([args])
 
   @doc """
-  Creates a struct.
+  Matches on or builds a struct.
 
   A struct is a tagged map that allows developers to provide
   default values for keys, tags to be used in polymorphic
@@ -96,15 +96,24 @@ defmodule Kernel.SpecialForms do
 
       %User{} == %{__struct__: User, name: "john", age: 27}
 
-  A struct also validates that the given keys are part of the defined
-  struct. The example below will fail because there is no key
-  `:full_name` in the `User` struct:
+  The struct fields can be given when building the struct:
 
-      %User{full_name: "john doe"}
+      %User{age: 31}
+      #=> %{__struct__: User, name: "john", age: 31}
+
+  Or also on pattern matching to extract values out:
+
+      %User{age: age} = user
 
   An update operation specific for structs is also available:
 
       %User{user | age: 28}
+
+  The advantage of structs is that they validate that the given
+  keys are part of the defined struct. The example below will fail
+  because there is no key `:full_name` in the `User` struct:
+
+      %User{full_name: "john doe"}
 
   The syntax above will guarantee the given keys are valid at
   compilation time and it will guarantee at runtime the given
@@ -116,6 +125,24 @@ defmodule Kernel.SpecialForms do
   can be used with protocols for polymorphic dispatch. Also
   see `Kernel.struct/2` and `Kernel.struct!/2` for examples on
   how to create and update structs dynamically.
+
+  ## Pattern matching on struct names
+
+  Besides allowing pattern matching on struct fields, such as:
+
+      %User{age: age} = user
+
+  Structs also allow pattern matching on the struct name:
+
+      %struct_name{} = user
+      struct_name #=> User
+
+  You can also assign the struct name to `_` when you want to
+  check if something is a struct but you are not interested in
+  its name:
+
+      %_{} = user
+
   """
   defmacro unquote(:%)(struct, map), do: error!([struct, map])
 
@@ -294,7 +321,7 @@ defmodule Kernel.SpecialForms do
 
   Or as a part of function definitions to pattern match:
 
-      defmodule ImageTyper
+      defmodule ImageTyper do
         @png_signature <<137::size(8), 80::size(8), 78::size(8), 71::size(8),
                          13::size(8), 10::size(8), 26::size(8), 10::size(8)>>
         @jpg_signature <<255::size(8), 216::size(8)>>
@@ -331,7 +358,7 @@ defmodule Kernel.SpecialForms do
 
   The dot may be used to invoke anonymous functions too:
 
-      iex> (fn(n) -> n end).(7)
+      iex> (fn n -> n end).(7)
       7
 
   in which case there is a function on the left hand side.
@@ -360,21 +387,18 @@ defmodule Kernel.SpecialForms do
       iex> Kernel.+(1, 2)
       3
 
-      iex> Kernel."length"([1, 2, 3])
+      iex> Kernel."+"(1, 2)
       3
 
-      iex> Kernel.'+'(1, 2)
-      3
-
-  Note that `Kernel."FUNCTION_NAME"` will be treated as a remote call and not an alias.
-  This choice was done so every time single- or double-quotes are used, we have
-  a remote call regardless of the quote contents. This decision is also reflected
-  in the quoted expressions discussed below.
+  Note that wrapping the function name in single- or double-quotes is always a
+  remote call. Therefore `Kernel."Foo"` will attempt to call the function "Foo"
+  and not return the alias `Kernel.Foo`. This is done by design as module names
+  are more strict than function names.
 
   When the dot is used to invoke an anonymous function there is only one
   operand, but it is still written using a postfix notation:
 
-      iex> negate = fn(n) -> -n end
+      iex> negate = fn n -> -n end
       iex> negate.(7)
       -7
 
@@ -398,15 +422,7 @@ defmodule Kernel.SpecialForms do
   with the name as first argument, some keyword list as metadata as second,
   and the list of arguments as third. In this case, the arguments are the
   alias `String` and the atom `:downcase`. The second argument in a remote call
-  is **always** an atom regardless of the literal used in the call:
-
-      iex> quote do
-      ...>   String."downcase"("FOO")
-      ...> end
-      {{:., [], [{:__aliases__, [alias: false], [:String]}, :downcase]}, [], ["FOO"]}
-
-  The tuple containing `:.` is wrapped in another tuple, which actually
-  represents the function call, and has `"FOO"` as argument.
+  is **always** an atom.
 
   In the case of calls to anonymous functions, the inner tuple with the dot
   special form has only one argument, reflecting the fact that the operator is
@@ -671,6 +687,14 @@ defmodule Kernel.SpecialForms do
   defmacro __CALLER__, do: error!([])
 
   @doc """
+  Returns the stacktrace for the curently handled exception.
+
+  It is available only in the `catch` and `rescue` clauses of `try/1`
+  expressions.
+  """
+  defmacro __STACKTRACE__, do: error!([])
+
+  @doc """
   Accesses an already bound variable in match clauses. Also known as the pin operator.
 
   ## Examples
@@ -856,7 +880,7 @@ defmodule Kernel.SpecialForms do
         end
       end
 
-  Now invoking `square(my_number.())` as before will print the value just
+  Now invoking `squared(my_number.())` as before will print the value just
   once.
 
   In fact, this pattern is so common that most of the times you will want
@@ -1328,7 +1352,7 @@ defmodule Kernel.SpecialForms do
       iex> for(x <- [1, 1, 2, 3], uniq: true, do: x * 2)
       [2, 4, 6]
 
-      iex> for(<<x <- "abcabc">>, uniq: true, into: "", do: <<x-32>>)
+      iex> for(<<x <- "abcabc">>, uniq: true, into: "", do: <<x - 32>>)
       "ABC"
 
   """
@@ -1341,8 +1365,9 @@ defmodule Kernel.SpecialForms do
 
       iex> opts = %{width: 10, height: 15}
       iex> with {:ok, width} <- Map.fetch(opts, :width),
-      ...>      {:ok, height} <- Map.fetch(opts, :height),
-      ...>      do: {:ok, width * height}
+      ...>      {:ok, height} <- Map.fetch(opts, :height) do
+      ...>   {:ok, width * height}
+      ...> end
       {:ok, 150}
 
   If all clauses match, the `do` block is executed, returning its result.
@@ -1350,15 +1375,17 @@ defmodule Kernel.SpecialForms do
 
       iex> opts = %{width: 10}
       iex> with {:ok, width} <- Map.fetch(opts, :width),
-      ...>      {:ok, height} <- Map.fetch(opts, :height),
-      ...>      do: {:ok, width * height}
+      ...>      {:ok, height} <- Map.fetch(opts, :height) do
+      ...>   {:ok, width * height}
+      ...> end
       :error
 
   Guards can be used in patterns as well:
 
       iex> users = %{"melany" => "guest", "bob" => :admin}
-      iex> with {:ok, role} when not is_binary(role) <- Map.fetch(users, "bob"),
-      ...>      do: {:ok, to_string(role)}
+      iex> with {:ok, role} when not is_binary(role) <- Map.fetch(users, "bob") do
+      ...>   {:ok, to_string(role)}
+      ...> end
       {:ok, "admin"}
 
   As in `for/1`, variables bound inside `with/1` won't leak;
@@ -1368,8 +1395,9 @@ defmodule Kernel.SpecialForms do
       iex> opts = %{width: 10, height: 15}
       iex> with {:ok, width} <- Map.fetch(opts, :width),
       ...>      double_width = width * 2,
-      ...>      {:ok, height} <- Map.fetch(opts, :height),
-      ...>      do: {:ok, double_width * height}
+      ...>      {:ok, height} <- Map.fetch(opts, :height) do
+      ...>   {:ok, double_width * height}
+      ...> end
       {:ok, 300}
       iex> width
       nil
@@ -1379,6 +1407,20 @@ defmodule Kernel.SpecialForms do
 
       with :foo = :bar, do: :ok
       #=> ** (MatchError) no match of right hand side value: :bar
+
+  As with any other function or macro call in Elixir, explicit parens can
+  also be used around the arguments before the `do`/`end` block:
+
+      iex> opts = %{width: 10, height: 15}
+      iex> with(
+      ...>   {:ok, width} <- Map.fetch(opts, :width),
+      ...>   {:ok, height} <- Map.fetch(opts, :height)
+      ...> ) do
+      ...>   {:ok, width * height}
+      ...> end
+      {:ok, 150}
+
+  The choice between parens and no parens is a matter of preference.
 
   An `else` option can be given to modify what is being returned from
   `with` in the case of a failed match:
@@ -1683,7 +1725,9 @@ defmodule Kernel.SpecialForms do
   pattern matching (similar to the `case` special form).
 
   Note that calls inside `try/1` are not tail recursive since the VM
-  needs to keep the stacktrace in case an exception happens.
+  needs to keep the stacktrace in case an exception happens. To
+  retrieve the stacktrace, access `__STACKTRACE__/0` inside the `rescue`
+  or `catch` clause.
 
   ## `rescue` clauses
 
@@ -1953,10 +1997,10 @@ defmodule Kernel.SpecialForms do
   ## Examples
 
       receive do
-        {:selector, i, value} when is_integer(i) ->
-          value
-        value when is_atom(value) ->
-          value
+        {:selector, number, name} when is_integer(number) ->
+          name
+        name when is_atom(name) ->
+          name
         _ ->
           IO.puts :stderr, "Unexpected message received"
       end
@@ -1965,10 +2009,10 @@ defmodule Kernel.SpecialForms do
   received after the given timeout period, specified in milliseconds:
 
       receive do
-        {:selector, i, value} when is_integer(i) ->
-          value
-        value when is_atom(value) ->
-          value
+        {:selector, number, name} when is_integer(number) ->
+          name
+        name when is_atom(name) ->
+          name
         _ ->
           IO.puts :stderr, "Unexpected message received"
       after
@@ -1981,13 +2025,13 @@ defmodule Kernel.SpecialForms do
   one of the allowed values:
 
     * `:infinity` - the process should wait indefinitely for a matching
-      message, this is the same as not using a timeout
+      message, this is the same as not using the after clause
 
     * `0` - if there is no matching message in the mailbox, the timeout
       will occur immediately
 
-    * positive integer smaller than `4_294_967_295` (`0xFFFFFFFF`
-      in hex notation) - it should be possible to represent the timeout
+    * positive integer smaller than or equal to `4_294_967_295` (`0xFFFFFFFF`
+      in hexadecimal notation) - it should be possible to represent the timeout
       value as an unsigned 32-bit integer.
 
   ## Variables handling

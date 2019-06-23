@@ -133,7 +133,7 @@ defmodule IEx.Evaluator do
 
   defp loop_state(server, history, opts) do
     env = opts[:env] || :elixir.env_for_eval(file: "iex")
-    env = %{env | match_vars: :apply}
+    env = %{env | prematch_vars: :apply}
     {_, _, env, scope} = :elixir.eval('import IEx.Helpers', [], env)
     stacktrace = opts[:stacktrace]
 
@@ -182,9 +182,8 @@ defmodule IEx.Evaluator do
       %{state | binding: binding, env: :elixir.env_for_eval(env, file: "iex", line: 1)}
     catch
       kind, error ->
-        stacktrace = System.stacktrace()
         io_result("Error while evaluating: #{path}")
-        print_error(kind, error, stacktrace)
+        print_error(kind, error, __STACKTRACE__)
         System.halt(1)
     end
   end
@@ -208,7 +207,7 @@ defmodule IEx.Evaluator do
       do_eval(String.to_charlist(code), iex_state, state)
     catch
       kind, error ->
-        print_error(kind, error, System.stacktrace())
+        print_error(kind, error, __STACKTRACE__)
         {%{iex_state | cache: ''}, state}
     end
   end
@@ -269,9 +268,9 @@ defmodule IEx.Evaluator do
     :elixir_errors.parse_error(line, "iex", error, token)
   end
 
-  defp update_history(state, counter, cache, result) do
+  defp update_history(state, counter, _cache, result) do
     history_size = IEx.Config.history_size()
-    update_in(state.history, &IEx.History.append(&1, {counter, cache, result}, history_size))
+    update_in(state.history, &IEx.History.append(&1, {counter, result}, history_size))
   end
 
   defp io_inspect(result) do

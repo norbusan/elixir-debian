@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Deps do
   use Mix.Task
 
-  import Mix.Dep, only: [loaded: 1, format_dep: 1, format_status: 1, check_lock: 1]
+  import Mix.Dep, only: [load_on_environment: 1, format_dep: 1, format_status: 1, check_lock: 1]
 
   @shortdoc "Lists dependencies and their status"
 
@@ -93,19 +93,32 @@ defmodule Mix.Tasks.Deps do
       and override it by setting the `:override` option in a top-level project.
 
     * `:runtime` - whether the dependency is part of runtime applications.
-      Defaults to `true` which automatically adds the application to the list
-      of apps that are started automatically and included in releases
+      If the `:applications` key is not provided in `def application` in your
+      mix.exs file, Mix will automatically included all dependencies as a runtime
+      application, except if `runtime: false` is given. Defaults to true.
+
+    * `:system_env` - an enumerable of key-value tuples of binaries to be set
+      as environment variables when loading or compiling the dependency
 
   ### Git options (`:git`)
 
-    * `:git`        - the Git repository URI
-    * `:github`     - a shortcut for specifying Git repos from GitHub, uses `git:`
-    * `:ref`        - the reference to checkout (may be a branch, a commit SHA or a tag)
-    * `:branch`     - the Git branch to checkout
-    * `:tag`        - the Git tag to checkout
+    * `:git` - the Git repository URI
+    * `:github` - a shortcut for specifying Git repos from GitHub, uses `git:`
+    * `:ref` - the reference to checkout (may be a branch, a commit SHA or a tag)
+    * `:branch` - the Git branch to checkout
+    * `:tag` - the Git tag to checkout
     * `:submodules` - when `true`, initialize submodules for the repo
-    * `:sparse`     - checkout a single directory inside the Git repository and use it
+    * `:sparse` - checkout a single directory inside the Git repository and use it
       as your Mix dependency. Search "sparse git checkouts" for more information.
+
+  If your Git repository requires authentication, such as basic username:password
+  HTTP authentication via URLs, it can be achieved via Git configuration, keeping
+  the access rules outside of source control.
+
+      git config --global url."https://YOUR_USER:YOUR_PASS@example.com/".insteadOf "https://example.com/"
+
+  For more information, see the `git config` documentation:
+  https://git-scm.com/docs/git-config#git-config-urlltbasegtinsteadOf
 
   ### Path options (`:path`)
 
@@ -133,12 +146,12 @@ defmodule Mix.Tasks.Deps do
   @spec run(OptionParser.argv()) :: :ok
   def run(args) do
     Mix.Project.get!()
-    {opts, _, _} = OptionParser.parse(args)
+    {opts, _, _} = OptionParser.parse(args, switches: [all: :boolean])
     loaded_opts = if opts[:all], do: [], else: [env: Mix.env()]
 
     shell = Mix.shell()
 
-    Enum.each(loaded(loaded_opts), fn dep ->
+    Enum.each(load_on_environment(loaded_opts), fn dep ->
       %Mix.Dep{scm: scm, manager: manager} = dep
       dep = check_lock(dep)
       extra = if manager, do: " (#{manager})", else: ""

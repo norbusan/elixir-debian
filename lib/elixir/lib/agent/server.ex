@@ -23,16 +23,8 @@ defmodule Agent.Server do
     {:reply, :ok, run(fun, [state])}
   end
 
-  def handle_call(msg, from, state) do
-    super(msg, from, state)
-  end
-
   def handle_cast({:cast, fun}, state) do
     {:noreply, run(fun, [state])}
-  end
-
-  def handle_cast(msg, state) do
-    super(msg, state)
   end
 
   def code_change(_old, state, fun) do
@@ -45,8 +37,8 @@ defmodule Agent.Server do
   end
 
   defp get_initial_call(fun) when is_function(fun, 0) do
-    {:module, module} = :erlang.fun_info(fun, :module)
-    {:name, name} = :erlang.fun_info(fun, :name)
+    {:module, module} = Function.info(fun, :module)
+    {:name, name} = Function.info(fun, :name)
     {module, name, 0}
   end
 

@@ -107,7 +107,6 @@ defmodule Mix.Project do
   @doc false
   def push(atom, file \\ nil, app \\ nil) when is_atom(atom) do
     file = file || (atom && List.to_string(atom.__info__(:compile)[:source]))
-
     config = Keyword.merge([app: app] ++ default_config(), get_project_config(atom))
 
     case Mix.ProjectStack.push(atom, config, file) do
@@ -208,25 +207,22 @@ defmodule Mix.Project do
   """
   @spec config_files() :: [Path.t()]
   def config_files do
-    manifest = Mix.Dep.Lock.manifest()
+    [Mix.Dep.Lock.manifest() | Mix.ProjectStack.config_files()]
+  end
 
-    configs =
-      case Mix.ProjectStack.peek() do
-        %{config: config, file: file} ->
-          configs =
-            config[:config_path]
-            |> Path.dirname()
-            |> Path.join("**/*.*")
-            |> Path.wildcard()
-            |> Enum.reject(&String.starts_with?(Path.basename(&1), "."))
+  @doc """
+  Returns the latest modification time from config files.
 
-          [file | configs]
-
-        _ ->
-          []
-      end
-
-    [manifest] ++ configs
+  This function is usually used in compilation tasks to trigger
+  a full recompilation whenever such configuration files change.
+  For this reason, the mtime is cached to avoid file system lookups.
+  """
+  @doc since: "1.7.0"
+  @spec config_mtime() :: posix_mtime when posix_mtime: integer()
+  def config_mtime do
+    Mix.Dep.Lock.manifest()
+    |> Mix.Utils.last_modified()
+    |> max(Mix.ProjectStack.config_mtime())
   end
 
   @doc """
@@ -258,6 +254,7 @@ defmodule Mix.Project do
       #=> %{my_app1: "apps/my_app1", my_app2: "apps/my_app2"}
 
   """
+  @doc since: "1.4.0"
   @spec apps_paths() :: %{optional(atom) => Path.t()} | nil
   def apps_paths(config \\ config()) do
     if apps_path = config[:apps_path] do
@@ -328,23 +325,23 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.in_project :my_app, "/path/to/my_app", fn module ->
-        "Mixfile is: #{inspect module}"
-      end
-      #=> "Mixfile is: MyApp.MixProject"
+      Mix.Project.in_project(:my_app, "/path/to/my_app", fn module ->
+        "Mix project is: #{inspect module}"
+      end)
+      #=> "Mix project is: MyApp.MixProject"
 
   """
   @spec in_project(atom, Path.t(), keyword, (module -> result)) :: result when result: term
   def in_project(app, path, post_config \\ [], fun)
 
-  def in_project(app, ".", post_config, fun) do
+  def in_project(app, ".", post_config, fun) when is_atom(app) do
     cached =
       try do
         load_project(app, post_config)
       rescue
         any ->
           Mix.shell().error("Error while loading project #{inspect(app)} at #{File.cwd!()}")
-          reraise any, System.stacktrace()
+          reraise any, __STACKTRACE__
       end
 
     try do
@@ -354,7 +351,7 @@ defmodule Mix.Project do
     end
   end
 
-  def in_project(app, path, post_config, fun) do
+  def in_project(app, path, post_config, fun) when is_atom(app) do
     File.cd!(path, fn ->
       in_project(app, ".", post_config, fun)
     end)
@@ -369,7 +366,7 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.deps_path
+      Mix.Project.deps_path()
       #=> "/path/to/project/deps"
 
   """
@@ -383,7 +380,7 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.deps_paths
+      Mix.Project.deps_paths()
       #=> %{foo: "deps/foo", bar: "custom/path/dep"}
 
   """
@@ -395,6 +392,18 @@ defmodule Mix.Project do
   end
 
   @doc """
+  Clears the dependency for the current environment.
+
+  Useful when dependencies need to be reloaded due to change of global state.
+  """
+  @doc since: "1.7.0"
+  @spec clear_deps_cache() :: :ok
+  def clear_deps_cache() do
+    Mix.Dep.clear_cached()
+    :ok
+  end
+
+  @doc """
   Returns the build path for the given project.
 
   If no configuration is given, the one for the current project is used.
@@ -403,21 +412,21 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.build_path
+      Mix.Project.build_path()
       #=> "/path/to/project/_build/shared"
 
   If `:build_per_environment` is set to `true`, it will create a new build per
   environment:
 
-      Mix.env
+      Mix.env()
       #=> :dev
-      Mix.Project.build_path
+      Mix.Project.build_path()
       #=> "/path/to/project/_build/dev"
 
   """
   @spec build_path(keyword) :: Path.t()
   def build_path(config \\ config()) do
-    config[:env_path] || env_path(config)
+    System.get_env("MIX_BUILD_PATH") || config[:env_path] || env_path(config)
   end
 
   defp env_path(config) do
@@ -447,7 +456,7 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.manifest_path
+      Mix.Project.manifest_path()
       #=> "/path/to/project/_build/shared/lib/app/.mix"
 
   """
@@ -471,7 +480,7 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.app_path
+      Mix.Project.app_path()
       #=> "/path/to/project/_build/shared/lib/app"
 
   """
@@ -503,7 +512,7 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.compile_path
+      Mix.Project.compile_path()
       #=> "/path/to/project/_build/dev/lib/app/ebin"
 
   """
@@ -519,12 +528,12 @@ defmodule Mix.Project do
 
   ## Examples
 
-      Mix.Project.consolidation_path
+      Mix.Project.consolidation_path()
       #=> "/path/to/project/_build/dev/lib/my_app/consolidated"
 
   Inside umbrellas:
 
-      Mix.Project.consolidation_path
+      Mix.Project.consolidation_path()
       #=> "/path/to/project/_build/dev/consolidated"
 
   """
@@ -632,7 +641,7 @@ defmodule Mix.Project do
         if File.regular?(file) do
           try do
             Code.compiler_options(relative_paths: false)
-            _ = Code.load_file(file)
+            _ = Code.compile_file(file)
             get()
           else
             ^old_proj -> Mix.raise("Could not find a Mix project at #{file}")

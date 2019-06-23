@@ -8,7 +8,7 @@ defmodule DateTime do
   well as the zone abbreviation field used exclusively
   for formatting purposes.
 
-  Remember, comparisons in Elixir using `==`, `>`, `<` and friends
+  Remember, comparisons in Elixir using `==/2`, `>/2`, `</2` and friends
   are structural and based on the DateTime struct fields. For proper
   comparison between datetimes, use the `compare/2` function.
 
@@ -17,7 +17,7 @@ defmodule DateTime do
   Such functions expect `t:Calendar.datetime/0` in their typespecs
   (instead of `t:t/0`).
 
-  Developers should avoid creating the DateTime struct directly
+  Developers should avoid creating the `DateTime` struct directly
   and instead rely on the functions provided by this module as
   well as the ones in 3rd party calendar libraries.
 
@@ -25,12 +25,12 @@ defmodule DateTime do
 
   You will notice this module only contains conversion
   functions as well as functions that work on UTC. This
-  is because a proper DateTime implementation requires a
-  TimeZone database which currently is not provided as part
+  is because a proper `DateTime` implementation requires a
+  time zone database which currently is not provided as part
   of Elixir.
 
   Such may be addressed in upcoming versions, meanwhile,
-  use 3rd party packages to provide DateTime building and
+  use 3rd party packages to provide `DateTime` building and
   similar functionality with time zone backing.
   """
 
@@ -96,17 +96,17 @@ defmodule DateTime do
 
   ## Examples
 
-      iex> {:ok, datetime} = DateTime.from_unix(1464096368)
+      iex> {:ok, datetime} = DateTime.from_unix(1_464_096_368)
       iex> datetime
       #DateTime<2016-05-24 13:26:08Z>
 
-      iex> {:ok, datetime} = DateTime.from_unix(1432560368868569, :microsecond)
+      iex> {:ok, datetime} = DateTime.from_unix(1_432_560_368_868_569, :microsecond)
       iex> datetime
       #DateTime<2015-05-25 13:26:08.868569Z>
 
   The unit can also be an integer as in `t:System.time_unit/0`:
 
-      iex> {:ok, datetime} = DateTime.from_unix(143256036886856, 1024)
+      iex> {:ok, datetime} = DateTime.from_unix(143_256_036_886_856, 1024)
       iex> datetime
       #DateTime<6403-03-17 07:05:22.320Z>
 
@@ -155,10 +155,10 @@ defmodule DateTime do
       iex> DateTime.from_unix!(0)
       #DateTime<1970-01-01 00:00:00Z>
 
-      iex> DateTime.from_unix!(1464096368)
+      iex> DateTime.from_unix!(1_464_096_368)
       #DateTime<2016-05-24 13:26:08Z>
 
-      iex> DateTime.from_unix!(1432560368868569, :microsecond)
+      iex> DateTime.from_unix!(1_432_560_368_868_569, :microsecond)
       #DateTime<2015-05-25 13:26:08.868569Z>
 
   """
@@ -186,6 +186,7 @@ defmodule DateTime do
       #DateTime<2016-05-24 13:26:08.003Z>
 
   """
+  @doc since: "1.4.0"
   @spec from_naive(NaiveDateTime.t(), Calendar.time_zone()) :: {:ok, t}
   def from_naive(naive_datetime, time_zone)
 
@@ -231,6 +232,7 @@ defmodule DateTime do
       #DateTime<2016-05-24 13:26:08.003Z>
 
   """
+  @doc since: "1.4.0"
   @spec from_naive!(NaiveDateTime.t(), Calendar.time_zone()) :: t
   def from_naive!(naive_datetime, time_zone) do
     case from_naive(naive_datetime, time_zone) do
@@ -254,7 +256,7 @@ defmodule DateTime do
 
   ## Examples
 
-      iex> 1464096368 |> DateTime.from_unix!() |> DateTime.to_unix()
+      iex> 1_464_096_368 |> DateTime.from_unix!() |> DateTime.to_unix()
       1464096368
 
       iex> dt = %DateTime{calendar: Calendar.ISO, day: 20, hour: 18, microsecond: {273806, 6},
@@ -414,12 +416,8 @@ defmodule DateTime do
   @spec to_iso8601(Calendar.datetime(), :extended | :basic) :: String.t()
   def to_iso8601(datetime, format \\ :extended)
 
-  def to_iso8601(_, format) when format not in [:extended, :basic] do
-    raise ArgumentError,
-          "DateTime.to_iso8601/2 expects format to be :extended or :basic, got: #{inspect(format)}"
-  end
-
-  def to_iso8601(%{calendar: Calendar.ISO} = datetime, format) do
+  def to_iso8601(%{calendar: Calendar.ISO} = datetime, format)
+      when format in [:extended, :basic] do
     %{
       year: year,
       month: month,
@@ -450,7 +448,7 @@ defmodule DateTime do
     )
   end
 
-  def to_iso8601(%{calendar: _} = datetime, format) do
+  def to_iso8601(%{calendar: _} = datetime, format) when format in [:extended, :basic] do
     datetime
     |> convert!(Calendar.ISO)
     |> to_iso8601(format)
@@ -487,6 +485,14 @@ defmodule DateTime do
       iex> datetime
       #DateTime<2015-01-23 21:20:07.123Z>
 
+      iex> {:ok, datetime, 0} = DateTime.from_iso8601("-2015-01-23T23:50:07Z")
+      iex> datetime
+      #DateTime<-2015-01-23 23:50:07Z>
+
+      iex> {:ok, datetime, 9000} = DateTime.from_iso8601("-2015-01-23T23:50:07,123+02:30")
+      iex> datetime
+      #DateTime<-2015-01-23 21:20:07.123Z>
+
       iex> DateTime.from_iso8601("2015-01-23P23:50:07")
       {:error, :invalid_format}
       iex> DateTime.from_iso8601("2015-01-23 23:50:07A")
@@ -504,50 +510,79 @@ defmodule DateTime do
       {:error, :invalid_format}
 
   """
+  @doc since: "1.4.0"
   @spec from_iso8601(String.t(), Calendar.calendar()) ::
           {:ok, t, Calendar.utc_offset()} | {:error, atom}
-  def from_iso8601(string, calendar \\ Calendar.ISO) when is_binary(string) do
-    with <<year::4-bytes, ?-, month::2-bytes, ?-, day::2-bytes, sep, rest::binary>> <- string,
-         true <- sep in [?\s, ?T],
-         <<hour::2-bytes, ?:, min::2-bytes, ?:, sec::2-bytes, rest::binary>> <- rest,
-         {year, ""} <- Integer.parse(year),
-         {month, ""} <- Integer.parse(month),
-         {day, ""} <- Integer.parse(day),
-         {hour, ""} <- Integer.parse(hour),
-         {minute, ""} <- Integer.parse(min),
-         {second, ""} <- Integer.parse(sec),
-         {microsecond, rest} <- Calendar.ISO.parse_microsecond(rest),
-         {:ok, date} <- Date.new(year, month, day),
-         {:ok, time} <- Time.new(hour, minute, second, microsecond),
-         {:ok, offset} <- parse_offset(rest) do
-      %{year: year, month: month, day: day} = date
-      %{hour: hour, minute: minute, second: second, microsecond: microsecond} = time
-      {_, precision} = microsecond
+  def from_iso8601(string, calendar \\ Calendar.ISO)
 
-      datetime =
-        Calendar.ISO.naive_datetime_to_iso_days(
-          year,
-          month,
-          day,
-          hour,
-          minute,
-          second,
-          microsecond
-        )
-        |> apply_tz_offset(offset)
-        |> from_iso_days("Etc/UTC", "UTC", 0, 0, calendar, precision)
-
-      {:ok, %{datetime | microsecond: microsecond}, offset}
-    else
-      {:error, reason} -> {:error, reason}
-      _ -> {:error, :invalid_format}
-    end
+  def from_iso8601(<<?-, rest::binary>>, calendar) do
+    raw_from_iso8601(rest, calendar, true)
   end
 
-  defp parse_offset(rest) do
-    case Calendar.ISO.parse_offset(rest) do
-      {offset, ""} when is_integer(offset) -> {:ok, offset}
-      {nil, ""} -> {:error, :missing_offset}
+  def from_iso8601(<<rest::binary>>, calendar) do
+    raw_from_iso8601(rest, calendar, false)
+  end
+
+  @sep [?\s, ?T]
+  [match_date, guard_date, read_date] = Calendar.ISO.__match_date__()
+  [match_time, guard_time, read_time] = Calendar.ISO.__match_time__()
+
+  defp raw_from_iso8601(string, calendar, is_negative_datetime) do
+    with <<unquote(match_date), sep, unquote(match_time), rest::binary>> <- string,
+         true <- unquote(guard_date) and sep in @sep and unquote(guard_time),
+         {microsecond, rest} <- Calendar.ISO.parse_microsecond(rest),
+         {offset, ""} <- Calendar.ISO.parse_offset(rest) do
+      {year, month, day} = unquote(read_date)
+      {hour, minute, second} = unquote(read_time)
+      year = if is_negative_datetime, do: -year, else: year
+
+      cond do
+        not calendar.valid_date?(year, month, day) ->
+          {:error, :invalid_date}
+
+        not calendar.valid_time?(hour, minute, second, microsecond) ->
+          {:error, :invalid_time}
+
+        offset == 0 ->
+          datetime = %DateTime{
+            calendar: calendar,
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second,
+            microsecond: microsecond,
+            std_offset: 0,
+            utc_offset: 0,
+            zone_abbr: "UTC",
+            time_zone: "Etc/UTC"
+          }
+
+          {:ok, datetime, 0}
+
+        is_nil(offset) ->
+          {:error, :missing_offset}
+
+        true ->
+          {_, precision} = microsecond
+
+          datetime =
+            Calendar.ISO.naive_datetime_to_iso_days(
+              year,
+              month,
+              day,
+              hour,
+              minute,
+              second,
+              microsecond
+            )
+            |> apply_tz_offset(offset)
+            |> from_iso_days("Etc/UTC", "UTC", 0, 0, calendar, precision)
+
+          {:ok, %{datetime | microsecond: microsecond}, offset}
+      end
+    else
       _ -> {:error, :invalid_format}
     end
   end
@@ -574,6 +609,12 @@ defmodule DateTime do
       ...>                utc_offset: -14400, std_offset: 0, time_zone: "America/Manaus"}
       iex> DateTime.to_string(dt)
       "2000-02-29 23:00:07-04:00 AMT America/Manaus"
+
+      iex> dt = %DateTime{year: -100, month: 12, day: 19, zone_abbr: "CET",
+      ...>                hour: 3, minute: 20, second: 31, microsecond: {0, 0},
+      ...>                utc_offset: 3600, std_offset: 0, time_zone: "Europe/Stockholm"}
+      iex> DateTime.to_string(dt)
+      "-0100-12-19 03:20:31+01:00 CET Europe/Stockholm"
 
   """
   @spec to_string(Calendar.datetime()) :: String.t()
@@ -629,6 +670,7 @@ defmodule DateTime do
       :gt
 
   """
+  @doc since: "1.4.0"
   @spec compare(Calendar.datetime(), Calendar.datetime()) :: :lt | :eq | :gt
   def compare(
         %{calendar: _, utc_offset: utc_offset1, std_offset: std_offset1} = datetime1,
@@ -660,6 +702,8 @@ defmodule DateTime do
 
   The answer can be returned in any `unit` available from `t:System.time_unit/0`.
 
+  Leap seconds are not taken into account.
+
   This function returns the difference in seconds where seconds are measured
   according to `Calendar.ISO`.
 
@@ -677,6 +721,7 @@ defmodule DateTime do
       -18000
 
   """
+  @doc since: "1.5.0"
   @spec diff(Calendar.datetime(), Calendar.datetime()) :: integer()
   def diff(
         %{utc_offset: utc_offset1, std_offset: std_offset1} = datetime1,
@@ -716,6 +761,7 @@ defmodule DateTime do
       #DateTime<2017-11-07 11:45:18+01:00 CET Europe/Paris>
 
   """
+  @doc since: "1.6.0"
   @spec truncate(t(), :microsecond | :millisecond | :second) :: t()
   def truncate(%DateTime{microsecond: microsecond} = datetime, precision) do
     %{datetime | microsecond: Calendar.truncate(microsecond, precision)}
@@ -744,6 +790,7 @@ defmodule DateTime do
                       zone_abbr: "AMT"}}
 
   """
+  @doc since: "1.5.0"
   @spec convert(Calendar.datetime(), Calendar.calendar()) ::
           {:ok, t} | {:error, :incompatible_calendars}
 
@@ -818,6 +865,7 @@ defmodule DateTime do
                 zone_abbr: "AMT"}
 
   """
+  @doc since: "1.5.0"
   @spec convert!(Calendar.datetime(), Calendar.calendar()) :: t | no_return
   def convert!(datetime, calendar) do
     case convert(datetime, calendar) do

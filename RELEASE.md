@@ -1,37 +1,41 @@
 # Release process
 
-## All releases
-
-This document simply outlines the release process:
+## Shipping a new version
 
 1. Ensure you are running on the oldest supported Erlang version
 
-2. Remove all `-dev` extension from versions (see below for all files)
+2. Update version in /VERSION
 
-3. Ensure CHANGELOG is updated and add current date
+3. Ensure /CHANGELOG.md is updated, versioned and add the current date
 
-4. Update "Compatibility and Deprecations" if a new OTP version is supported. If a new `vMAJOR.MINOR`, replace "master" with "vVERSION" in the "Deprecations" section
+4. Update "Compatibility and Deprecations" if a new OTP version is supported
 
-5. If a new `vMAJOR.MINOR`, create a new branch "vMAJOR.MINOR" and set `CANONICAL=` in Makefile
+5. Commit changes above with title "Release vVERSION" and generate a new tag
 
-6. Add an entry for the new version to the OTP compatibility table in the "Compatibility and Deprecations" page
+6. Run `make clean test` to ensure all tests pass from scratch and the CI is green
 
-7. Commit changes above with title "Release vVERSION" and generate new tag
+7. Recompile an existing project (for example, Ecto) to ensure manifests can be upgraded
 
-8. Run `make clean test` to ensure all tests pass from scratch and the CI is green
+8. Push branch and the new tag
 
-9. Recompile an existing project (for example, Ecto) to ensure manifests can be upgraded
+9. Publish new zips with `make zips`, upload `Precompiled.zip` and `Docs.zip` to GitHub Releases, and include SHAs+CHANGELOG
 
-10. Push branch and the new tag
+10. Add the release to `elixir.csv` and `_data/elixir-versions.yml` files in `elixir-lang/elixir-lang.github.com`
 
-11. Publish new zips with `make zips`, upload `Precompiled.zip` and `Docs.zip` to GitHub Releases
+## Creating a new vMAJOR.MINOR branch
 
-12. Add the release to `elixir.csv` and `_data/elixir-versions.yml` files in `elixir-lang/elixir-lang.github.com`
+### In the new branch
 
-13. After a new `vMAJOR.MINOR`, move back to master, bump versions, start new CHANGELOG, add `-dev` back and commit "Start vMAJOR.MINOR+1"
+1. Set `CANONICAL=` in /Makefile
 
-## Places where version is mentioned
+2. Update **all** tables in "Compatibility and Deprecations"
 
-* VERSION
-* CHANGELOG.md
-* lib/elixir/src/elixir.app.src
+3. Commit "Prepare vMAJOR.MINOR for release"
+
+### Back in master
+
+1. Bump /VERSION file
+
+2. Start new /CHANGELOG.md
+
+3. Commit "Start vMAJOR.MINOR+1"

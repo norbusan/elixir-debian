@@ -13,15 +13,18 @@ defmodule Mix.Tasks.Compile.App do
   In order to generate the `.app` file, Mix expects your project
   to have both `:app` and `:version` keys. Furthermore, you can
   configure the generated application by defining an `application/0`
-  function in your `mix.exs` with the following options.
+  function in your `mix.exs` that returns a keyword list.
 
-  The most commonly used options are:
+  The most commonly used keys are:
 
-    * `:extra_applications` - a list of Erlang/Elixir applications
-      that you want started before your application. For example,
-      Elixir's `:logger` or Erlang's `:crypto`. Mix guarantees
-      that any application given here and all of your runtime
-      dependencies are started before your application starts.
+    * `:extra_applications` - a list of OTP applications
+      your application depends on which are not included in `:deps`
+      (usually defined in `deps/0` in your `mix.exs`). For example,
+      here you can declare a dependency on applications that ship with
+      Erlang/OTP or Elixir, like `:crypto` or `:logger`, but anything in
+      the code path works. Mix guarantees that these applications and
+      the rest of your runtime dependencies are started before your
+      application starts.
 
     * `:registered` - the name of all registered processes in the
       application. If your application defines a local GenServer
@@ -29,7 +32,7 @@ defmodule Mix.Tasks.Compile.App do
       to this list. It is most useful in detecting conflicts
       between applications that register the same names.
 
-    * `:env` - default values for the application environment.
+    * `:env` - the default values for the application environment.
       The application environment is one of the most common ways
       to configure applications. See the `Application` module for
       mechanisms to read and write to the application environment.
@@ -66,6 +69,12 @@ defmodule Mix.Tasks.Compile.App do
       applications, as only the primary application will be started. A process
       in an included application considers itself belonging to the
       primary application.
+
+    * `:maxT` - specifies the maximum time the application is allowed to run, in
+      milliseconds. Applications are stopped if `:maxT` is reached, and their
+      top-level supervisor terminated with reason `:normal`. This threshold is
+      technically valid in any resource file, but it is only effective for
+      applications with a callback module. Defaults to `:infinity`.
 
   Besides the options above, `.app` files also expect other options like
   `:modules` and `:vsn`, but these are automatically added by Mix.
@@ -120,9 +129,9 @@ defmodule Mix.Tasks.Compile.App do
     mods = modules_from(Path.wildcard("#{path}/*.beam")) |> Enum.sort()
 
     target = Path.join(path, "#{app}.app")
-    sources = Mix.Project.config_files()
+    source = Mix.Project.config_mtime()
 
-    if opts[:force] || Mix.Utils.stale?(sources, [target]) || modules_changed?(mods, target) do
+    if opts[:force] || Mix.Utils.stale?([source], [target]) || modules_changed?(mods, target) do
       best_guess = [
         description: to_charlist(config[:description] || app),
         modules: mods,
@@ -192,19 +201,17 @@ defmodule Mix.Tasks.Compile.App do
     Enum.map(beams, &(&1 |> Path.basename() |> Path.rootname(".beam") |> String.to_atom()))
   end
 
-  defp language_app(config) do
-    case Keyword.fetch(config, :language) do
-      {:ok, :elixir} -> [:elixir]
-      {:ok, :erlang} -> []
-      :error -> [:elixir]
-    end
-  end
-
   defp ensure_correct_properties(properties, config) do
-    properties
-    |> validate_properties!
-    |> Keyword.put_new_lazy(:applications, fn -> apps_from_prod_non_optional_deps(properties) end)
-    |> Keyword.update!(:applications, fn apps -> normalize_apps(apps, properties, config) end)
+    validate_properties!(properties)
+    {extra, properties} = Keyword.pop(properties, :extra_applications, [])
+
+    apps =
+      properties
+      |> Keyword.get(:applications)
+      |> Kernel.||(apps_from_prod_non_optional_deps(properties, config))
+      |> normalize_apps(extra, config)
+
+    Keyword.put(properties, :applications, apps)
   end
 
   defp validate_properties!(properties) do
@@ -304,23 +311,43 @@ defmodule Mix.Tasks.Compile.App do
       _ ->
         :ok
     end)
-
-    properties
   end
 
-  defp apps_from_prod_non_optional_deps(properties) do
+  defp apps_from_prod_non_optional_deps(properties, config) do
     included_applications = Keyword.get(properties, :included_applications, [])
+    non_runtime_deps = non_runtime_deps(config)
 
     for %{app: app, opts: opts, top_level: true} <- Mix.Dep.cached(),
-        Keyword.get(opts, :app, true),
-        Keyword.get(opts, :runtime, true),
         not Keyword.get(opts, :optional, false),
+        not Map.has_key?(non_runtime_deps, app),
         app not in included_applications,
         do: app
   end
 
-  defp normalize_apps(apps, properties, config) do
-    extra = Keyword.get(properties, :extra_applications, [])
+  defp non_runtime_deps(config) do
+    for config_dep <- Keyword.get(config, :deps, []),
+        not runtime_dep?(config_dep),
+        do: {elem(config_dep, 0), true},
+        into: %{}
+  end
+
+  defp runtime_dep?({_app, opts}) when is_list(opts), do: runtime_opts?(opts)
+  defp runtime_dep?({_app, _req, opts}) when is_list(opts), do: runtime_opts?(opts)
+  defp runtime_dep?(_), do: true
+
+  defp runtime_opts?(opts) do
+    Keyword.get(opts, :runtime, true) and Keyword.get(opts, :app, true)
+  end
+
+  defp normalize_apps(apps, extra, config) do
     Enum.uniq([:kernel, :stdlib] ++ language_app(config) ++ extra ++ apps)
+  end
+
+  defp language_app(config) do
+    case Keyword.fetch(config, :language) do
+      {:ok, :elixir} -> [:elixir]
+      {:ok, :erlang} -> []
+      :error -> [:elixir]
+    end
   end
 end

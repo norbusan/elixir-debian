@@ -16,7 +16,9 @@ defmodule Float do
 
   There are some very well known problems with floating-point numbers
   and arithmetics due to the fact most decimal fractions cannot be
-  represented by a floating-point binary.
+  represented by a floating-point binary and most operations are not exact,
+  but operate on approximations. Those issues are not specific
+  to Elixir, they are a property of floating point representation itself.
 
   For example, the numbers 0.1 and 0.01 are two of them, what means the result
   of squaring 0.1 does not give 0.01 neither the closest representable. Here is
@@ -30,6 +32,12 @@ defmodule Float do
 
   There are also other known problems like flooring or rounding numbers. See
   `round/2` and `floor/2` for more details about them.
+
+  To learn more about floating-point arithmetic visit:
+
+    * [0.30000000000000004.com](http://0.30000000000000004.com/)
+    * [What Every Programmer Should Know About Floating-Point Arithmetic](http://floating-point-gui.de/)
+
   """
 
   import Bitwise
@@ -379,6 +387,8 @@ defmodule Float do
       {-16, 1}
 
   """
+  @doc since: "1.4.0"
+  @spec ratio(float) :: {pos_integer | neg_integer, pos_integer}
   def ratio(float) when is_float(float) do
     <<sign::1, exp::11, significant::52-bitstring>> = <<float::float>>
     {num, _, den} = decompose(significant)
@@ -463,21 +473,21 @@ defmodule Float do
     IO.iodata_to_binary(:io_lib_format.fwrite_g(float))
   end
 
-  # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
   @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use Float.to_charlist/1 instead"
   def to_char_list(float), do: Float.to_charlist(float)
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use :erlang.float_to_list/2 instead"
   def to_char_list(float, options) do
     :erlang.float_to_list(float, expand_compact(options))
   end
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use :erlang.float_to_binary/2 instead"
   def to_string(float, options) do
     :erlang.float_to_binary(float, expand_compact(options))
   end

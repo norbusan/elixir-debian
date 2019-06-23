@@ -4,7 +4,6 @@ defmodule CodeTest do
   use ExUnit.Case, async: true
 
   doctest Code
-
   import PathHelpers
 
   def genmodule(name) do
@@ -32,7 +31,7 @@ defmodule CodeTest do
       assert {3, _} = Code.eval_string("a + b", [a: 1, b: 2], __ENV__)
     end
 
-    test "can return bindings from a different context" do
+    test "returns bindings from a different context" do
       assert Code.eval_string("var!(a, Sample) = 1") == {1, [{{:a, Sample}, 1}]}
     end
 
@@ -62,7 +61,7 @@ defmodule CodeTest do
         Code.eval_string("<<a::size(b)>>", a: :a, b: :b)
       rescue
         _ ->
-          assert System.stacktrace() |> Enum.any?(&(elem(&1, 0) == __MODULE__))
+          assert Enum.any?(__STACKTRACE__, &(elem(&1, 0) == __MODULE__))
       end
     end
   end
@@ -87,14 +86,21 @@ defmodule CodeTest do
     end
   end
 
+  test "compile_file/1" do
+    assert Code.compile_file(fixture_path("code_sample.exs")) == []
+    refute fixture_path("code_sample.exs") in Code.required_files()
+  end
+
   test "require_file/1" do
-    Code.require_file(fixture_path("code_sample.exs"))
-    assert fixture_path("code_sample.exs") in Code.loaded_files()
+    assert Code.require_file(fixture_path("code_sample.exs")) == []
+    assert fixture_path("code_sample.exs") in Code.required_files()
     assert Code.require_file(fixture_path("code_sample.exs")) == nil
 
-    Code.unload_files([fixture_path("code_sample.exs")])
-    refute fixture_path("code_sample.exs") in Code.loaded_files()
+    Code.unrequire_files([fixture_path("code_sample.exs")])
+    refute fixture_path("code_sample.exs") in Code.required_files()
     assert Code.require_file(fixture_path("code_sample.exs")) != nil
+  after
+    Code.unrequire_files([fixture_path("code_sample.exs")])
   end
 
   describe "string_to_quoted/2" do
@@ -112,6 +118,41 @@ defmodule CodeTest do
       assert string_to_quoted.("foo + bar") == {:ok, {:+, [line: 1, column: 5], [foo, bar]}}
     end
 
+    test "returns an error tuple on hex errors" do
+      assert Code.string_to_quoted(~S["\x"]) ==
+               {:error, {1, "missing hex sequence after \\x, expected \\xHH", "\""}}
+
+      assert Code.string_to_quoted(~S[:"\x"]) ==
+               {:error, {1, "missing hex sequence after \\x, expected \\xHH", ":\""}}
+
+      assert Code.string_to_quoted(~S["\x": 123]) ==
+               {:error, {1, "missing hex sequence after \\x, expected \\xHH", "\""}}
+
+      assert Code.string_to_quoted(~s["""\n\\x\n"""]) ==
+               {:error, {1, "missing hex sequence after \\x, expected \\xHH", "\"\"\""}}
+    end
+
+    test "returns an error tuple on interpolation in calls" do
+      assert Code.string_to_quoted(".\"\#{}\"") ==
+               {:error, {1, "interpolation is not allowed when invoking functions", "\""}}
+
+      assert Code.string_to_quoted(".\"a\#{:b}\"c") ==
+               {:error, {1, "interpolation is not allowed when invoking functions", "\""}}
+    end
+
+    test "returns an error tuple on long atoms" do
+      atom =
+        "@GR{+z]`_XrNla!d<GTZ]iw[s'l2N<5hGD0(.xh&}>0ptDp(amr.oS&<q(FA)5T3=},^{=JnwIOE*DPOslKV KF-kb7NF&Y#Lp3D7l/!s],^hnz1iB |E8~Y'-Rp&*E(O}|zoB#xsE.S/~~'=%H'2HOZu0PCfz6j=eHq5:yk{7&|}zeRONM+KWBCAUKWFw(tv9vkHTu#Ek$&]Q:~>,UbT}v$L|rHHXGV{;W!>avHbD[T-G5xrzR6m?rQPot-37B@"
+
+      assert Code.string_to_quoted(~s[:"#{atom}"]) ==
+               {:error, {1, "atom length must be less than system limit: ", atom}}
+    end
+
+    test "returns an error tuple when no atom is found with :existing_atoms_only" do
+      assert Code.string_to_quoted(":there_is_no_such_atom", existing_atoms_only: true) ==
+               {:error, {1, "unsafe atom does not exist: ", "there_is_no_such_atom"}}
+    end
+
     test "raises on errors when string_to_quoted!/2 is used" do
       assert Code.string_to_quoted!("1 + 2") == {:+, [line: 1], [1, 2]}
 
@@ -121,15 +162,6 @@ defmodule CodeTest do
 
       assert_raise TokenMissingError, fn ->
         Code.string_to_quoted!("1 +")
-      end
-    end
-
-    test "raises when string_to_quoted!/2 is used and no atom is found with :existing_atoms_only" do
-      unknown_atom = ":there_is_no_such_atom"
-      message = "nofile:1: unsafe atom does not exist: there_is_no_such_atom"
-
-      assert_raise SyntaxError, message, fn ->
-        Code.string_to_quoted!(unknown_atom, existing_atoms_only: true)
       end
     end
   end
@@ -273,5 +305,16 @@ defmodule Code.SyncTest do
 
     Code.delete_path(path)
     refute to_charlist(path) in :code.get_path()
+  end
+
+  test "purges compiler modules" do
+    quoted = quote(do: Agent.start_link(fn -> :ok end))
+    Code.compile_quoted(quoted)
+
+    {:ok, claimed} = Code.purge_compiler_modules()
+    assert claimed > 0
+
+    {:ok, claimed} = Code.purge_compiler_modules()
+    assert claimed == 0
   end
 end

@@ -12,7 +12,7 @@ defmodule Task.Supervisor do
         {Task.Supervisor, name: MyApp.TaskSupervisor}
       ]
 
-      Supervisor.start_link(strategy: :one_for_one)
+      Supervisor.start_link(children, strategy: :one_for_one)
 
   The options given in the child specification are documented in `start_link/1`.
 
@@ -31,10 +31,17 @@ defmodule Task.Supervisor do
           | {:shutdown, :supervisor.shutdown()}
 
   @doc false
-  def child_spec(arg) do
+  def child_spec(opts) when is_list(opts) do
+    id =
+      case Keyword.get(opts, :name, Task.Supervisor) do
+        name when is_atom(name) -> name
+        {:global, name} -> name
+        {:via, _module, name} -> name
+      end
+
     %{
-      id: Task.Supervisor,
-      start: {Task.Supervisor, :start_link, [arg]},
+      id: id,
+      start: {Task.Supervisor, :start_link, [opts]},
       type: :supervisor
     }
   end
@@ -219,6 +226,7 @@ defmodule Task.Supervisor do
       Enum.to_list(stream)
 
   """
+  @doc since: "1.4.0"
   @spec async_stream(Supervisor.supervisor(), Enumerable.t(), module, atom, [term], keyword) ::
           Enumerable.t()
   def async_stream(supervisor, enumerable, module, function, args, options \\ [])
@@ -236,6 +244,7 @@ defmodule Task.Supervisor do
 
   See `async_stream/6` for discussion, options, and examples.
   """
+  @doc since: "1.4.0"
   @spec async_stream(Supervisor.supervisor(), Enumerable.t(), (term -> term), keyword) ::
           Enumerable.t()
   def async_stream(supervisor, enumerable, fun, options \\ []) when is_function(fun, 1) do
@@ -252,6 +261,7 @@ defmodule Task.Supervisor do
 
   See `async_stream/6` for discussion, options, and examples.
   """
+  @doc since: "1.4.0"
   @spec async_stream_nolink(
           Supervisor.supervisor(),
           Enumerable.t(),
@@ -275,6 +285,7 @@ defmodule Task.Supervisor do
 
   See `async_stream/6` for discussion and examples.
   """
+  @doc since: "1.4.0"
   @spec async_stream_nolink(Supervisor.supervisor(), Enumerable.t(), (term -> term), keyword) ::
           Enumerable.t()
   def async_stream_nolink(supervisor, enumerable, fun, options \\ []) when is_function(fun, 1) do
@@ -317,7 +328,8 @@ defmodule Task.Supervisor do
       or an integer indicating the timeout value, defaults to 5000 milliseconds.
 
   """
-  @spec start_child(Supervisor.supervisor(), (() -> any)) :: {:ok, pid}
+  @spec start_child(Supervisor.supervisor(), (() -> any), keyword) ::
+          DynamicSupervisor.on_start_child()
   def start_child(supervisor, fun, options \\ []) do
     restart = options[:restart]
     shutdown = options[:shutdown]
@@ -331,7 +343,8 @@ defmodule Task.Supervisor do
   Similar to `start_child/2` except the task is specified
   by the given `module`, `fun` and `args`.
   """
-  @spec start_child(Supervisor.supervisor(), module, atom, [term]) :: {:ok, pid}
+  @spec start_child(Supervisor.supervisor(), module, atom, [term], keyword) ::
+          DynamicSupervisor.on_start_child()
   def start_child(supervisor, module, fun, args, options \\ [])
       when is_atom(fun) and is_list(args) do
     restart = options[:restart]
@@ -341,7 +354,9 @@ defmodule Task.Supervisor do
   end
 
   defp start_child_with_spec(supervisor, args, restart, shutdown) do
-    # TODO: Remove this on Elixir v2.0 and the associated clause in DynamicSupervisor
+    # TODO: This only exists because we need to support reading restart/shutdown
+    # from two different places. Remove this and the associated clause in DynamicSupervisor
+    # on Elixir v2.0
     GenServer.call(supervisor, {:start_task, args, restart, shutdown}, :infinity)
   end
 

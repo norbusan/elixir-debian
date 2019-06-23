@@ -39,7 +39,7 @@ try_test() ->
 
 try_else_test() ->
   {true, _} = eval("try do\n1\nelse 2 -> false\n1 -> true\nrescue\nErlangError -> nil\nend"),
-  {true, _} = eval("try do\n1\nelse {x, y} -> false\nx -> true\nrescue\nErlangError -> nil\nend"),
+  {true, _} = eval("try do\n1\nelse {_x, _y} -> false\n_x -> true\nrescue\nErlangError -> nil\nend"),
   {true, _} = eval("try do\n{1, 2}\nelse {3, 4} -> false\n_ -> true\nrescue\nErlangError -> nil\nend").
 
 % Receive
@@ -53,7 +53,7 @@ receive_test() ->
 
 case_test() ->
   {true, []} = eval("case 1 do\n2 -> false\n1 -> true\nend"),
-  {true, []} = eval("case 1 do\n{x, y} -> false\nx -> true\nend"),
+  {true, []} = eval("case 1 do\n{_x, _y} -> false\n_x -> true\nend"),
   {true, []} = eval("case {1, 2} do; {3, 4} -> false\n_ -> true\nend").
 
 case_with_do_ambiguity_test() ->
@@ -127,11 +127,6 @@ not_test() ->
   {false, _} = eval("not true"),
   {true, _} = eval("not false"),
   ?assertError(badarg, eval("not 1")).
-
-rearrange_not_left_in_right_test() ->
-  %% TODO: Deprecate "not left in right" rearrangement.
-  {true, _} = eval("not false in []"),
-  {false, _} = eval("not true in [true]").
 
 rearrange_left_not_in_right_test() ->
   {true, _} = eval("false not in []"),
@@ -219,6 +214,18 @@ optimized_oror_test() ->
       [{atom, 0, done}]},
     {clause, 1, [{var, 1, Var}], [], [{var, 1, Var}]}]
   } = to_erl("is_list([]) || :done").
+
+optimized_and_test() ->
+  {'case',_, _,
+   [{clause, _, [{atom, 0, false}], [], [{atom, 0, false}]},
+    {clause, _, [{atom, 0, true}], [], [{atom, 0, done}]}]
+  } = to_erl("is_list([]) and :done").
+
+optimized_or_test() ->
+  {'case', _, _,
+    [{clause, _, [{atom, 0, false}], [], [{atom, 0, done}]},
+     {clause, _, [{atom, 0, true}], [], [{atom, 0, true}]}]
+  } = to_erl("is_list([]) or :done").
 
 no_after_in_try_test() ->
   {'try', _, [_], [_], _, []} = to_erl("try do :foo.bar() else _ -> :ok end").

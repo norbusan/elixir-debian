@@ -1,9 +1,12 @@
 defmodule Mix.Tasks.Test do
   defmodule Cover do
+    @default_threshold 90
+
     @moduledoc false
 
     def start(compile_path, opts) do
       Mix.shell().info("Cover compiling modules ...")
+      _ = :cover.stop()
       _ = :cover.start()
 
       case :cover.compile_beam_directory(compile_path |> to_charlist) do
@@ -14,17 +17,110 @@ defmodule Mix.Tasks.Test do
           Mix.raise("Failed to cover compile directory: " <> compile_path)
       end
 
-      output = opts[:output]
-
       fn ->
-        Mix.shell().info("\nGenerating cover results ...")
-        File.mkdir_p!(output)
+        Mix.shell().info("\nGenerating cover results ...\n")
+        {:result, ok, _fail} = :cover.analyse(:coverage, :line)
 
-        Enum.each(:cover.modules(), fn mod ->
-          {:ok, _} = :cover.analyse_to_file(mod, '#{output}/#{mod}.html', [:html])
-        end)
+        {module_results, totals} = gather_coverage(ok, :cover.modules())
+        module_results = Enum.sort_by(module_results, &percentage(elem(&1, 1)), &>=/2)
+
+        if summary_opts = Keyword.get(opts, :summary, true) do
+          console(module_results, totals, summary_opts)
+        end
+
+        html(module_results, opts)
       end
     end
+
+    defp gather_coverage(results, keep) do
+      # When gathering coverage results, we need to skip any
+      # entry with line equal to 0 as those are generated code.
+      #
+      # We may also have multiple entries on the same line.
+      # Each line is only considered once.
+      #
+      # We use ets for performance, to avoid working with nested maps
+      table = :ets.new(__MODULE__, [:set, :private])
+
+      try do
+        Enum.each(results, fn
+          {{module, 0}, _} -> :ets.insert(table, {{module, 0}, :dummy})
+          {{module, line}, {1, 0}} -> :ets.insert(table, {{module, line}, true})
+          {{module, line}, {0, 1}} -> :ets.insert_new(table, {{module, line}, false})
+        end)
+
+        module_results =
+          for module <- keep,
+              results = read_module_cover_results(table, module),
+              do: {module, results}
+
+        total_covered = :ets.select_count(table, [{{:_, true}, [], [true]}])
+        total_not_covered = :ets.select_count(table, [{{:_, false}, [], [true]}])
+
+        {module_results, {total_covered, total_not_covered}}
+      after
+        :ets.delete(table)
+      end
+    end
+
+    defp read_module_cover_results(table, module) do
+      covered = :ets.select_count(table, [{{{module, :_}, true}, [], [true]}])
+      not_covered = :ets.select_count(table, [{{{module, :_}, false}, [], [true]}])
+      {covered, not_covered}
+    end
+
+    defp console(results, totals, true), do: console(results, totals, [])
+
+    defp console(results, totals, opts) when is_list(opts) do
+      Mix.shell().info("Percentage | Module")
+      Mix.shell().info("-----------|--------------------------")
+      Enum.each(results, &display(&1, opts))
+      Mix.shell().info("-----------|--------------------------")
+      display({"Total", totals}, opts)
+      Mix.shell().info("")
+    end
+
+    defp html(results, opts) do
+      output = opts[:output]
+      File.mkdir_p!(output)
+
+      for {mod, _} <- results do
+        {:ok, _} = :cover.analyse_to_file(mod, '#{output}/#{mod}.html', [:html])
+      end
+
+      Mix.shell().info([
+        "Generated HTML coverage results in '",
+        output,
+        "' directory\n"
+      ])
+    end
+
+    defp color(percentage, true), do: color(percentage, @default_threshold)
+    defp color(_, false), do: ""
+    defp color(percentage, threshold) when percentage > threshold, do: :green
+    defp color(_, _), do: :red
+
+    defp display({name, coverage}, opts) do
+      threshold = Keyword.get(opts, :threshold, @default_threshold)
+      percentage = percentage(coverage)
+
+      Mix.shell().info([
+        color(percentage, threshold),
+        format(percentage, 9),
+        "%",
+        :reset,
+        " | ",
+        format_name(name)
+      ])
+    end
+
+    defp percentage({0, 0}), do: 100.0
+    defp percentage({covered, not_covered}), do: covered / (covered + not_covered) * 100
+
+    defp format(number, length), do: :io_lib.format("~#{length}.2f", [number])
+
+    defp format_name(name) when is_binary(name), do: name
+    defp format_name(mod) when is_atom(mod), do: inspect(mod)
   end
 
   use Mix.Task
@@ -50,7 +146,7 @@ defmodule Mix.Tasks.Test do
   ## Command line options
 
     * `--color` - enables color in the output
-    * `--cover` - the directory to include coverage results
+    * `--cover` - runs coverage tool. See "Coverage" section below
     * `--exclude` - excludes tests that match the filter
     * `--force` - forces compilation regardless of modification times
     * `--formatter` - formatter module
@@ -75,8 +171,12 @@ defmodule Mix.Tasks.Test do
       Automatically sets `--trace` and `--preload-modules`
     * `--stale` - runs only tests which reference modules that changed since the
       last `test --stale`. You can read more about this option in the "Stale" section below.
+    * `--failed` - runs only tests that failed the last time they ran
     * `--timeout` - sets the timeout for the tests
-    * `--trace` - runs tests with detailed reporting; automatically sets `--max-cases` to 1
+    * `--trace` - runs tests with detailed reporting; automatically sets `--max-cases` to 1.
+      Note that in trace mode test timeouts will be ignored.
+
+  See `ExUnit.configure/1` for more information on configuration options.
 
   ## Filters
 
@@ -147,11 +247,23 @@ defmodule Mix.Tasks.Test do
 
     * `:output` - the output for cover results, defaults to `"cover"`
     * `:tool`   - the coverage tool
+    * `:summary` - summary output configuration, can be either boolean
+      or keyword list, when keyword list is passed it can specify `:threshold`
+      which can be boolean or numeric value which would enable coloring
+      of percentages red/green depending either below/over threshold
+      respectively, defaults to `[threshold: 90]`
+
 
   By default, a very simple wrapper around OTP's `cover` is used as a tool,
   but it can be overridden as follows:
 
-      test_coverage: [tool: CoverModule]
+      def project() do
+        [
+          ...
+          test_coverage: [tool: CoverModule]
+          ...
+        ]
+      end
 
   `CoverModule` can be any module that exports `start/2`, receiving the
   compilation path and the `test_coverage` options as arguments.
@@ -188,6 +300,7 @@ defmodule Mix.Tasks.Test do
     deps_check: :boolean,
     archives_check: :boolean,
     elixir_version_check: :boolean,
+    failed: :boolean,
     stale: :boolean,
     listen_on_stdin: :boolean,
     formatter: :keep,
@@ -249,7 +362,7 @@ defmodule Mix.Tasks.Test do
     # Configure ExUnit with command line options before requiring
     # test helpers so that the configuration is available in helpers.
     # Then configure ExUnit again so command line options override
-    ex_unit_opts = ex_unit_opts(opts)
+    {ex_unit_opts, allowed_files} = process_ex_unit_opts(opts)
     ExUnit.configure(ex_unit_opts)
 
     test_paths = project[:test_paths] || default_test_paths()
@@ -261,16 +374,18 @@ defmodule Mix.Tasks.Test do
     test_pattern = project[:test_pattern] || "*_test.exs"
     warn_test_pattern = project[:warn_test_pattern] || "*_test.ex"
 
-    matched_test_files = Mix.Utils.extract_files(test_files, test_pattern)
+    matched_test_files =
+      test_files
+      |> Mix.Utils.extract_files(test_pattern)
+      |> filter_to_allowed_files(allowed_files)
 
-    matched_warn_test_files =
-      Mix.Utils.extract_files(test_files, warn_test_pattern) -- matched_test_files
+    display_warn_test_pattern(test_files, test_pattern, matched_test_files, warn_test_pattern)
 
-    display_warn_test_pattern(matched_warn_test_files, test_pattern)
-
-    case CT.require_and_run(files, matched_test_files, test_paths, opts) do
-      {:ok, %{failures: failures}} ->
+    case CT.require_and_run(matched_test_files, test_paths, opts) do
+      {:ok, %{excluded: excluded, failures: failures, total: total}} ->
         cover && cover.()
+
+        option_only_present? = Keyword.has_key?(opts, :only)
 
         cond do
           failures > 0 and opts[:raise] ->
@@ -279,18 +394,47 @@ defmodule Mix.Tasks.Test do
           failures > 0 ->
             System.at_exit(fn _ -> exit({:shutdown, 1}) end)
 
+          excluded == total and option_only_present? ->
+            message = "The --only option was given to \"mix test\" but no test executed"
+            raise_or_error_at_exit(message, opts)
+
           true ->
             :ok
         end
 
       :noop ->
+        cond do
+          opts[:stale] ->
+            Mix.shell().info("No stale tests")
+
+          files == [] ->
+            Mix.shell().info("There are no tests to run")
+
+          true ->
+            message = "Paths given to `mix test` did not match any directory/file: "
+            raise_or_error_at_exit(message <> Enum.join(files, ", "), opts)
+        end
+
         :ok
     end
   end
 
-  defp display_warn_test_pattern(files, pattern) do
+  defp raise_or_error_at_exit(message, opts) do
+    if opts[:raise] do
+      Mix.raise(message)
+    else
+      Mix.shell().error(message)
+      System.at_exit(fn _ -> exit({:shutdown, 1}) end)
+    end
+  end
+
+  defp display_warn_test_pattern(test_files, test_pattern, matched_test_files, warn_test_pattern) do
+    files = Mix.Utils.extract_files(test_files, warn_test_pattern) -- matched_test_files
+
     for file <- files do
-      Mix.shell().info("warning: #{file} does not match #{inspect(pattern)} and won't be loaded")
+      Mix.shell().info(
+        "warning: #{file} does not match #{inspect(test_pattern)} and won't be loaded"
+      )
     end
   end
 
@@ -303,19 +447,29 @@ defmodule Mix.Tasks.Test do
     :timeout,
     :formatters,
     :colors,
-    :slowest
+    :slowest,
+    :failures_manifest_file,
+    :only_test_ids
   ]
 
   @doc false
-  def ex_unit_opts(opts) do
-    opts
-    |> filter_opts(:include)
-    |> filter_opts(:exclude)
-    |> filter_opts(:only)
-    |> formatter_opts()
-    |> color_opts()
-    |> Keyword.take(@option_keys)
-    |> default_opts()
+  def process_ex_unit_opts(opts) do
+    {opts, allowed_files} =
+      opts
+      |> manifest_opts()
+      |> failed_opts()
+
+    opts =
+      opts
+      |> filter_opts(:include)
+      |> filter_opts(:exclude)
+      |> filter_opts(:only)
+      |> formatter_opts()
+      |> color_opts()
+      |> Keyword.take(@option_keys)
+      |> default_opts()
+
+    {opts, allowed_files}
   end
 
   defp merge_helper_opts(opts) do
@@ -379,6 +533,32 @@ defmodule Mix.Tasks.Test do
     else
       opts
     end
+  end
+
+  @manifest_file_name ".mix_test_failures"
+
+  defp manifest_opts(opts) do
+    manifest_file = Path.join(Mix.Project.manifest_path(), @manifest_file_name)
+    Keyword.put(opts, :failures_manifest_file, manifest_file)
+  end
+
+  defp failed_opts(opts) do
+    if opts[:failed] do
+      if opts[:stale] do
+        Mix.raise("Combining `--failed` and `--stale` is not supported.")
+      end
+
+      {allowed_files, failed_ids} = ExUnit.Filters.failure_info(opts[:failures_manifest_file])
+      {Keyword.put(opts, :only_test_ids, failed_ids), allowed_files}
+    else
+      {opts, nil}
+    end
+  end
+
+  defp filter_to_allowed_files(matched_test_files, nil), do: matched_test_files
+
+  defp filter_to_allowed_files(matched_test_files, %MapSet{} = allowed_files) do
+    Enum.filter(matched_test_files, &MapSet.member?(allowed_files, Path.expand(&1)))
   end
 
   defp color_opts(opts) do

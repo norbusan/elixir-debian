@@ -94,7 +94,9 @@ defmodule Version do
   @type patch :: non_neg_integer | nil
   @type pre :: [String.t() | non_neg_integer]
   @type build :: String.t() | nil
-  @type matchable :: {major :: major, minor :: minor, patch :: patch, pre :: pre}
+  @type matchable ::
+          {major :: major, minor :: minor, patch :: patch, pre :: pre,
+           build_parts :: [String.t()]}
   @type t :: %__MODULE__{major: major, minor: minor, patch: patch, pre: pre, build: build}
 
   defmodule Requirement do
@@ -106,10 +108,12 @@ defmodule Version do
   defmodule InvalidRequirementError do
     defexception [:requirement]
 
+    @impl true
     def exception(requirement) when is_binary(requirement) do
       %__MODULE__{requirement: requirement}
     end
 
+    @impl true
     def message(%{requirement: requirement}) do
       "invalid requirement: #{inspect(requirement)}"
     end
@@ -118,10 +122,12 @@ defmodule Version do
   defmodule InvalidVersionError do
     defexception [:version]
 
+    @impl true
     def exception(version) when is_binary(version) do
       %__MODULE__{version: version}
     end
 
+    @impl true
     def message(%{version: version}) do
       "invalid version: #{inspect(version)}"
     end

@@ -1,4 +1,6 @@
 defmodule ExUnit.Filters do
+  alias ExUnit.FailuresManifest
+
   @moduledoc """
   Conveniences for parsing and evaluating filters.
   """
@@ -37,12 +39,36 @@ defmodule ExUnit.Filters do
       iex> ExUnit.Filters.normalize([:foo, :bar, :bar], [:foo, :baz])
       {[:foo, :bar], [:baz]}
 
+      iex> ExUnit.Filters.normalize([foo: "true"], [:foo])
+      {[foo: "true"], [:foo]}
+
+      iex> ExUnit.Filters.normalize([:foo], [foo: "true"])
+      {[:foo], []}
+
+      iex> ExUnit.Filters.normalize([foo: "true"], [foo: true])
+      {[foo: "true"], []}
+
+      iex> ExUnit.Filters.normalize([foo: true], [foo: "true"])
+      {[foo: true], []}
+
   """
   @spec normalize(t | nil, t | nil) :: {t, t}
   def normalize(include, exclude) do
-    include = include |> List.wrap() |> Enum.uniq()
-    exclude = exclude |> List.wrap() |> Enum.uniq() |> Kernel.--(include)
-    {include, exclude}
+    {include_atoms, include_tags} =
+      include |> List.wrap() |> Enum.uniq() |> Enum.split_with(&is_atom/1)
+
+    {exclude_atoms, exclude_tags} =
+      exclude |> List.wrap() |> Enum.uniq() |> Enum.split_with(&is_atom/1)
+
+    exclude_tags = Map.new(exclude_tags)
+
+    exclude_included =
+      for include_tag <- include_tags, key = has_tag(include_tag, exclude_tags), do: key
+
+    exclude_tags =
+      exclude_tags |> Map.drop(include_atoms) |> Map.drop(exclude_included) |> Map.to_list()
+
+    {include_atoms ++ include_tags, (exclude_atoms -- include_atoms) ++ exclude_tags}
   end
 
   @doc """
@@ -65,7 +91,23 @@ defmodule ExUnit.Filters do
   end
 
   @doc """
-  Evaluates the `include` and `exclude` filters against the given `tags`.
+  Returns a tuple containing useful information about test failures from the
+  manifest. The tuple contains:
+
+    * A set of files that contain tests that failed the last time they ran.
+      The paths are absolute paths.
+    * A set of test ids that failed the last time they ran
+
+  """
+  @spec failure_info(Path.t()) :: {MapSet.t(Path.t()), MapSet.t(FailuresManifest.test_id())}
+  def failure_info(manifest_file) do
+    manifest = FailuresManifest.read(manifest_file)
+    {FailuresManifest.files_with_failures(manifest), FailuresManifest.failed_test_ids(manifest)}
+  end
+
+  @doc """
+  Evaluates the `include` and `exclude` filters against the given `tags` to
+  determine if tests should be skipped or excluded.
 
   Some filters, like `:line`, may require the whole test collection to
   find the closest line, that's why it must also be passed as argument.
@@ -80,7 +122,7 @@ defmodule ExUnit.Filters do
       :ok
 
       iex> ExUnit.Filters.eval([foo: "bar"], [:foo], %{foo: "baz"}, [])
-      {:error, "due to foo filter"}
+      {:excluded, "due to foo filter"}
 
   """
   @spec eval(t, t, map, [ExUnit.Test.t()]) :: :ok | {:error, binary}
@@ -89,10 +131,10 @@ defmodule ExUnit.Filters do
 
     case Map.fetch(tags, :skip) do
       {:ok, msg} when is_binary(msg) and skip? ->
-        {:error, msg}
+        {:skipped, msg}
 
       {:ok, true} when skip? ->
-        {:error, "due to skip tag"}
+        {:skipped, "due to skip tag"}
 
       _ ->
         excluded = Enum.find_value(exclude, &has_tag(&1, tags, collection))
@@ -100,7 +142,7 @@ defmodule ExUnit.Filters do
         if !excluded or Enum.any?(include, &has_tag(&1, tags, collection)) do
           :ok
         else
-          {:error, "due to #{excluded} filter"}
+          {:excluded, "due to #{excluded} filter"}
         end
     end
   end
@@ -120,14 +162,18 @@ defmodule ExUnit.Filters do
     end
   end
 
-  defp has_tag({key, %Regex{} = value}, tags, _collection) when is_atom(key) do
+  defp has_tag(pair, tags, _collection) do
+    has_tag(pair, tags)
+  end
+
+  defp has_tag({key, %Regex{} = value}, tags) when is_atom(key) do
     case Map.fetch(tags, key) do
       {:ok, tag} -> to_string(tag) =~ value and key
       _ -> false
     end
   end
 
-  defp has_tag({key, value}, tags, _collection) when is_atom(key) do
+  defp has_tag({key, value}, tags) when is_atom(key) do
     case Map.fetch(tags, key) do
       {:ok, ^value} -> key
       {:ok, tag} -> compare(to_string(tag), to_string(value)) and key
@@ -135,7 +181,7 @@ defmodule ExUnit.Filters do
     end
   end
 
-  defp has_tag(key, tags, _collection) when is_atom(key), do: Map.has_key?(tags, key) and key
+  defp has_tag(key, tags) when is_atom(key), do: Map.has_key?(tags, key) and key
 
   defp to_integer(integer) when is_integer(integer), do: integer
   defp to_integer(integer) when is_binary(integer), do: String.to_integer(integer)

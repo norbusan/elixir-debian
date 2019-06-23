@@ -40,6 +40,12 @@ defmodule Mix.Tasks.New do
 
       mix new hello_world --sup
 
+  To generate an umbrella application with sub applications:
+
+      mix new hello_world --umbrella
+      cd hello_world/apps
+      mix new child_app
+
   """
 
   @switches [
@@ -162,8 +168,8 @@ defmodule Mix.Tasks.New do
   defp check_application_name!(name, inferred?) do
     unless name =~ Regex.recompile!(~r/^[a-z][a-z0-9_]*$/) do
       Mix.raise(
-        "Application name must start with a letter and have only lowercase " <>
-          "letters, numbers and underscore, got: #{inspect(name)}" <>
+        "Application name must start with a lowercase ASCII letter, followed by " <>
+          "lowercase ASCII letters, numbers, or underscores, got: #{inspect(name)}" <>
           if inferred? do
             ". The application name is inferred from the path, if you'd like to " <>
               "explicitly name the application then use the \"--app APP\" option"
@@ -248,7 +254,7 @@ defmodule Mix.Tasks.New do
   embed_template(:formatter, """
   # Used by "mix format"
   [
-    inputs: ["mix.exs", "{config,lib,test}/**/*.{ex,exs}"]
+    inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
   ]
   """)
 
@@ -407,7 +413,7 @@ defmodule Mix.Tasks.New do
   # Configuration from the imported file will override the ones defined
   # here (which is why it is important to import them last).
   #
-  #     import_config "#{Mix.env}.exs"
+  #     import_config "#{Mix.env()}.exs"
   """)
 
   embed_template(:config_umbrella, ~S"""
@@ -441,7 +447,7 @@ defmodule Mix.Tasks.New do
 
     ## Examples
 
-        iex> <%= @mod %>.hello
+        iex> <%= @mod %>.hello()
         :world
 
     \"""

@@ -22,10 +22,10 @@ defmodule File.Stream do
     modes =
       case raw do
         true ->
-          if :lists.keyfind(:read_ahead, 1, modes) == {:read_ahead, false} do
-            [:raw | modes]
-          else
-            [:raw, :read_ahead | modes]
+          case :lists.keyfind(:read_ahead, 1, modes) do
+            {:read_ahead, false} -> [:raw | :lists.keydelete(:read_ahead, 1, modes)]
+            {:read_ahead, _} -> [:raw | modes]
+            false -> [:raw, :read_ahead | modes]
           end
 
         false ->
@@ -77,7 +77,7 @@ defmodule File.Stream do
       start_fun = fn ->
         case :file.open(path, read_modes(modes)) do
           {:ok, device} ->
-            if :trim_bom in modes, do: trim_bom(device), else: device
+            if :trim_bom in modes, do: trim_bom(device, raw) |> elem(0), else: device
 
           {:error, reason} ->
             raise File.Error, reason: reason, action: "stream", path: path
@@ -106,17 +106,22 @@ defmodule File.Stream do
       end
     end
 
-    def count(%{path: path, line_or_bytes: bytes}) do
+    def count(%{path: path, line_or_bytes: bytes, raw: true, modes: modes}) do
       case File.stat(path) do
         {:ok, %{size: 0}} ->
           {:error, __MODULE__}
 
         {:ok, %{size: size}} ->
-          {:ok, div(size, bytes) + if(rem(size, bytes) == 0, do: 0, else: 1)}
+          remainder = if rem(size, bytes) == 0, do: 0, else: 1
+          {:ok, div(size, bytes) + remainder - count_raw_bom(path, modes)}
 
         {:error, reason} ->
           raise File.Error, reason: reason, action: "stream", path: path
       end
+    end
+
+    def count(_stream) do
+      {:error, __MODULE__}
     end
 
     def member?(_stream, _term) do
@@ -127,10 +132,30 @@ defmodule File.Stream do
       {:error, __MODULE__}
     end
 
-    defp trim_bom(device) do
-      header = IO.binread(device, 4)
-      {:ok, _new_pos} = :file.position(device, bom_length(header))
-      device
+    defp count_raw_bom(path, modes) do
+      if :trim_bom in modes do
+        File.open!(path, read_modes(modes), &(&1 |> trim_bom(true) |> elem(1)))
+      else
+        0
+      end
+    end
+
+    defp trim_bom(device, true) do
+      bom_length = device |> IO.binread(4) |> bom_length()
+      {:ok, new_pos} = :file.position(device, bom_length)
+      {device, new_pos}
+    end
+
+    defp trim_bom(device, false) do
+      # Or we read the bom in the correct amount or it isn't there
+      case bom_length(IO.read(device, 1)) do
+        0 ->
+          {:ok, _} = :file.position(device, 0)
+          {device, 0}
+
+        _ ->
+          {device, 1}
+      end
     end
 
     defp bom_length(<<239, 187, 191, _rest::binary>>), do: 3

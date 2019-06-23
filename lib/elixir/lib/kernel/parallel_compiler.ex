@@ -14,14 +14,17 @@ defmodule Kernel.ParallelCompiler do
   See `Task.async/1` for more information. The task spawned must be
   always awaited on by calling `Task.await/1`
   """
+  @doc since: "1.6.0"
   def async(fun) when is_function(fun) do
     if parent = :erlang.get(:elixir_compiler_pid) do
       file = :erlang.get(:elixir_compiler_file)
+      dest = :erlang.get(:elixir_compiler_dest)
       {:error_handler, error_handler} = :erlang.process_info(self(), :error_handler)
 
       Task.async(fn ->
         :erlang.put(:elixir_compiler_pid, parent)
         :erlang.put(:elixir_compiler_file, file)
+        dest != :undefined and :erlang.put(:elixir_compiler_dest, dest)
         :erlang.process_flag(:error_handler, error_handler)
         fun.()
       end)
@@ -69,10 +72,12 @@ defmodule Kernel.ParallelCompiler do
       `dest`, use `compile_to_path/3` instead.
 
   """
+  @doc since: "1.6.0"
   def compile(files, options \\ []) when is_list(options) do
     spawn_workers(files, :compile, options)
   end
 
+  @doc since: "1.6.0"
   def compile_to_path(files, path, options \\ []) when is_binary(path) and is_list(options) do
     spawn_workers(files, {:compile, path}, options)
   end
@@ -97,6 +102,7 @@ defmodule Kernel.ParallelCompiler do
       the file, module and the module bytecode
 
   """
+  @doc since: "1.6.0"
   def require(files, options \\ []) when is_list(options) do
     spawn_workers(files, :require, options)
   end
@@ -120,7 +126,7 @@ defmodule Kernel.ParallelCompiler do
   end
 
   defp spawn_workers(files, output, options) do
-    true = Code.ensure_loaded?(Kernel.ErrorHandler)
+    {:module, _} = :code.ensure_loaded(Kernel.ErrorHandler)
     compiler_pid = self()
     :elixir_code_server.cast({:reset_warnings, compiler_pid})
     schedulers = max(:erlang.system_info(:schedulers_online), 2)
@@ -191,11 +197,13 @@ defmodule Kernel.ParallelCompiler do
               case output do
                 {:compile, path} ->
                   :erlang.process_flag(:error_handler, Kernel.ErrorHandler)
-                  :elixir_compiler.file_to_path(file, path)
+                  :erlang.put(:elixir_compiler_dest, path)
+                  :elixir_compiler.file_to_path(Path.expand(file), path)
 
                 :compile ->
                   :erlang.process_flag(:error_handler, Kernel.ErrorHandler)
-                  :elixir_compiler.file(file, dest)
+                  :erlang.put(:elixir_compiler_dest, dest)
+                  Code.compile_file(file)
 
                 :require ->
                   Code.require_file(file)
@@ -204,7 +212,7 @@ defmodule Kernel.ParallelCompiler do
             :ok
           catch
             kind, reason ->
-              {kind, reason, System.stacktrace()}
+              {kind, reason, __STACKTRACE__}
           end
 
         send(parent, {:file_done, self(), file, result})
@@ -230,19 +238,33 @@ defmodule Kernel.ParallelCompiler do
   end
 
   # Queued x, waiting for x: POSSIBLE ERROR! Release processes so we get the failures
+
+  # Single entry, just release it.
+  defp spawn_workers([], [_] = waiting, [_] = queued, result, warnings, state) do
+    [{_, _, ref, _, _}] = waiting
+    spawn_workers([{ref, :not_found}], waiting, queued, result, warnings, state)
+  end
+
+  # Multiple entries, try to release modules.
   defp spawn_workers([], waiting, queued, result, warnings, state)
        when length(waiting) == length(queued) do
+    # The goal of this function is to find leaves in the dependency graph,
+    # i.e. to find code that depends on code that we know is not being defined.
+    # Note we only release modules because those can be rescued. A missing
+    # struct is a guaranteed compile error, so we never release it and treat
+    # it exclusively a missing entry/deadlock.
     pending =
       for {pid, _, _, _} <- queued,
           entry = waiting_on_without_definition(waiting, pid),
-          {_, _, ref, on, _} = entry,
+          {kind, _, ref, on, _} = entry,
+          kind == :module,
           do: {on, {ref, :not_found}}
 
     # Instead of releasing all files at once, we release them in groups
     # based on the module they are waiting on. We pick the module being
     # depended on with less edges, as it is the mostly likely source of
     # error (for example, someone made a typo). This may not always be
-    # true though: for example, if there is a macro injecting code into
+    # true though. For example, if there is a macro injecting code into
     # multiple modules and such code becomes faulty, now multiple modules
     # are waiting on the same module required by the faulty code. However,
     # since we need to pick something to be first, the one with fewer edges
@@ -396,8 +418,8 @@ defmodule Kernel.ParallelCompiler do
         {:current_stacktrace, stacktrace} = Process.info(pid, :current_stacktrace)
         Process.exit(pid, :kill)
 
-        {_kind, ^pid, _, on, _} = List.keyfind(waiting, pid, 1)
-        description = "deadlocked waiting on module #{inspect(on)}"
+        {kind, ^pid, _, on, _} = List.keyfind(waiting, pid, 1)
+        description = "deadlocked waiting on #{kind} #{inspect(on)}"
         error = CompileError.exception(description: description, file: nil, line: nil)
         print_error(file, :error, error, stacktrace)
 
@@ -419,7 +441,10 @@ defmodule Kernel.ParallelCompiler do
       IO.puts(["  ", String.pad_leading(file, max), " => " | inspect(mod)])
     end
 
-    IO.puts("")
+    IO.puts(
+      "\nEnsure there are no compile-time dependencies between those files " <>
+        "and that the modules they reference exist and are correctly named\n"
+    )
 
     for {file, _, description} <- deadlock, do: {Path.absname(file), nil, description}
   end

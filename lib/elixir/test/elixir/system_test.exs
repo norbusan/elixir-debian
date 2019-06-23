@@ -20,7 +20,7 @@ defmodule SystemTest do
     version_file = Path.join([__DIR__, "../../../..", "VERSION"]) |> Path.expand()
     {:ok, version} = File.read(version_file)
     assert build_info[:version] == String.trim(version)
-    assert build_info[:build] =~ "compiled with OTP"
+    assert build_info[:build] =~ "compiled with Erlang/OTP"
   end
 
   test "cwd/0" do
@@ -132,7 +132,7 @@ defmodule SystemTest do
                  System.cmd(Path.join(System.cwd!(), @echo), ~w[/c echo hello], [{:arg0, "echo"}])
       end)
     after
-      File.rm_rf!(Path.dirname(tmp_path(@echo)))
+      File.rm_rf!(tmp_path(@echo))
     end
   end
 

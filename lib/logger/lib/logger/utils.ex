@@ -74,6 +74,12 @@ defmodule Logger.Utils do
     truncate_n_list(list, n, [])
   end
 
+  defp truncate_n(other, _n) do
+    raise ArgumentError,
+          "cannot truncate chardata because it contains something that is not " <>
+            "valid chardata: #{inspect(other)}"
+  end
+
   defp truncate_n_list(_, n, acc) when n < 0 do
     {:lists.reverse(acc), n}
   end
@@ -139,7 +145,7 @@ defmodule Logger.Utils do
     # arguments according to the truncate limit.
     {args, _} =
       Enum.map_reduce(args, truncate, fn arg, acc ->
-        if is_binary(arg) do
+        if is_binary(arg) and acc != :infinity do
           truncate_n(arg, acc)
         else
           {arg, acc}

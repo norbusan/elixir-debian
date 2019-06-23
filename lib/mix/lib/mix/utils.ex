@@ -63,6 +63,7 @@ defmodule Mix.Utils do
       :error
       iex> Mix.Utils.parse_mfa("Foo.bar/2/2")
       :error
+
   """
   def parse_mfa(mfa) do
     with {:ok, quoted} <- Code.string_to_quoted(mfa),
@@ -138,6 +139,10 @@ defmodule Mix.Utils do
     stale_stream(sources, targets) |> Enum.to_list()
   end
 
+  defp stale_stream(sources, []) do
+    sources
+  end
+
   defp stale_stream(sources, targets) do
     modified_target = targets |> Enum.map(&last_modified/1) |> Enum.min()
 
@@ -147,14 +152,14 @@ defmodule Mix.Utils do
   end
 
   @doc """
-  Returns the date the given path was last modified.
+  Returns the date the given path was last modified in posix time.
 
   If the path does not exist, it returns the Unix epoch
   (1970-01-01 00:00:00).
   """
   def last_modified(path)
 
-  def last_modified({{_, _, _}, {_, _, _}} = timestamp) do
+  def last_modified(timestamp) when is_integer(timestamp) do
     timestamp
   end
 
@@ -163,25 +168,31 @@ defmodule Mix.Utils do
     mtime
   end
 
-  @doc false
-  def last_modified_and_size(path) do
-    now = :calendar.universal_time()
+  @doc """
+  Returns the date the given path was last modified in posix time
+  and the size.
 
-    case :elixir_utils.read_mtime_and_size(path) do
+  If the path does not exist, it returns the Unix epoch
+  (1970-01-01 00:00:00).
+  """
+  def last_modified_and_size(path) do
+    now = System.system_time(:second)
+
+    case :elixir_utils.read_posix_mtime_and_size(path) do
       {:ok, mtime, size} when mtime > now ->
         message =
-          "warning: mtime (modified time) for \"#{path}\" was set to the future, resetting to now"
+          "warning: mtime (modified time) for #{inspect(path)} was set to the future, resetting to now"
 
         Mix.shell().error(message)
 
-        File.touch!(path, now)
+        :elixir_utils.change_posix_time(path, now)
         {mtime, size}
 
       {:ok, mtime, size} ->
         {mtime, size}
 
       {:error, _} ->
-        {{{1970, 1, 1}, {0, 0, 0}}, 0}
+        {0, 0}
     end
   end
 
@@ -339,14 +350,14 @@ defmodule Mix.Utils do
   defp quoted(data), do: [?", to_string(data), ?"]
 
   @doc false
+  @deprecated "Use Macro.underscore/1 instead"
   def underscore(value) do
-    IO.warn("Mix.Utils.underscore/1 is deprecated, use Macro.underscore/1 instead")
     Macro.underscore(value)
   end
 
   @doc false
+  @deprecated "Use Macro.camelize/1 instead"
   def camelize(value) do
-    IO.warn("Mix.Utils.camelize/1 is deprecated, use Macro.camelize/1 instead")
     Macro.camelize(value)
   end
 
@@ -476,6 +487,7 @@ defmodule Mix.Utils do
 
     * `:sha512` - checks against the given SHA-512 checksum. Returns
       `{:checksum, message}` in case it fails
+
   """
   @spec read_path(String.t(), keyword) ::
           {:ok, binary}
@@ -563,6 +575,8 @@ defmodule Mix.Utils do
     #
     # If a proxy environment variable was supplied add a proxy to httpc.
     http_options = [relaxed: true] ++ proxy_config(path)
+
+    :httpc.set_option(:ipfamily, :inet6fb4, :mix)
 
     case :httpc.request(:get, request, http_options, [body_format: :binary], :mix) do
       {:ok, {{_, status, _}, _, body}} when status in 200..299 ->

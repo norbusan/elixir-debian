@@ -15,9 +15,10 @@ defmodule ExUnit.Case do
 
   When used, it accepts the following options:
 
-    * `:async` - configure this specific test case to run in parallel
-      with other test cases. May be used for performance when this test case
-      does not change any global state. Defaults to `false`.
+    * `:async` - configures tests in this module to run concurrently with
+      tests in other modules. Tests in the same module do not run concurrently.
+      It should be enabled only if tests do not change any global state.
+      Defaults to `false`.
 
   This module automatically includes all callbacks defined in
   `ExUnit.Callbacks`. See that module for more information on `setup`,
@@ -113,9 +114,22 @@ defmodule ExUnit.Case do
   ### Module and describe tags
 
   A tag can be set for all tests in a module or describe block by
-  setting `@moduletag` or `@describetag` respectively:
+  setting `@moduletag` or `@describetag` inside each context
+  respectively:
 
-      @moduletag :external
+      defmodule ApiTest do
+        use ExUnit.Case
+        @moduletag :external
+
+        describe "makes calls to the right endpoint" do
+          @describetag :endpoint
+
+          # ...
+        end
+      end
+
+  If you are setting a `@moduletag`, you must set that after your
+  call to `use ExUnit.Case` or you will see compilation errors.
 
   If the same key is set via `@tag`, the `@tag` value has higher
   precedence.
@@ -129,7 +143,6 @@ defmodule ExUnit.Case do
     * `:file`       - the file on which the test was defined
     * `:line`       - the line on which the test was defined
     * `:test`       - the test name
-    * `:type`       - the type of the test (`:test`, `:doctest`, `:property`, etc)
     * `:async`      - if the test case is in async mode
     * `:registered` - used for `ExUnit.Case.register_attribute/3` values
     * `:describe`   - the describe block the test belongs to
@@ -139,26 +152,9 @@ defmodule ExUnit.Case do
     * `:capture_log` - see the "Log Capture" section below
     * `:skip` - skips the test with the given reason
     * `:timeout` - customizes the test timeout in milliseconds (defaults to 60000)
-    * `:report` - includes the given tags and context keys on error reports,
-      see the "Reporting tags" section
 
-  ### Reporting tags
-
-  ExUnit also allows tags or any other key in your context to be included
-  in error reports, making it easy for developers to see under which
-  circumstances a test was evaluated. To do so, you use the `:report` tag:
-
-      @moduletag report: [:user_id, :server]
-
-  Now when an error happens, there is a tags section containing the value
-  for each reported field:
-
-     code: flunk "oops"
-     stacktrace:
-       lib/my_lib/source.exs:148
-     tags:
-       user_id: 1
-       server: #PID<0.63.0>
+  The `:test_type` tag is automatically set by ExUnit, but is _not_ reserved.
+  This tag is available for users to customize if they desire.
 
   ## Filters
 
@@ -206,9 +202,10 @@ defmodule ExUnit.Case do
   messages as well, remove the console backend globally:
 
       config :logger, backends: []
+
   """
 
-  @reserved [:module, :file, :line, :test, :async, :registered, :describe, :type]
+  @reserved [:module, :file, :line, :test, :async, :registered, :describe]
 
   @doc false
   defmacro __using__(opts) do
@@ -221,6 +218,13 @@ defmodule ExUnit.Case do
       async = !!unquote(opts)[:async]
 
       unless Module.get_attribute(__MODULE__, :ex_unit_tests) do
+        moduletag_check = Module.get_attribute(__MODULE__, :moduletag)
+        tag_check = Module.get_attribute(__MODULE__, :tag)
+
+        if moduletag_check || tag_check do
+          raise "you must set @tag and @moduletag after the call to \"use ExUnit.Case\""
+        end
+
         attributes = [
           :ex_unit_tests,
           :tag,
@@ -371,36 +375,43 @@ defmodule ExUnit.Case do
   """
   defmacro describe(message, do: block) do
     quote do
-      if @ex_unit_describe do
-        raise "cannot call describe/2 inside another describe. See the documentation " <>
-                "for describe/2 on named setups and how to handle hierarchies"
-      end
-
-      message = unquote(message)
-
-      cond do
-        not is_binary(message) ->
-          raise ArgumentError, "describe name must be a string, got: #{inspect(message)}"
-
-        message in @ex_unit_used_describes ->
-          raise ExUnit.DuplicateDescribeError,
-                "describe #{inspect(message)} is already defined in #{inspect(__MODULE__)}"
-
-        true ->
-          :ok
-      end
-
-      @ex_unit_describe {__ENV__.line, message}
-      @ex_unit_used_describes message
-      Module.delete_attribute(__ENV__.module, :describetag)
+      ExUnit.Case.__describe__(__MODULE__, __ENV__.line, unquote(message))
 
       try do
         unquote(block)
       after
         @ex_unit_describe nil
-        Module.delete_attribute(__ENV__.module, :describetag)
+        Module.delete_attribute(__MODULE__, :describetag)
       end
     end
+  end
+
+  @doc false
+  def __describe__(module, line, message) do
+    if Module.get_attribute(module, :ex_unit_describe) do
+      raise "cannot call describe/2 inside another describe. See the documentation " <>
+              "for describe/2 on named setups and how to handle hierarchies"
+    end
+
+    cond do
+      not is_binary(message) ->
+        raise ArgumentError, "describe name must be a string, got: #{inspect(message)}"
+
+      message in Module.get_attribute(module, :ex_unit_used_describes) ->
+        raise ExUnit.DuplicateDescribeError,
+              "describe #{inspect(message)} is already defined in #{inspect(module)}"
+
+      true ->
+        :ok
+    end
+
+    if Module.get_attribute(module, :describetag) != [] do
+      raise "@describetag must be set inside describe/2 blocks"
+    end
+
+    Module.put_attribute(module, :ex_unit_describe, {line, message})
+    Module.put_attribute(module, :ex_unit_used_describes, message)
+    :ok
   end
 
   @doc false
@@ -433,11 +444,11 @@ defmodule ExUnit.Case do
   display. You can use `ExUnit.plural_rule/2` to set a custom
   pluralization.
   """
-  def register_test(%{module: mod, file: file, line: line}, type, name, tags) do
+  def register_test(%{module: mod, file: file, line: line}, test_type, name, tags) do
     moduletag = Module.get_attribute(mod, :moduletag)
 
     unless moduletag do
-      raise "cannot define #{type}. Please make sure you have invoked " <>
+      raise "cannot define #{test_type}. Please make sure you have invoked " <>
               "\"use ExUnit.Case\" in the current module"
     end
 
@@ -450,11 +461,11 @@ defmodule ExUnit.Case do
     {name, describe, describe_line, describetag} =
       case Module.get_attribute(mod, :ex_unit_describe) do
         {line, describe} ->
-          description = :"#{type} #{describe} #{name}"
+          description = :"#{test_type} #{describe} #{name}"
           {description, describe, line, Module.get_attribute(mod, :describetag)}
 
         _ ->
-          {:"#{type} #{name}", nil, nil, []}
+          {:"#{test_type} #{name}", nil, nil, []}
       end
 
     if Module.defines?(mod, {name, 1}) do
@@ -472,7 +483,7 @@ defmodule ExUnit.Case do
         async: async,
         describe: describe,
         describe_line: describe_line,
-        type: type
+        test_type: test_type
       })
 
     test = %ExUnit.Test{name: name, case: mod, tags: tags, module: mod}
@@ -506,6 +517,7 @@ defmodule ExUnit.Case do
           assert context.registered.hello == "world"
         end
       end
+
   """
   def register_attribute(env, name, opts \\ [])
 
@@ -523,8 +535,8 @@ defmodule ExUnit.Case do
       raise "cannot set tag #{inspect(tag)} because it is reserved by ExUnit"
     end
 
-    unless is_atom(tags[:type]) do
-      raise("value for tag \":type\" must be an atom")
+    unless is_atom(tags[:test_type]) do
+      raise("value for tag \":test_type\" must be an atom")
     end
 
     tags

@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Xref do
 
   The unreachable and deprecated checks below happen every time
   your project is compiled via `mix compile.xref`. See
-  `Mix.Tasks.Compile.Xref` for more information
+  `Mix.Tasks.Compile.Xref` for more information.
 
   ## Xref modes
 
@@ -72,7 +72,7 @@ defmodule Mix.Tasks.Xref do
     * `--label` - only shows relationships with the given label
       The labels are "compile", "struct" and "runtime" (runtime is now shown on the graph)
 
-    * `--only-nodes` - only show the node names (no edges)
+    * `--only-nodes` - only shows the node names (no edges)
 
     * `--source` - displays all files that the given source file references (directly or indirectly)
 
@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Xref do
         Each prints each file followed by the files it depends on. This is the
         default except on Windows;
 
-      * `plain` - the same as pretty except ASCII characters is used instead of
+      * `plain` - the same as pretty except ASCII characters are used instead of
         Unicode characters. This is the default on Windows;
 
       * `stats` - prints general statistics about the graph;
@@ -113,9 +113,9 @@ defmodule Mix.Tasks.Xref do
 
   Those options are shared across all modes:
 
-    * `--include-siblings` - include dependencies that have `:in_umbrella` set
+    * `--include-siblings` - includes dependencies that have `:in_umbrella` set
       to true in the current project in the reports. This can be used to find
-      callers or analyze graphs between projects
+      callers or to analyze graphs between projects
 
     * `--no-compile` - does not compile even if files require compilation
 
@@ -455,7 +455,12 @@ defmodule Mix.Tasks.Xref do
   end
 
   defp warning_message({:unknown_function, module, function, arity, exports}) do
-    UndefinedFunctionError.function_not_exported(module, function, arity, exports)
+    [
+      "function ",
+      Exception.format_mfa(module, function, arity),
+      " is undefined or private",
+      UndefinedFunctionError.hint_for_loaded_module(module, function, arity, exports)
+    ]
   end
 
   defp warning_message({:unknown_module, module, function, arity, _}) do
@@ -470,8 +475,7 @@ defmodule Mix.Tasks.Xref do
     [
       Exception.format_mfa(module, function, arity),
       " is deprecated. ",
-      reason,
-      "."
+      reason
     ]
   end
 

@@ -1,361 +1,310 @@
-# Changelog for Elixir v1.6
+# Changelog for Elixir v1.7
 
-## Code formatter
+Elixir v1.7 is the last release to support Erlang/OTP 19. We recommend everyone to migrate to Erlang/OTP 20+.
 
-The big feature in Elixir v1.6 is the addition of a code formatter and an accompanying `mix format` task that adds automatic formatting to your projects.
+## Documentation metadata
 
-The goal of the formatter is to automate the styling of codebases into a unique and consistent layout used across teams and the whole community. Code is now easier to write, as you no longer need to concern yourself with formatting rules. Code is also easier to read, as you no longer need to convert the styles of other developers in your mind.
+Elixir v1.7 implements [EEP 48](http://erlang.org/eep/eeps/eep-0048.html). EEP 48 aims to bring documentation interoperability across all languages running on the Erlang VM. The documentation format proposed by EEP 48 also supports metadata, which is now fully exposed to Elixir developers:
 
-The formatter also helps new developers to learn the language, by giving immediate feedback on code structure, and eases code reviews by allowing teams to focus on business rules and code quality, rather than code style.
+```elixir
+@moduledoc "A brand new module"
+@moduledoc authors: ["Jane", "Mary"], since: "1.4.0"
+```
 
-To automatically format your codebase, you can run the new `mix format` task. A `.formatter.exs` file may be added to your project root for rudimentary formatter configuration. The mix task also supports flags for CI integration. For instance, you can make your build or a Pull Request fail if the code is not formatted accordingly. We also recommend developers to check their favorite editor and see if they already provide key bindings for `mix format`, allowing a file or a code snippet to be formatted without ceremony.
+Passing metadata is supported on `@doc`, `@moduledoc` and `@typedoc`.
 
-The Elixir codebase itself has been already fully formatted and all further contributions are expected to contain formatted code. We recommend existing codebases to be formatted in steps. While the formatter will correctly handle long lines and complex expressions, refactoring the code by breaking those into variables or smaller functions as you format them will lead to overall cleaner and more readable codebases.
+To access the new documentation format, developers should use `Code.fetch_docs/1`. The old documentation format is no longer available and the old `Code.get_docs/2` function will return `nil` accordingly.
 
-## Dynamic Supervisor
+Tools like IEx and ExDoc have been updated to leverage the new format and show relevant metadata to users. While Elixir allows any metadata to be given, those tools currently exhibit only `:deprecated` and `:since`. Other keys may be shown in the future.
 
-Supervisors in Elixir are responsible for starting, shutting down and restarting child process when things go wrong. Most of the interaction with supervisors happen with the Supervisor module and it contains three main strategies: `:one_for_one`, `:rest_for_one` and `:one_for_all`.
+## The `__STACKTRACE__` construct
 
-However, sometimes the children of a supervisor are not known upfront and are rather started dynamically. For example, if you are building a web server, you have each request beind handled by a separate supervised process. Those cases were handled in the Supervisor module under a special strategy called `:simple_one_for_one`.
+Erlang/OTP 21.0 introduces a new way to retrieve the stacktrace that is lexically scoped and no longer relies on side-effects like `System.stacktrace/0` does. Before one would write:
 
-Unfortunately, this special strategy changed the semantics of the supervisor in regards to initialization and shutdown. Plus some APIs expected different inputs or would be completely unavailable depending on the supervision strategy.
+```elixir
+try do
+  ... something that may fail ...
+rescue
+  e ->
+    log(e, System.stacktrace())
+    reraise(e, System.stacktrace())
+end
+```
 
-Elixir v1.6 addresses this issue by introducing a new `DynamicSupervisor` module, which encapsulates the old `:simple_one_for_one` strategy and APIs in a proper module while allowing the documentation and API of the `Supervisor` module to focus on its main use cases. Having a separate `DynamicSupervisor` module also makes it simpler to add new features to the dynamic supervisor, such as the new `:max_children` option that limits the maximum number of children supervised dynamically.
+In Elixir v1.7, this can be written as:
 
-## `@deprecated` and `@since` attributes
+```elixir
+try do
+  ... something that may fail ...
+rescue
+  e ->
+    log(e, __STACKTRACE__)
+    reraise(e, __STACKTRACE__)
+end
+```
 
-This release also introduces two new attributes associated to function definitions: `@deprecated` and `@since`. The former marks if a function or macro is deprecated, the latter annotates the version the API was introduced:
+This change may also yield performance improvements in the future, since the lexical scope allows us to track precisely when a stacktrace is used and we no longer need to keep references to stacktrace entries after the `try` construct finishes.
 
-    @doc "Breaks a collection into chunks"
-    @since "1.0.0"
-    @deprecated "Use chunk_every/2 instead"
-    def chunk(collection, chunk_size) do
-      chunk_every(collection, chunk_size)
-    end
+Other parts of the exception system have been improved. For example, more information is provided in certain occurrences of `ArgumentError`, `ArithmeticError` and `KeyError` messages.
 
-The `mix xref` task was also updated to warn if your project calls deprecated code. So if a definition is marked as `@deprecated` and a module invokes it, a warning will be emitted during compilation. This effectively provides libraries and frameworks a mechanism to deprecate code without causing multiple warnings to be printed in runtime and without impacting performance.
+## Erlang/OTP logger integration
 
-Note those attributes are not yet available to tools that generate documentation. Such functionality will be added in future releases as it requires changes to how Elixir stores documentation in BEAM files. We still recommend developers to properly annotate their APIs, as the information will then be already available when the tooling is updated.
+Erlang/OTP 21 includes a new `:logger` module. Elixir v1.7 fully integrates with the new `:logger` and leverages its metadata system. The `Logger.Translator` mechanism has also been improved to export metadata, allowing custom Logger backends to leverage information such as:
 
-## defguard and defguardp
+  * `:crash_reason` - a two-element tuple with the throw/error/exit reason as first argument and the stacktrace as second
 
-Elixir provides the concepts of guards: expressions used alongside pattern matching to select a matching clause. Let's see an example straight from Elixir's home page:
+  * `:initial_call` - the initial call that started the process
 
-    def serve_drinks(%User{age: age}) when age >= 21 do
-      # Code that serves drinks!
-    end
+  * `:registered_name` - the process registered name as an atom
 
-`%User{age: age}` is matching on a `User` struct with an age field and `when age >= 21` is the guard.
+We recommend Elixir libraries that previously hooked into Erlang's `:error_logger` to hook into `Logger` instead, in order to support all current and future Erlang/OTP versions.
 
-Since only a handful of constructs are [allowed in guards](https://hexdocs.pm/elixir/guards.html#content), if you were in a situation where you had to check the age to be more than or equal to 21 in multiple times, extracting the guard to a separate function would be [less than obvious and error prone](https://github.com/elixir-lang/elixir/issues/2469). To address those issues, this release introduces `defguard/1` and `defguardp/1`:
+## Other Logger improvements
 
-    defguard is_drinking_age(age) when age >= 21
+Previously, Logger macros such as `debug`, `info`, and so on would always evaluate their arguments, even when nothing would be logged. From Elixir v1.7, the arguments are only evaluated when the message is logged.
 
-    def serve_drinks(%User{age: age}) when is_drinking_age(age) do
-      # Code that serves drinks!
-    end
+The Logger configuration system also accepts a new option called `:compile_time_purge_matching` that allows you to remove log calls with specific compile-time metadata. For example, to remove all logger calls from application `:foo` with level lower than `:info`, as well as remove all logger calls from `Bar.foo/3`, you can use the following configuration:
 
-## IEx improvements
+```elixir
+config :logger,
+  compile_time_purge_matching: [
+    [application: :foo, level_lower_than: :info],
+    [module: Bar, function: "foo/3"]
+  ]
+```
 
-IEx also got its share of improvements. The new code formatter allows us to pretty print code snippets, types and specifications, improving the overall experience when exploring code through the terminal.
+## ExUnit improvements
 
-The autocomplete mechanism also got smarter, being able to provide context autocompletion. For example, typing `t Enum.` and hitting TAB will autocomplete only the types in Enum (in contrast to all functions). Typing `b GenServer.` and hitting TAB will autocomplete only the behaviour callbacks.
+ExUnit has also seen its own share of improvements. Assertions such as `assert some_fun(arg1, arg2, arg3)` will now include the value of each argument in the failure report:
 
-Finally, the breakpoint functionality added in Elixir v1.5 has been improved to support pattern matching and guards. For example, to pattern match on a function call when the first argument is the atom `:foo`, you may do:
+```
+  1) test function call arguments (TestOneOfEach)
+     lib/ex_unit/examples/one_of_each.exs:157
+     Expected truthy, got false
+     code: assert some_vars(1 + 2, 3 + 4)
+     arguments:
 
-    break! SomeFunction.call(:foo, _, _)
+         # 1
+         3
 
-## mix xref
+         # 2
+         7
 
-`mix xref` is a task added in Elixir v1.3 which provides general information about how modules and files in an application depend on each other. This release brings many improvements to `xref`, extending the reach of the analysis and helping developers digest the vast amount of data it produces.
+     stacktrace:
+       lib/ex_unit/examples/one_of_each.exs:158: (test)
+```
 
-One of such additions is the `--include-siblings` option that can be given to all `xref` commands inside umbrella projects. For example, to find all of the callers of a given module or function in an umbrella:
+Furthermore, failures in doctests are now colored and diffed.
 
-    $ mix xref callers SomeModule --include-siblings
+On the `mix test` side of things, there is a new `--failed` flag that runs all tests that failed the last time they ran. Finally, coverage reports generated with `mix test --cover` include a summary out of the box:
 
-The `graph` command in `mix xref` now can also output general statistics about the graph. In [the hexpm project](https://github.com/hexpm/hexpm), you would get:
+```
+Generating cover results ...
 
-    $ mix xref graph --format stats
-    Tracked files: 129 (nodes)
-    Compile dependencies: 256 (edges)
-    Structs dependencies: 46 (edges)
-    Runtime dependencies: 266 (edges)
+Percentage | Module
+-----------|--------------------------
+   100.00% | Plug.Exception.Any
+   100.00% | Plug.Adapters.Cowboy2.Stream
+   100.00% | Collectable.Plug.Conn
+   100.00% | Plug.Crypto.KeyGenerator
+   100.00% | Plug.Parsers
+   100.00% | Plug.Head
+   100.00% | Plug.Router.Utils
+   100.00% | Plug.RequestId
+       ... | ...
+-----------|--------------------------
+    77.19% | Total
+```
 
-    Top 10 files with most outgoing dependencies:
-      * test/support/factory.ex (18)
-      * lib/hexpm/accounts/user.ex (13)
-      * lib/hexpm/accounts/audit_log.ex (12)
-      * lib/hexpm/web/controllers/dashboard_controller.ex (12)
-      * lib/hexpm/repository/package.ex (12)
-      * lib/hexpm/repository/releases.ex (11)
-      * lib/hexpm/repository/release.ex (10)
-      * lib/hexpm/web/controllers/package_controller.ex (10)
-      * lib/mix/tasks/hexpm.stats.ex (9)
-      * lib/hexpm/repository/registry_builder.ex (9)
-
-    Top 10 files with most incoming dependencies:
-      * lib/hexpm/web/web.ex (84)
-      * lib/hexpm/web/router.ex (29)
-      * lib/hexpm/web/controllers/controller_helpers.ex (29)
-      * lib/hexpm/web/controllers/auth_helpers.ex (28)
-      * lib/hexpm/web/views/view_helpers.ex (27)
-      * lib/hexpm/web/views/icons.ex (27)
-      * lib/hexpm/web/endpoint.ex (23)
-      * lib/hexpm/ecto/changeset.ex (22)
-      * lib/hexpm/accounts/user.ex (19)
-      * lib/hexpm/repo.ex (19)
-
-`mix xref graph` also got the `--only-nodes` and `--label` options. The former asks Mix to only output file names (nodes) without the edges. The latter allows you to focus on certain relationships:
-
-      # To get all files that depend on lib/foo.ex
-      mix xref graph --sink lib/foo.ex --only-nodes
-
-      # To get all files that depend on lib/foo.ex at compile time
-      mix xref graph --label compile --sink lib/foo.ex --only-nodes
-
-      # To get all files lib/foo.ex depends on
-      mix xref graph --source lib/foo.ex --only-nodes
-
-      # To limit statistics only to compile time dependencies
-      mix xref graph --format stats --label compile
-
-Those improvements will help developers better understand the relationship between files and reveal potentially complex parts of their systems.
-
-Other improvements in Mix include better compiler diagnostics for editor integration, support for the `--slowest N` flag in `mix test` that shows the slowest tests in your suite, and a new `mix profile.eprof` task that provides time based profiling, complementing the existing `mix profile.cprof` (count based) and `mix profile.fprof` (flame based).
-
-## v1.6.5 (2018-05-07)
-
-This release supports Erlang/OTP 21.0-rc by removing all warnings and by properly redirecting logger output. Note it is not guaranteed it will support Erlang/OTP 21.0 final.
-
-### 1. Bug fixes
-
-  * [Code] Preserve the user's choice in the formatter on parens call with next break fits
-  * [Code] Preserve the user's choice in the formatter on calls without parens when we have one argument per line
-  * [Code] Fix formatting when there is a tilde in the first element of a bitstring
-  * [Kernel] Support specsdiff flag on `__info__` spec clauses
-  * [Kernel] Do not exclude hygienic vars in `defguard`
-  * [Kernel.SpecialForms] Mark `for` comprehensions as generated to avoid dialyzer warnings
-  * [Macro] Make sure `Macro.to_string/2` emits valid quoted expressions
-  * [Task] Support `:infinity` timeout on `Task.yield_many/2`
-  * [Task.Supervisor] Do not crash spawning supervised tasks when the parent process is dead
-  * [URI] Fix parsing of URIs with trailing `?`
-
-## v1.6.4 (2018-03-16)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Code.Formatter] Do not double escape quoted keyword list identifiers
-  * [Kernel] Properly support `into: binary` in Erlang/OTP 20.3
-
-## v1.6.3 (2018-03-09)
+## v1.7.4 (2018-10-24)
 
 ### 1. Enhancements
 
 #### Elixir
 
-  * [Code.Formatter] Support comments in the middle of pipelines, `when` and `|` expressions
-
-### 2. Bug fixes
-
-#### Elixir
-
-  * [Code.Formatter] Consider commas when breaking groups
-  * [Code.Formatter] Ensure proper precedence between `&` and operators
-  * [Code.Formatter] Consider `.formatter.exs` when formatting stdin
-
-#### Logger
-
-  * [Logger.Translator] Ensure logger doesn't crash when reporting named `DynamicSupervisor`
-
-## v1.6.2 (2018-02-28)
-
-### 1. Enhancements
+  * [Kernel] Expand `left..right` at compile time in more cases, which leads to improved performance under different scenarios, especially on `x in left..right` expressions
 
 #### Mix
 
-  * [mix compile.erlang] Teach Mix erlang compiler alternative spelling for `-behavior` declaration
-  * [mix format] Support the `:subdirectories` configuration that points to other directories with their own `.formatter.exs` file. This is useful in umbrella applications. `mix new --umbrella` has also been changed to use this new configuration by default
-  * [mix format] Include the current environment for missing dependency errors
+  * [mix deps.loadpaths] Add `--no-load-deps` flag. This is useful for Rebar 3 compatibility
 
 ### 2. Bug fixes
 
 #### Elixir
 
-  * [Code.Formatter] Ensure `->` does not exceed line length
-  * [DynamicSupervisor] Properly tag error reports generated by dynamic supervisors so they can be properly translated by `Logger`
-  * [DynamicSupervisor] Consider extra arguments during child restart
-  * [Kernel] Ensure arguments given to a guard defined with `defguard` are evaluated in the correct order
-  * [Module] Do not remove docs for previous function declaration when `@impl true` is used
-  * [Supervisor] Ensure `use Supervisor` properly adds the `@behaviour Supervisor` annotation
+  * [Calendar] Fix for converting from negative iso days on New Year in a leap year
+  * [Kernel] Ensure `@spec`, `@callback`, `@type` and friends can be read accordingly
+  * [Module] Avoid warnings when using Module.eval_quoted in the middle of existing definitions
 
 #### Mix
 
-  * [Mix.Shell] Bring back `Mix.Shell.cmd/2` - this arity was defined via a default argument that was accidentally removed
+  * [mix archive.build] Unload previous archive versions before building
+  * [mix format] Expand paths so mix format `path\for\windows.ex` works
+  * [mix test] Ensure that `--cover` displays correct coverage in an umbrella app
 
-## v1.6.1 (2018-01-29)
+## v1.7.3 (2018-08-24)
+
+### 1. Bug fixes
+
+#### ExUnit
+
+  * [ExUnit.Assertions] Do not attempt to expand `try/1` as it is a special form
+
+#### Mix
+
+  * [mix compile.app] Do not include applications with `runtime: false` as a runtime dependency for applications coming from Hex
+
+## v1.7.2 (2018-08-05)
+
+### 1. Bug fixes
+
+#### Elixir
+
+  * [DateTime] Take negative years into account in `DateTime.from_iso8601/1`
+  * [Kernel] Do not emit warnings for repeated docs over different clauses due to false positives
+
+#### Mix
+
+  * [mix compile] Properly mark top-level dependencies as optional and as runtime. This fixes a bug where Mix attempted to start optional dependencies of a package when those optional dependencies were not available
+  * [mix compile] Avoid deadlock when a config has a timestamp later than current time
+  * [mix help] Show task and alias help when both are available
+  * [mix test] Do not fail suite if there are no test files
+
+## v1.7.1 (2018-07-26)
+
+### 1. Bug fixes
+
+#### Elixir
+
+  * [Calendar] Work-around a Dialyzer bug that causes it to loop for a long time, potentially indefinitely
+
+## v1.7.0 (2018-07-25)
 
 ### 1. Enhancements
 
 #### Elixir
 
-  * [DynamicSupervisor] Implement `child_spec/1` for DynamicSupervisor
-  * [Kernel] Raise better error messages on invalid map syntax
-
-### 2. Bug fixes
-
-#### Elixir
-
-  * [Code.Formatter] Only rearrange `not in` operator if explicitly opted-in
-  * [Code.Formatter] Ensure `do` blocks do not exceed line length on calls with a single argument
-  * [Collectable] Support bitstrings in Collectable and for-comprehensions (regression in v1.6.0)
-  * [GenServer] Do not override user own `@opts` attribute
-  * [Enum] Reintroduce zipping of any enumerable of enumerables in `Enum.zip/1` (regression in v1.6.0)
-  * [Macro] Reorder kw blocks in `Macro.to_string/1` to avoid warnings
-  * [Protocol] Fix protocol consolidation when some chunks may be missing
-  * [Stream] Reintroduce zipping of any enumerable of enumerables in `Stream.zip/1` (regression in v1.6.0)
-  * [Supervisor] Do not override user own `@opts` attribute
-  * [Supervisor] Add `@spec` to second clause of `start_link/2`
-
-#### ExUnit
-
-  * [ExUnit.Case] Reintroduce `:case` in ExUnit setup/setup_all/test context
-
-## v1.6.0 (2018-01-17)
-
-### 1. Enhancements
-
-#### EEx
-
-  * [EEx] Allow markers `/` and `|` to be used in a custom EEx engine
-
-#### Elixir
-
-  * [Calendar] Add truncate to `Time`, `DateTime` and `NaiveDateTime` to facilitate microsecond precision pruning
-  * [Code] Add `format_string!/2` and `format_file!/2` for automatic code formatting
-  * [Code] Support column annotations in quoted expressions with `columns: true` in `Code.string_to_quoted/2`
-  * [DynamicSupervisor] Add `DynamicSupervisor` designed to manage children that are added and removed dynamically
-  * [Exception] Make `Exception.blame/3` extensible by adding an optional `blame/2` callback to exceptions
-  * [Exception] Improve the printing of guards on blamed exceptions
-  * [Enumerable] Add `Enumerable.slice/1` and optimize many `Enum` operations with the new protocol. This allows data-structures with index-based random access to provide a non-linear implementation
-  * [Inspect] Show UTF-8 BOM on inspected strings
-  * [Inspect.Algebra] Add `:strict` and `:flex` breaks - this gives more control over the document fitting
-  * [Inspect.Algebra] Allow a group to inherit the parent group break
-  * [Inspect.Algebra] Add `force_unfit/1` and `next_break_fits/2` which give more control over document fitting
-  * [Inspect.Algebra] Add `collapse_lines/1` for collapsing multiple lines to a maximum value
-  * [Inspect.Algebra] Allow `nest/2` to be `:reset` or be set to the current `:cursor` position
-  * [Kernel] Prefix variables with V when emitting Erlang code. This improves the integration with tools such as Erlang code formatters and the GUI debugger
-  * [Kernel] Warn on the use of `length(x) == 0` in guards
-  * [Kernel] Warn if `catch` comes before `rescue` in try
-  * [Kernel] Warn if heredoc is outdented compared to its closing quotes
-  * [Kernel] Add `defguard/1` and `defguardp/1` to make it easier to build guard-safe macros
-  * [Kernel.ParallelCompiler] Add `compile/2`, `compile_to_path/3` and `require/2` which provide detailed information about warnings and errors
-  * [Kernel.SpecialForms] Support the `uniq: true` flag in `for` comprehensions
-  * [Module] Introduce `@deprecated` and `@since` attributes
-  * [Module] Emit conflicting behaviour warnings if the same behaviour is given more than once
-  * [List] Rearrange equals and inserts for shorter diff scripts in `List.myers_difference/2`
-  * [Record] Allow `:macros` and `:includes` to be given to `Record.extract/2`
-  * [Stream] Add `Stream.intersperse/2`
-  * [String] Update to Unicode 10
-  * [String] Allow passing empty string `match` to `String.replace/4`
-  * [String] Support context and language sensitive operations in `String.upcase/2` and `String.downcase/2`. Currently only the `:greek` context is supported
-  * [String] Support `:ascii` conversion in `String.upcase/2` and `String.downcase/2`
-  * [Time] Add `Time.add/3`
+  * [Calendar.ISO] Support negative dates in `Calendar.ISO`
+  * [Calendar] Add `Calendar.months_in_year/1` callback
+  * [Code] Add `Code.compile_file/2` that compiles files without leaving footprints on the system
+  * [Code] Add `Code.purge_compiler_modules/0` that purges any compiler module left behind. This is useful for live systems dynamically compiling code
+  * [Code] Add `Code.fetch_docs/1` that returns docs in the [EEP 48](http://erlang.org/eep/eeps/eep-0048.html) format
+  * [Date] Add `Date.months_in_year/1` function
+  * [DynamicSupervisor] Use the name of the `DynamicSupervisor` as the ID whenever possible
+  * [Exception] Provide "did you mean" suggestions on KeyError
+  * [Exception] Provide more information on ArithmeticError on Erlang/OTP 21+
+  * [Function] Add `Function` module with `capture/3`, `info/1` and `info/2` functions
+  * [GenServer] Support the new `handle_continue/2` callback on Erlang/OTP 21+
+  * [IO.ANSI] Add cursor movement to `IO.ANSI`
+  * [Kernel] Support adding arbitrary documentation metadata by passing a keyword list to `@doc`, `@moduledoc` and `@typedoc`
+  * [Kernel] Introduce `__STACKTRACE__` to retrieve the current stacktrace inside `catch`/`rescue` (this will be a requirement for Erlang/OTP 21+)
+  * [Kernel] Raise on unsafe variables in order to allow us to better track unused variables
+  * [Kernel] Warn when using `length` to check if a list is not empty on guards
+  * [Kernel] Add hints on mismatched `do`/`end` and others pairs
+  * [Kernel] Warn when comparing structs using the `>`, `<`, `>=` and `<=` operators
+  * [Kernel] Warn on unsupported nested comparisons such as `x < y < z`
+  * [Kernel] Warn if redefining documentation across clauses of the same definition
+  * [Kernel] Warn on unnecessary quotes around atoms, keywords and calls
+  * [Macro] Add `Macro.special_form?/2` and `Macro.operator?/2` that returns `true` if the given name/arity is a special form or operator respectively
+  * [Macro.Env] Add `Macro.Env.vars/1` and `Macro.Env.has_var?/2` that gives access to environment data without accessing private fields
+  * [Regex] Include endianness in the regex version. This allows regexes to be recompiled when an archive is installed in a system with a different endianness
+  * [Registry] Add `Registry.count/1` and `Registry.count_match/4`
+  * [String] Update to Unicode 11
+  * [StringIO] Add `StringIO.open/3`
+  * [System] Use ISO 8601 in `System.build_info/0`
 
 #### ExUnit
 
-  * [ExUnit.Assertions] Perform inclusive checks in `assert_in_delta`
-  * [ExUnit.Callbacks] Add `ExUnit.Callbacks.start_supervised!/2`
-  * [ExUnit.Case] Generate a random seed per test based on the test suite seed
+  * [ExUnit.Assertion] Print the arguments in error reports when asserting on a function call. For example, if `assert is_list(arg)` fails, the argument will be shown in the report
+  * [ExUnit.Diff] Improve diffing of lists when one list is a subset of the other
+  * [ExUnit.DocTest] Show colored diffs on failed doctests
+  * [ExUnit.Formatter] Excluded tests, via the `--exclude` and `--only` flags, are now shown as "Excluded" in reports. Tests skipped via `@tag :skip` are now exclusively shown as "Skipped" and in yellow
 
 #### IEx
 
-  * [IEx.Autocomplete] Provide contextual autocompletion: `t Enum.` will autocomplete types, `b Enum` will autocomplete callbacks
-  * [IEx.CLI] Provide hints for developers when a bad host name is given to `--remsh`
-  * [IEx.Helpers] Automatically include specs when showing documentation for functions/macros
-  * [IEx.Helpers] Improve formatting of behaviours and typespecs by using the formatter
-  * [IEx.Helpers] Allow pattern matching and guard expressions when on `IEx.break!`
+  * [IEx.Helpers] Add `use_if_available/2`
+  * [IEx.Helpers] Allow `force: true` option in `recompile/1`
+  * [IEx.Helpers] Add `:allocators` pane to `runtime_info/1`
+  * [IEx.Helpers] Show documentation metadata in `h/1` helpers
 
 #### Logger
 
-  * [Logger] Add `:discard_threshold` to Logger to help with message queue overflow
+  * [Logger] Ensure nil metadata is always pruned
+  * [Logger] Only evaluate Logger macro arguments when the message will be logged
+  * [Logger] Add `:compile_time_purge_matching` to purge logger calls that match certain compile time metadata, such as module names and application names
+  * [Logger] Log to `:stderr` if a backend fails and there are no other backends
+  * [Logger] Allow translators to return custom metadata
+  * [Logger] Return `:crash_reason`, `:initial_call` and `:registered_name` as metadata in crash reports coming from Erlang/OTP
 
 #### Mix
 
-  * [mix app.start] Add `--preload-modules` to `mix app.start`
-  * [mix archive.build] Allow `mix archive.build` to bundle dot files via an option
-  * [mix compile] Define a behavior for Mix compiler tasks and return diagnostics from compiler tasks
-  * [mix compile] Track struct dependencies between files and recompile them only if the struct changes
-  * [mix deps] Support `:system_env` option when specifying dependencies
-  * [mix format] Add a `mix format` task that formats the given files (or the files specified in a `.formatter.exs` file)
-  * [mix profile.eprof] Add a new task for time-based profiling with eprof
-  * [mix test] Run all functions in a describe block by giving the `file:line` the describe block starts
-  * [mix test] Report the top N slowest tests with the `--slowest N` flag
-  * [mix test] Report the number of doctests and tests separately
-  * [mix xref] Support `--include-siblings` in reports for umbrella support
-  * [mix xref] Add `mix xref graph --format stats`
-  * [mix xref] Add `--only-nodes` and `--label` filters to mix xref graph
-  * [mix xref] Add `mix xref deprecated` that shows the callsite of deprecated functions
+  * [mix archive.install] Add support for the Hex organization via `--organization`
+  * [mix archive.uninstall] Support `--force` flag
+  * [mix compile] Improve support for external build tools such as `rebar`
+  * [mix deps] Include `override: true` in rebar dependencies to make the behaviour closer to how rebar3 works (although diverged deps are still marked as diverged)
+  * [mix escript.install] Add support for the Hex organization via `--organization`
+  * [mix escript.uninstall] Support `--force` flag
+  * [mix help] Also list aliases
+  * [mix local] Use ipv6 with auto fallback to ipv4 when downloading data
+  * [mix profile] Allow all profiling tasks to run programatically
+  * [mix test] Add `--failed` option that only runs previously failed tests
+  * [mix test] Print coverage summary by default when the `--cover` flag is given
+  * [Mix.Project] Add `Mix.Project.clear_deps_cache/0`
+  * [Mix.Project] Add `Mix.Project.config_mtime/0` that caches the config mtime values to avoid filesystem access
 
 ### 2. Bug fixes
 
 #### Elixir
 
-  * [CLI] Support path with spaces as argument to elixir.bat
-  * [Inspect] Properly handle minus signal for non-decimal negative integers
-  * [Integer] Do not raise on non-integer values in `is_odd`/`is_even`
-  * [Kernel] Solve a precedence issue between `&` and `|`, such as `[&Foo.bar/1 | &Baz.bat/2]`
-  * [Kernel] Do not load dynamic Elixir modules as `:in_memory` as this value is not officially supported by the code server. Instead, use an empty list, which is the same value used by Erlang.
-  * [Kernel] Validate variable struct name is atom when used in pattern matching
-  * [Kernel] No longer generate documentation for `defdelegate` functions automatically to avoid overriding previously specified `@doc`
-  * [Macro] Fix `Macro.to_string/2` for tuple calls, such as `alias Foo.{Bar, Baz}`
-  * [MapSet] Return valid MapSet when unioning a legacy MapSet
-  * [Regex] Return a leading empty space when splitting on empty pattern. This makes the `split` operation consistent with the other operations in the `Regex` module
-  * [Stream] Ensure `Stream.chunk_while/4` does not emit more elements than necessary when halted
-  * [String] Return a leading empty space when splitting on empty string. This makes the `split` operation consistent with the other operations in the `String` module
-  * [URI] Preserve empty fragments in `URI.parse/1`
-
-#### Mix
-
-  * [mix app.start] Improve the quality of reports if app fails to boot
-  * [mix cmd] Allow `mix cmd` to be invoked multiple times without marking it as executed
-  * [mix deps] Ensure optional dependencies in umbrella applications are loaded
-  * [mix deps.update] Ensure transitive new non-Hex dependencies are also fetched when a repo is updated
-  * [mix xref] Take compile dependencies with higher priority than runtime ones when building a graph
-  * [mix xref] Handle external files for xref callers and warnings
-
-### 3. Soft deprecations (no warnings emitted)
-
-#### Elixir
-
-  * [GenServer] Warn if `init/1` is not defined in `GenServer`. This brings GenServer closer to the implementation in OTP and aligns all behaviours to require the `init/1` callback
-  * [Inspect.Algebra] `surround/3` and `surround_many/6` are deprecated in favor of `container_doc/6`
-  * [Kernel] Specifying map types with variable keys without defining the type as required/optional is deprecated
-  * [Kernel.ParallelCompiler] `files/2` and `files_to_path/3` are deprecated in favor of `compile/2` and `compile_to_path/3`
-  * [Kernel.ParallelRequire] `files/2` is deprecated in favor of `Kernel.ParallelCompiler.require/2`
-  * [Supervisor] The `:simple_one_for_one` strategy is deprecated in favor of `DynamicSupervisor`
-  * [Supervisor] Passing a list of args to `Supervisor.start_child/2` is deprecated in favor of `DynamicSupervisor`
-  * [Task.Supervisor] Passing `:restart` and `:shutdown` to `Task.Supervisor.start_link/2` is deprecated (it should be passed on start child instead)
+  * [IO.ANSI.Docs] Fix table column alignment when converting docs to ANSI escapes
+  * [Code] Ensure `string_to_quoted` returns error tuples instead of raising in certain constructs
+  * [Code.Formatter] Consistently format keyword lists in function calls with and without parens
+  * [Code.Formatter] Do not break after `->` when there are only comments and one-line clauses
+  * [File] Allow the `:trim_bom` option to be used with `:encoding`
+  * [Kernel] Raise on unsafe variables as some of the code emitted with unsafe variables would not correctly propagate variables or would disable tail call optimization semantics
+  * [Kernel] Do not crash on dynamic sizes in binary generators with collectable into in comprehensions
+  * [Kernel] Do not crash on literals with non-unary size in binary generators with collectable into in comprehensions
+  * [Task] Improve error reports and exit reasons for failed tasks on Erlang/OTP 20+
 
 #### ExUnit
 
-  * [ExUnit.Formatter] `:case_started` and `:case_finished` events are deprecated in favor of `:module_started` and `:module_finished`
+  * [ExUnit.Case] Raise proper error if `@tag` and `@moduletag` are used before `use ExUnit.Case`
+  * [ExUnit.Case] Raise proper error if `@describetag` is used outside of `describe/2` blocks
+  * [ExUnit.DocTest] Emit proper assertion error on doctests with invalid UTF-8
 
 #### Mix
 
-  * [Mix.Compilers.Erlang] Returning `{:ok, val} | :error` from custom Erlang compilers is deprecated in favor of `{:ok, val, warnings} | {:error, errors, warnings}`
+  * [mix archive.install] Fetch optional dependencies when installing an archive from Git/Hex
+  * [mix compile] Properly track config files in umbrella projects and recompile when any relevant umbrella configuration changes
+  * [mix deps] Ensure the same dependency from different SCMs are tagged as diverged when those SCMs are remote and non-remote
+  * [mix deps] Ensure we re-run dependency resolution when overriding a skipped dep in umbrella
+  * [mix deps.compile] Perform clean builds for dependencies on outdated locks to avoid old modules from affecting future compilation
+  * [mix escript.install] Fetch optional dependencies when installing an escript from Git/Hex
 
-### 4. Deprecations
+### 3. Soft-deprecations (no warnings emitted)
 
 #### Elixir
 
-  * [Enum] `Enum.partition/2` is deprecated in favor of `Enum.split_with/2`
-  * [Keyword] `Keyword.replace/3` is deprecated in favor of `Keyword.fetch/2` and `Keyword.put/3`
-  * [Map] `Map.replace/3` is deprecated in favor of `Map.fetch/2` and `Map.put/3`
-  * [Macro] `Macro.unescape_tokens/1` and `Macro.unescape_tokens/2` are deprecated in favor of `Enum.map/2`
-  * [Range] Deprecate `Range.range?/1` in favor of pattern matching on `_ .. _`
+  * [Code] Deprecate `Code.load_file/2` in favor of `Code.compile_file/2`
+  * [Code] Deprecate `Code.loaded_files/0` in favor of `Code.required_files/0`
+  * [Code] Deprecate `Code.unload_files/1` in favor of `Code.unrequire_files/1`
 
-## v1.5
+#### Logger
 
-The CHANGELOG for v1.5 releases can be found [in the v1.5 branch](https://github.com/elixir-lang/elixir/blob/v1.5/CHANGELOG.md).
+  * [Logger] `compile_time_purge_level` is deprecated in favor of `compile_time_purge_matching`
+
+### 4. Hard-deprecations
+
+#### Elixir
+
+  * [Code] `Code.get_docs/2` is deprecated in favor of `Code.fetch_docs/1`
+  * [Enum] `Enum.chunk/2/3/4` is deprecated in favor of `Enum.chunk_every/2/3/4` - notice `chunk_every` does not discard incomplete chunks by default
+  * [GenServer] Warn if `super` is used in any of the GenServer callbacks
+  * [Kernel] `not left in right` is ambiguous and is deprecated in favor of `left not in right`
+  * [Kernel] Warn on confusing operator sequences, such as `1+++1` meaning `1 ++ +1` or `........` meaning `... .. ...`
+  * [OptionParser] Deprecate dynamic option parser mode that depended on atoms to be previously loaded and therefore behaved inconsistently
+  * [Stream] `Stream.chunk/2/3/4` is deprecated in favor of `Stream.chunk_every/2/3/4` - notice `chunk_every` does not discard incomplete chunks by default
+
+## v1.6
+
+The CHANGELOG for v1.6 releases can be found [in the v1.6 branch](https://github.com/elixir-lang/elixir/blob/v1.6/CHANGELOG.md).

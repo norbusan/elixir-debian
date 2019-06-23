@@ -1,16 +1,18 @@
 defmodule Set do
   @moduledoc ~S"""
-  WARNING: this module is deprecated.
+  Generic API for sets.
 
-  Use the `MapSet` module instead.
+  This module is deprecated, use the `MapSet` module instead.
   """
+
+  @moduledoc deprecated: "Use MapSet instead"
 
   @type value :: any
   @type values :: [value]
   @type t :: map
 
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  message = "Use the MapSet module for working with sets"
 
   defmacrop target(set) do
     quote do
@@ -21,10 +23,12 @@ defmodule Set do
     end
   end
 
+  @deprecated message
   def delete(set, value) do
     target(set).delete(set, value)
   end
 
+  @deprecated message
   def difference(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -39,6 +43,7 @@ defmodule Set do
     end
   end
 
+  @deprecated message
   def disjoint?(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -56,11 +61,12 @@ defmodule Set do
     end
   end
 
-  @doc false
+  @deprecated message
   def empty(set) do
     target(set).empty(set)
   end
 
+  @deprecated message
   def equal?(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -77,6 +83,7 @@ defmodule Set do
     end
   end
 
+  @deprecated message
   def intersection(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -91,18 +98,22 @@ defmodule Set do
     end
   end
 
+  @deprecated message
   def member?(set, value) do
     target(set).member?(set, value)
   end
 
+  @deprecated message
   def put(set, value) do
     target(set).put(set, value)
   end
 
+  @deprecated message
   def size(set) do
     target(set).size(set)
   end
 
+  @deprecated message
   def subset?(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)
@@ -114,10 +125,12 @@ defmodule Set do
     end
   end
 
+  @deprecated message
   def to_list(set) do
     target(set).to_list(set)
   end
 
+  @deprecated message
   def union(set1, set2) do
     target1 = target(set1)
     target2 = target(set2)

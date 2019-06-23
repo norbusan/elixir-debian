@@ -11,7 +11,7 @@ defmodule Registry do
   Each entry in the registry is associated to the process that has
   registered the key. If the process crashes, the keys associated to that
   process are automatically removed. All key comparisons in the registry
-  are done using the match operation (`===`).
+  are done using the match operation (`===/2`).
 
   The registry can be used for different purposes, such as name lookups (using
   the `:via` option), storing properties, custom dispatching rules, or a pubsub
@@ -89,7 +89,7 @@ defmodule Registry do
             apply(module, function, [pid])
           catch
             kind, reason ->
-              formatted = Exception.format(kind, reason, System.stacktrace)
+              formatted = Exception.format(kind, reason, __STACKTRACE__)
               Logger.error "Registry.dispatch/3 failed with #{formatted}"
           end
         end
@@ -171,9 +171,19 @@ defmodule Registry do
   @typedoc "The type of registry metadata values"
   @type meta_value :: term
 
+  @typedoc "A pattern to match on objects in a registry"
+  @type match_pattern :: atom | term
+
+  @typedoc "A guard to be evaluated when matching on objects in a registry"
+  @type guard :: {atom | term}
+
+  @typedoc "A list of guards to be evaluated when matching on objects in a registry"
+  @type guards :: [guard] | []
+
   ## Via callbacks
 
   @doc false
+  @doc since: "1.4.0"
   def whereis_name({registry, key}) do
     case key_info!(registry) do
       {:unique, partitions, key_ets} ->
@@ -193,6 +203,7 @@ defmodule Registry do
   end
 
   @doc false
+  @doc since: "1.4.0"
   def register_name({registry, key}, pid) when pid == self() do
     case register(registry, key, nil) do
       {:ok, _} -> :yes
@@ -201,6 +212,7 @@ defmodule Registry do
   end
 
   @doc false
+  @doc since: "1.4.0"
   def send({registry, key}, msg) do
     case lookup(registry, key) do
       [{pid, _}] -> Kernel.send(pid, msg)
@@ -209,6 +221,7 @@ defmodule Registry do
   end
 
   @doc false
+  @doc since: "1.4.0"
   def unregister_name({registry, key}) do
     unregister(registry, key)
   end
@@ -259,6 +272,7 @@ defmodule Registry do
     * `:meta` - a keyword list of metadata to be attached to the registry.
 
   """
+  @doc since: "1.5.0"
   @spec start_link(
           keys: keys,
           name: registry,
@@ -310,13 +324,8 @@ defmodule Registry do
     Registry.Supervisor.start_link(keys, name, partitions, listeners, entries)
   end
 
-  @doc """
-  Starts the registry as a supervisor process.
-
-  Similar to `start_link/1` except the required options,
-  `keys` and `name` are given as arguments.
-  """
-  @spec start_link(keys, registry, keyword) :: {:ok, pid} | {:error, term}
+  @doc false
+  @deprecated "Use Registry.start_link/1 instead"
   def start_link(keys, name, options \\ []) when keys in @keys and is_atom(name) do
     start_link([keys: keys, name: name] ++ options)
   end
@@ -326,7 +335,7 @@ defmodule Registry do
 
   See `Supervisor`.
   """
-  @since "1.5.0"
+  @doc since: "1.5.0"
   def child_spec(opts) do
     %{
       id: Keyword.get(opts, :name, Registry),
@@ -345,16 +354,17 @@ defmodule Registry do
 
   ## Examples
 
-      iex> Registry.start_link(:unique, Registry.UpdateTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UpdateTest)
       iex> {:ok, _} = Registry.register(Registry.UpdateTest, "hello", 1)
       iex> Registry.lookup(Registry.UpdateTest, "hello")
       [{self(), 1}]
-      iex> Registry.update_value(Registry.UpdateTest, "hello", & &1 + 1)
+      iex> Registry.update_value(Registry.UpdateTest, "hello", &(&1 + 1))
       {2, 1}
       iex> Registry.lookup(Registry.UpdateTest, "hello")
       [{self(), 2}]
 
   """
+  @doc since: "1.4.0"
   @spec update_value(registry, key, (value -> value)) ::
           {new_value :: term, old_value :: term} | :error
   def update_value(registry, key, callback) when is_atom(registry) and is_function(callback, 1) do
@@ -398,7 +408,9 @@ defmodule Registry do
   See the module documentation for examples of using the `dispatch/3`
   function for building custom dispatching or a pubsub system.
   """
-  @spec dispatch(registry, key, (entries :: [{pid, value}] -> term), keyword) :: :ok
+  @doc since: "1.4.0"
+  @spec dispatch(registry, key, dispatcher, keyword) :: :ok
+        when dispatcher: (entries :: [{pid, value}] -> term) | {module(), atom(), [any()]}
   def dispatch(registry, key, mfa_or_fun, opts \\ [])
       when is_atom(registry) and is_function(mfa_or_fun, 1)
       when is_atom(registry) and tuple_size(mfa_or_fun) == 3 do
@@ -489,18 +501,18 @@ defmodule Registry do
   In the example below we register the current process and look it up
   both from itself and other processes:
 
-      iex> Registry.start_link(:unique, Registry.UniqueLookupTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueLookupTest)
       iex> Registry.lookup(Registry.UniqueLookupTest, "hello")
       []
       iex> {:ok, _} = Registry.register(Registry.UniqueLookupTest, "hello", :world)
       iex> Registry.lookup(Registry.UniqueLookupTest, "hello")
       [{self(), :world}]
-      iex> Task.async(fn -> Registry.lookup(Registry.UniqueLookupTest, "hello") end) |> Task.await
+      iex> Task.async(fn -> Registry.lookup(Registry.UniqueLookupTest, "hello") end) |> Task.await()
       [{self(), :world}]
 
   The same applies to duplicate registries:
 
-      iex> Registry.start_link(:duplicate, Registry.DuplicateLookupTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateLookupTest)
       iex> Registry.lookup(Registry.DuplicateLookupTest, "hello")
       []
       iex> {:ok, _} = Registry.register(Registry.DuplicateLookupTest, "hello", :world)
@@ -511,6 +523,7 @@ defmodule Registry do
       [{self(), :another}, {self(), :world}]
 
   """
+  @doc since: "1.4.0"
   @spec lookup(registry, key) :: [{pid, value}]
   def lookup(registry, key) when is_atom(registry) do
     case key_info!(registry) do
@@ -540,14 +553,14 @@ defmodule Registry do
 
   Pattern must be an atom or a tuple that will match the structure of the
   value stored in the registry. The atom `:_` can be used to ignore a given
-  value or tuple element, while :"$1" can be used to temporarily assign part
+  value or tuple element, while the atom `:"$1"` can be used to temporarily assign part
   of pattern to a variable for a subsequent comparison.
 
-  It is possible to pass list of guard conditions for more precise matching.
-  Each guard is a tuple, which describes check that should be passed by assigned part of pattern.
-  For example :"$1" > 1 guard condition would be expressed as {:>, :"$1", 1} tuple.
-  Please note that guard conditions will work only for assigned variables like :"$1", :"$2", etc.
-  Avoid usage of special match variables :"$_" and :"$$", because it might not work as expected.
+  Optionally, it is possible to pass a list of guard conditions for more precise matching.
+  Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
+  For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
+  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+  Avoid usage of special match variables `:"$_"` and `:"$$"`, because it might not work as expected.
 
   An empty list will be returned if there is no match.
 
@@ -559,7 +572,7 @@ defmodule Registry do
   In the example below we register the current process under the same
   key in a duplicate registry but with different values:
 
-      iex> Registry.start_link(:duplicate, Registry.MatchTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.MatchTest)
       iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {1, :atom, 1})
       iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {2, :atom, 2})
       iex> Registry.match(Registry.MatchTest, "hello", {1, :_, :_})
@@ -576,7 +589,8 @@ defmodule Registry do
       [{self(), {1, :atom, 1}}, {self(), {2, :atom, 2}}]
 
   """
-  @spec match(registry, key, match_pattern :: term, guards :: list()) :: [{pid, term}]
+  @doc since: "1.4.0"
+  @spec match(registry, key, match_pattern, guards) :: [{pid, term}]
   def match(registry, key, pattern, guards \\ []) when is_atom(registry) and is_list(guards) do
     guards = [{:"=:=", {:element, 1, :"$_"}, {:const, key}} | guards]
     spec = [{{:_, {:_, pattern}}, guards, [{:element, 2, :"$_"}]}]
@@ -608,7 +622,7 @@ defmodule Registry do
 
   Registering under a unique registry does not allow multiple entries:
 
-      iex> Registry.start_link(:unique, Registry.UniqueKeysTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueKeysTest)
       iex> Registry.keys(Registry.UniqueKeysTest, self())
       []
       iex> {:ok, _} = Registry.register(Registry.UniqueKeysTest, "hello", :world)
@@ -619,7 +633,7 @@ defmodule Registry do
 
   Such is possible for duplicate registries though:
 
-      iex> Registry.start_link(:duplicate, Registry.DuplicateKeysTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateKeysTest)
       iex> Registry.keys(Registry.DuplicateKeysTest, self())
       []
       iex> {:ok, _} = Registry.register(Registry.DuplicateKeysTest, "hello", :world)
@@ -628,6 +642,7 @@ defmodule Registry do
       ["hello", "hello"]
 
   """
+  @doc since: "1.4.0"
   @spec keys(registry, pid) :: [key]
   def keys(registry, pid) when is_atom(registry) and is_pid(pid) do
     {kind, partitions, _, pid_ets, _} = info!(registry)
@@ -678,7 +693,7 @@ defmodule Registry do
 
   For unique registries:
 
-      iex> Registry.start_link(:unique, Registry.UniqueUnregisterTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueUnregisterTest)
       iex> Registry.register(Registry.UniqueUnregisterTest, "hello", :world)
       iex> Registry.keys(Registry.UniqueUnregisterTest, self())
       ["hello"]
@@ -689,7 +704,7 @@ defmodule Registry do
 
   For duplicate registries:
 
-      iex> Registry.start_link(:duplicate, Registry.DuplicateUnregisterTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateUnregisterTest)
       iex> Registry.register(Registry.DuplicateUnregisterTest, "hello", :world)
       iex> Registry.register(Registry.DuplicateUnregisterTest, "hello", :world)
       iex> Registry.keys(Registry.DuplicateUnregisterTest, self())
@@ -700,6 +715,7 @@ defmodule Registry do
       []
 
   """
+  @doc since: "1.4.0"
   @spec unregister(registry, key) :: :ok
   def unregister(registry, key) when is_atom(registry) do
     self = self()
@@ -731,7 +747,7 @@ defmodule Registry do
   For unique registries it can be used to conditionally unregister a key on
   the basis of whether or not it matches a particular value.
 
-      iex> Registry.start_link(:unique, Registry.UniqueUnregisterMatchTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueUnregisterMatchTest)
       iex> Registry.register(Registry.UniqueUnregisterMatchTest, "hello", :world)
       iex> Registry.keys(Registry.UniqueUnregisterMatchTest, self())
       ["hello"]
@@ -746,7 +762,7 @@ defmodule Registry do
 
   For duplicate registries:
 
-      iex> Registry.start_link(:duplicate, Registry.DuplicateUnregisterMatchTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateUnregisterMatchTest)
       iex> Registry.register(Registry.DuplicateUnregisterMatchTest, "hello", :world_a)
       iex> Registry.register(Registry.DuplicateUnregisterMatchTest, "hello", :world_b)
       iex> Registry.register(Registry.DuplicateUnregisterMatchTest, "hello", :world_c)
@@ -758,7 +774,9 @@ defmodule Registry do
       ["hello", "hello"]
       iex> Registry.lookup(Registry.DuplicateUnregisterMatchTest, "hello")
       [{self(), :world_b}, {self(), :world_c}]
+
   """
+  @doc since: "1.5.0"
   def unregister_match(registry, key, pattern, guards \\ []) when is_list(guards) do
     self = self()
 
@@ -835,7 +853,7 @@ defmodule Registry do
 
   Registering under a unique registry does not allow multiple entries:
 
-      iex> Registry.start_link(:unique, Registry.UniqueRegisterTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueRegisterTest)
       iex> {:ok, _} = Registry.register(Registry.UniqueRegisterTest, "hello", :world)
       iex> Registry.register(Registry.UniqueRegisterTest, "hello", :later)
       {:error, {:already_registered, self()}}
@@ -844,13 +862,14 @@ defmodule Registry do
 
   Such is possible for duplicate registries though:
 
-      iex> Registry.start_link(:duplicate, Registry.DuplicateRegisterTest)
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateRegisterTest)
       iex> {:ok, _} = Registry.register(Registry.DuplicateRegisterTest, "hello", :world)
       iex> {:ok, _} = Registry.register(Registry.DuplicateRegisterTest, "hello", :world)
       iex> Registry.keys(Registry.DuplicateRegisterTest, self())
       ["hello", "hello"]
 
   """
+  @doc since: "1.4.0"
   @spec register(registry, key, value) :: {:ok, pid} | {:error, {:already_registered, pid}}
   def register(registry, key, value) when is_atom(registry) do
     self = self()
@@ -916,13 +935,14 @@ defmodule Registry do
 
   ## Examples
 
-      iex> Registry.start_link(:unique, Registry.MetaTest, meta: [custom_key: "custom_value"])
+      iex> Registry.start_link(keys: :unique, name: Registry.MetaTest, meta: [custom_key: "custom_value"])
       iex> Registry.meta(Registry.MetaTest, :custom_key)
       {:ok, "custom_value"}
       iex> Registry.meta(Registry.MetaTest, :unknown_key)
       :error
 
   """
+  @doc since: "1.4.0"
   @spec meta(registry, meta_key) :: {:ok, meta_value} | :error
   def meta(registry, key) when is_atom(registry) and (is_atom(key) or is_tuple(key)) do
     try do
@@ -943,7 +963,7 @@ defmodule Registry do
 
   ## Examples
 
-      iex> Registry.start_link(:unique, Registry.PutMetaTest)
+      iex> Registry.start_link(keys: :unique, name: Registry.PutMetaTest)
       iex> Registry.put_meta(Registry.PutMetaTest, :custom_key, "custom_value")
       :ok
       iex> Registry.meta(Registry.PutMetaTest, :custom_key)
@@ -954,6 +974,7 @@ defmodule Registry do
       {:ok, "tuple_value"}
 
   """
+  @doc since: "1.4.0"
   @spec put_meta(registry, meta_key, meta_value) :: :ok
   def put_meta(registry, key, value) when is_atom(registry) and (is_atom(key) or is_tuple(key)) do
     try do
@@ -962,6 +983,120 @@ defmodule Registry do
     catch
       :error, :badarg ->
         raise ArgumentError, "unknown registry: #{inspect(registry)}"
+    end
+  end
+
+  @doc """
+  Returns the number of registered keys in a registry.
+  It runs in constant time.
+
+  ## Examples
+  In the example below we register the current process and ask for the
+  number of keys in the registry:
+
+      iex> Registry.start_link(keys: :unique, name: Registry.UniqueCountTest)
+      iex> Registry.count(Registry.UniqueCountTest)
+      0
+      iex> {:ok, _} = Registry.register(Registry.UniqueCountTest, "hello", :world)
+      iex> {:ok, _} = Registry.register(Registry.UniqueCountTest, "world", :world)
+      iex> Registry.count(Registry.UniqueCountTest)
+      2
+
+  The same applies to duplicate registries:
+
+      iex> Registry.start_link(keys: :duplicate, name: Registry.DuplicateCountTest)
+      iex> Registry.count(Registry.DuplicateCountTest)
+      0
+      iex> {:ok, _} = Registry.register(Registry.DuplicateCountTest, "hello", :world)
+      iex> {:ok, _} = Registry.register(Registry.DuplicateCountTest, "hello", :world)
+      iex> Registry.count(Registry.DuplicateCountTest)
+      2
+
+  """
+  @doc since: "1.7.0"
+  @spec count(registry) :: non_neg_integer()
+  def count(registry) when is_atom(registry) do
+    case key_info!(registry) do
+      {_kind, partitions, nil} ->
+        Enum.reduce(0..(partitions - 1), 0, fn partition_index, acc ->
+          acc + safe_size(key_ets!(registry, partition_index))
+        end)
+
+      {_kind, 1, key_ets} ->
+        safe_size(key_ets)
+    end
+  end
+
+  defp safe_size(ets) do
+    try do
+      :ets.info(ets, :size)
+    catch
+      :error, :badarg -> 0
+    end
+  end
+
+  @doc """
+  Returns the number of `{pid, value}` pairs under the given `key` in `registry`
+  that match `pattern`.
+
+  Pattern must be an atom or a tuple that will match the structure of the
+  value stored in the registry. The atom `:_` can be used to ignore a given
+  value or tuple element, while the atom `:"$1"` can be used to temporarily assign part
+  of pattern to a variable for a subsequent comparison.
+
+  Optionally, it is possible to pass a list of guard conditions for more precise matching.
+  Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
+  For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
+  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+  Avoid usage of special match variables `:"$_"` and `:"$$"`, because it might not work as expected.
+
+  Zero will be returned if there is no match.
+
+  For unique registries, a single partition lookup is necessary. For
+  duplicate registries, all partitions must be looked up.
+
+  ## Examples
+
+  In the example below we register the current process under the same
+  key in a duplicate registry but with different values:
+
+      iex> Registry.start_link(keys: :duplicate, name: Registry.MatchTest)
+      iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {1, :atom, 1})
+      iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {2, :atom, 2})
+      iex> Registry.count_match(Registry.MatchTest, "hello", {1, :_, :_})
+      1
+      iex> Registry.count_match(Registry.MatchTest, "hello", {2, :_, :_})
+      1
+      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :atom, :_})
+      2
+      iex> Registry.count_match(Registry.MatchTest, "hello", {:"$1", :_, :"$1"})
+      2
+      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :_, :"$1"}, [{:>, :"$1", 1}])
+      1
+      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :"$1", :_}, [{:is_atom, :"$1"}])
+      2
+
+  """
+  @doc since: "1.7.0"
+  @spec count_match(registry, key, match_pattern, guards) :: non_neg_integer()
+  def count_match(registry, key, pattern, guards \\ [])
+      when is_atom(registry) and is_list(guards) do
+    guards = [{:"=:=", {:element, 1, :"$_"}, {:const, key}} | guards]
+    spec = [{{:_, {:_, pattern}}, guards, [true]}]
+
+    case key_info!(registry) do
+      {:unique, partitions, key_ets} ->
+        key_ets = key_ets || key_ets!(registry, key, partitions)
+        :ets.select_count(key_ets, spec)
+
+      {:duplicate, 1, key_ets} ->
+        :ets.select_count(key_ets, spec)
+
+      {:duplicate, partitions, _key_ets} ->
+        Enum.reduce(0..(partitions - 1), 0, fn partition_index, acc ->
+          count = :ets.select_count(key_ets!(registry, partition_index), spec)
+          acc + count
+        end)
     end
   end
 
@@ -1177,9 +1312,5 @@ defmodule Registry.Partition do
     end
 
     {:noreply, ets}
-  end
-
-  def handle_info(msg, state) do
-    super(msg, state)
   end
 end

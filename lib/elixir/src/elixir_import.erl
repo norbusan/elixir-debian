@@ -225,6 +225,7 @@ special_form('import', 1) -> true;
 special_form('import', 2) -> true;
 special_form('__ENV__', 0) -> true;
 special_form('__CALLER__', 0) -> true;
+special_form('__STACKTRACE__', 0) -> true;
 special_form('__MODULE__', 0) -> true;
 special_form('__DIR__', 0) -> true;
 special_form('__aliases__', _) -> true;
@@ -238,6 +239,6 @@ special_form('for', _) -> true;
 special_form('with', _) -> true;
 special_form('cond', 1) -> true;
 special_form('case', 2) -> true;
-special_form('try', 2) -> true;
+special_form('try', 1) -> true;
 special_form('receive', 1) -> true;
 special_form(_, _) -> false.

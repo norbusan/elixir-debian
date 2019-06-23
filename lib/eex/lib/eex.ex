@@ -1,6 +1,7 @@
 defmodule EEx.SyntaxError do
   defexception [:message, :file, :line]
 
+  @impl true
   def message(exception) do
     "#{exception.file}:#{exception.line}: #{exception.message}"
   end
@@ -11,7 +12,7 @@ defmodule EEx do
   EEx stands for Embedded Elixir. It allows you to embed
   Elixir code inside a string in a robust way.
 
-      iex> EEx.eval_string "foo <%= bar %>", [bar: "baz"]
+      iex> EEx.eval_string("foo <%= bar %>", bar: "baz")
       "foo baz"
 
   ## API
@@ -83,7 +84,7 @@ defmodule EEx do
   An example is the `@` macro which allows easy data access
   in a template:
 
-      iex> EEx.eval_string "<%= @foo %>", assigns: [foo: 1]
+      iex> EEx.eval_string("<%= @foo %>", assigns: [foo: 1])
       "1"
 
   In other words, `<%= @foo %>` translates to:
@@ -186,7 +187,7 @@ defmodule EEx do
 
   ## Examples
 
-      iex> EEx.eval_string "foo <%= bar %>", [bar: "baz"]
+      iex> EEx.eval_string("foo <%= bar %>", bar: "baz")
       "foo baz"
 
   """

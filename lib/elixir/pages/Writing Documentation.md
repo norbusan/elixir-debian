@@ -46,7 +46,7 @@ When documenting a function, argument names are inferred by the compiler. For ex
 
 The compiler will infer this argument as `map`. Sometimes the inference will be suboptimal, especially if the function contains multiple clauses with the argument matching on different values each time. You can specify the proper names for documentation by declaring only the function head at any moment before the implementation:
 
-    def size(map)
+    def size(map_with_size)
     def size(%{size: size}) do
       size
     end
@@ -121,6 +121,6 @@ Elixir warns if a private function has a `@doc` attribute and discards its conte
 
 Private functions may still need internal documentation for maintainers, though. That can be accomplished with code comments.
 
-## Code.get_docs/2
+## Code.fetch_docs/1
 
-Elixir stores documentation inside pre-defined chunks in the bytecode. It can be accessed from Elixir by using the `Code.get_docs/2` function. This also means documentation is only accessed when required and not when modules are loaded by the Virtual Machine. The only downside is that modules defined in-memory, like the ones defined in IEx, cannot have their documentation accessed as they do not have their bytecode written to disk.
+Elixir stores documentation inside pre-defined chunks in the bytecode. It can be accessed from Elixir by using the `Code.fetch_docs/1` function. This also means documentation is only accessed when required and not when modules are loaded by the Virtual Machine. The only downside is that modules defined in-memory, like the ones defined in IEx, cannot have their documentation accessed as they do not have their bytecode written to disk.

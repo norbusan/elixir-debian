@@ -62,7 +62,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
 
     try do
@@ -71,7 +71,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
   end
 
@@ -81,7 +81,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
 
     try do
@@ -90,7 +90,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
   end
 
@@ -100,7 +100,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
 
     try do
@@ -110,7 +110,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
   end
 
@@ -120,7 +120,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
 
     try do
@@ -129,7 +129,7 @@ defmodule Kernel.RaiseTest do
       flunk("should not reach")
     rescue
       RuntimeError ->
-        assert @trace == :erlang.get_stacktrace()
+        assert @trace == __STACKTRACE__
     end
   end
 
@@ -164,6 +164,19 @@ defmodule Kernel.RaiseTest do
           raise "an exception"
         rescue
           x in [RuntimeError] -> Exception.message(x)
+        catch
+          :error, _ -> false
+        end
+
+      assert result == "an exception"
+    end
+
+    test "named runtime or argument error" do
+      result =
+        try do
+          raise "an exception"
+        rescue
+          x in [ArgumentError, RuntimeError] -> Exception.message(x)
         catch
           :error, _ -> false
         end
@@ -335,7 +348,7 @@ defmodule Kernel.RaiseTest do
     end
 
     test "badfun error" do
-      # Avoid "invalid function call" warning in >= OTP 19
+      # Avoid "invalid function call" warning
       x = fn -> :example end
 
       result =

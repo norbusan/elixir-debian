@@ -122,11 +122,12 @@ defmodule Mix.Task do
 
   Returns the moduledoc or `nil`.
   """
-  @spec moduledoc(task_module) :: String.t() | nil
+  @spec moduledoc(task_module) :: String.t() | nil | false
   def moduledoc(module) when is_atom(module) do
-    case Code.get_docs(module, :moduledoc) do
-      {_line, moduledoc} -> moduledoc
-      nil -> nil
+    case Code.fetch_docs(module) do
+      {:docs_v1, _, _, _, %{"en" => moduledoc}, _, _} -> moduledoc
+      {:docs_v1, _, _, _, :hidden, _, _} -> false
+      _ -> nil
     end
   end
 
@@ -220,6 +221,7 @@ defmodule Mix.Task do
 
     * `Mix.NoTaskError`      - raised if the task could not be found
     * `Mix.InvalidTaskError` - raised if the task is not a valid `Mix.Task`
+
   """
   @spec get!(task_name) :: task_module | no_return
   def get!(task) do
@@ -305,7 +307,7 @@ defmodule Mix.Task do
         end)
 
       not recursive && Mix.ProjectStack.recursing() ->
-        Mix.ProjectStack.root(fn -> run(task, args) end)
+        Mix.ProjectStack.on_recursing_root(fn -> run(task, args) end)
 
       true ->
         Mix.TasksServer.put({:task, task, proj})
