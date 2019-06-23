@@ -3,9 +3,9 @@
 -export([dot/5, tail_list/3, list/2]). %% Quote callbacks
 
 -include("elixir.hrl").
--define(defs(Kind), Kind == def; Kind == defp; Kind == defmacro; Kind == defmacrop).
+-define(defs(Kind), Kind == def; Kind == defp; Kind == defmacro; Kind == defmacrop; Kind == '@').
 -define(lexical(Kind), Kind == import; Kind == alias; Kind == require).
--compile({inline, [keyfind/2, keystore/3, keydelete/2, keyreplace/3, keynew/3]}).
+-compile({inline, [keyfind/2, keystore/3, keydelete/2, keynew/3]}).
 
 %% Apply the line from site call on quoted contents.
 %% Receives a Key to look for the default line as argument.
@@ -46,18 +46,13 @@ do_tuple_linify(Line, Key, Var, Meta, Left, Right) ->
 do_linify_meta(0, line, Meta) ->
   Meta;
 do_linify_meta(Line, line, Meta) ->
-  case keyfind(line, Meta) of
-    {line, Int} when is_integer(Int), Int /= 0 ->
-      Meta;
-    _ ->
-      keystore(line, Meta, Line)
-  end;
+  keynew(line, Meta, Line);
 do_linify_meta(Line, keep, Meta) ->
-  case keyfind(keep, Meta) of
-    {keep, Int} when is_integer(Int), Int /= 0 ->
-      keyreplace(keep, keydelete(line, Meta), {line, Int});
+  case lists:keytake(keep, 1, Meta) of
+    {value, {keep, {_, Int}}, MetaNoFile} ->
+      [{line, Int} | keydelete(line, MetaNoFile)];
     _ ->
-      do_linify_meta(Line, line, Meta)
+      keynew(line, Meta, Line)
   end.
 
 %% Some expressions cannot be unquoted at compilation time.
@@ -184,17 +179,20 @@ do_quote({unquote, _Meta, [Expr]}, #elixir_quote{unquote=true} = Q, _) ->
 
 do_quote({'__aliases__', Meta, [H | T]} = Alias, #elixir_quote{aliases_hygiene=true} = Q, E) when is_atom(H) and (H /= 'Elixir') ->
   Annotation =
-    case elixir_aliases:expand(Alias, ?m(E, aliases), ?m(E, macro_aliases), ?m(E, lexical_tracker)) of
+    case elixir_aliases:expand(Alias, ?key(E, aliases), ?key(E, macro_aliases), ?key(E, lexical_tracker)) of
       Atom when is_atom(Atom) -> Atom;
       Aliases when is_list(Aliases) -> false
     end,
   AliasMeta = keystore(alias, keydelete(counter, Meta), Annotation),
-  do_quote_tuple({'__aliases__', AliasMeta, [H | T]}, Q, E);
+  do_quote_tuple('__aliases__', AliasMeta, [H | T], Q, E);
 
 %% Vars
 
+do_quote({Left, Meta, nil}, #elixir_quote{vars_hygiene=true, imports_hygiene=true} = Q, E) when is_atom(Left) ->
+  do_quote_import(Left, Meta, Q#elixir_quote.context, Q, E);
+
 do_quote({Left, Meta, nil}, #elixir_quote{vars_hygiene=true} = Q, E) when is_atom(Left) ->
-  do_quote_tuple({Left, Meta, Q#elixir_quote.context}, Q, E);
+  do_quote_tuple(Left, Meta, Q#elixir_quote.context, Q, E);
 
 %% Unquote
 
@@ -207,28 +205,11 @@ do_quote({{'.', Meta, [Left, unquote]}, _, [Expr]}, #elixir_quote{unquote=true} 
 %% Imports
 
 do_quote({'&', Meta, [{'/', _, [{F, _, C}, A]}] = Args},
-    #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(F), is_integer(A), is_atom(C) ->
+         #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(F), is_integer(A), is_atom(C) ->
   do_quote_fa('&', Meta, Args, F, A, Q, E);
 
 do_quote({Name, Meta, ArgsOrAtom}, #elixir_quote{imports_hygiene=true} = Q, E) when is_atom(Name) ->
-  Arity = case is_atom(ArgsOrAtom) of
-    true  -> 0;
-    false -> length(ArgsOrAtom)
-  end,
-
-  NewMeta = case (keyfind(import, Meta) == false) andalso
-      elixir_dispatch:find_import(Meta, Name, Arity, E) of
-    false ->
-      case (Arity == 1) andalso keyfind(ambiguous_op, Meta) of
-        {ambiguous_op, nil} -> keystore(ambiguous_op, Meta, Q#elixir_quote.context);
-        _ -> Meta
-      end;
-    Receiver ->
-      keystore(import, keystore(context, Meta, Q#elixir_quote.context), Receiver)
-  end,
-
-  Annotated = annotate({Name, NewMeta, ArgsOrAtom}, Q#elixir_quote.context),
-  do_quote_tuple(Annotated, Q, E);
+  do_quote_import(Name, Meta, ArgsOrAtom, Q, E);
 
 do_quote({_, _, _} = Tuple, #elixir_quote{escape=false} = Q, E) ->
   Annotated = annotate(Tuple, Q#elixir_quote.context),
@@ -252,7 +233,7 @@ do_quote(BitString, #elixir_quote{escape=true} = Q, _) when is_bitstring(BitStri
       {BitString, Q};
     Size ->
       <<Bits:Size, Bytes/binary>> = BitString,
-      {{'<<>>', [], [{'::', [], [Bits, Size]}, Bytes]}, Q}
+      {{'<<>>', [], [{'::', [], [Bits, {size, [], [Size]}]}, {'::', [], [Bytes, {binary, [], []}]}]}, Q}
   end;
 
 do_quote(Map, #elixir_quote{escape=true} = Q, E) when is_map(Map) ->
@@ -298,7 +279,27 @@ do_quote(Other, Q, _) ->
 bad_escape(Arg) ->
   argument_error(<<"cannot escape ", ('Elixir.Kernel':inspect(Arg, []))/binary, ". ",
                    "The supported values are: lists, tuples, maps, atoms, numbers, bitstrings, ",
-                   "pids and remote functions in the format &Mod.fun/arity">>).
+                   "PIDs and remote functions in the format &Mod.fun/arity">>).
+
+do_quote_import(Name, Meta, ArgsOrAtom, #elixir_quote{imports_hygiene=true} = Q, E) ->
+  Arity = case is_atom(ArgsOrAtom) of
+    true  -> 0;
+    false -> length(ArgsOrAtom)
+  end,
+
+  NewMeta = case (keyfind(import, Meta) == false) andalso
+      elixir_dispatch:find_import(Meta, Name, Arity, E) of
+    false ->
+      case (Arity == 1) andalso keyfind(ambiguous_op, Meta) of
+        {ambiguous_op, nil} -> keystore(ambiguous_op, Meta, Q#elixir_quote.context);
+        _ -> Meta
+      end;
+    Receiver ->
+      keystore(import, keystore(context, Meta, Q#elixir_quote.context), Receiver)
+  end,
+
+  Annotated = annotate({Name, NewMeta, ArgsOrAtom}, Q#elixir_quote.context),
+  do_quote_tuple(Annotated, Q, E).
 
 do_quote_call(Left, Meta, Expr, Args, Q, E) ->
   All  = [meta(Meta, Q), Left, {unquote, Meta, [Expr]}, Args,
@@ -313,13 +314,16 @@ do_quote_fa(Target, Meta, Args, F, A, Q, E) ->
       false    -> Meta;
       Receiver -> keystore(import_fa, Meta, {Receiver, Q#elixir_quote.context})
     end,
-  do_quote_tuple({Target, NewMeta, Args}, Q, E).
+  do_quote_tuple(Target, NewMeta, Args, Q, E).
+
+do_quote_tuple({Left, Meta, Right}, Q, E) ->
+  do_quote_tuple(Left, Meta, Right, Q, E).
 
 % In a def unquote(name)(args) expression name will be an atom literal,
 % thus location: :keep will not have enough information to generate the proper file/line annotation.
 % This alters metadata to force Elixir to show the file to which the definition is added
 % instead of the file where definition is quoted (i.e. we behave the opposite to location: :keep).
-do_quote_tuple({Left, Meta, [{{unquote, _, _}, _, _}, _] = Right}, Q, E) when ?defs(Left) ->
+do_quote_tuple(Left, Meta, [{{unquote, _, _}, _, _}, _] = Right, Q, E) when ?defs(Left) ->
   {TLeft, LQ}  = do_quote(Left, Q, E),
   {[Head, Body], RQ} = do_quote(Right, LQ, E),
   {'{}', [], [HLeft, HMeta, HRight]} = Head,
@@ -327,27 +331,32 @@ do_quote_tuple({Left, Meta, [{{unquote, _, _}, _, _}, _] = Right}, Q, E) when ?d
   NewHead = {'{}', [], [HLeft, NewMeta, HRight]},
   {{'{}', [], [TLeft, meta(Meta, Q), [NewHead, Body]]}, RQ};
 
-do_quote_tuple({Left, Meta, Right}, Q, E) ->
+do_quote_tuple(Left, Meta, Right, Q, E) ->
   {TLeft, LQ}  = do_quote(Left, Q, E),
   {TRight, RQ} = do_quote(Right, LQ, E),
   {{'{}', [], [TLeft, meta(Meta, Q), TRight]}, RQ}.
 
 meta(Meta, Q) ->
-  generated(file(line(Meta, Q), Q), Q).
+  generated(keep(Meta, Q), Q).
 
 generated(Meta, #elixir_quote{generated=true}) -> [{generated, true} | Meta];
 generated(Meta, #elixir_quote{generated=false}) -> Meta.
 
-file(Meta, #elixir_quote{file=nil}) -> Meta;
-file(Meta, #elixir_quote{file=File}) -> [{file, File} | Meta].
+keep(Meta, #elixir_quote{file=nil, line=Line}) ->
+  line(Meta, Line);
+keep(Meta, #elixir_quote{file=File}) ->
+  case lists:keytake(line, 1, Meta) of
+    {value, {line, Line}, MetaNoLine} ->
+      [{keep, {File, Line}} | MetaNoLine];
+    false ->
+      [{keep, {File, 0}} | Meta]
+  end.
 
-line(Meta, #elixir_quote{file=File}) when File /= nil ->
-  [case KV of {line, V} -> {keep, V}; _ -> KV end || KV <- Meta];
-line(Meta, #elixir_quote{line=true}) ->
+line(Meta, true) ->
   Meta;
-line(Meta, #elixir_quote{line=false}) ->
+line(Meta, false) ->
   keydelete(line, Meta);
-line(Meta, #elixir_quote{line=Line}) ->
+line(Meta, Line) ->
   keystore(line, Meta, Line).
 
 reverse_improper(L) -> reverse_improper(L, []).
@@ -367,10 +376,6 @@ keystore(_Key, Meta, nil) ->
   Meta;
 keystore(Key, Meta, Value) ->
   lists:keystore(Key, 1, Meta, {Key, Value}).
-keyreplace(Key, Meta, {Key, _V}) ->
-  Meta;
-keyreplace(Key, Meta, Tuple) ->
-  lists:keyreplace(Key, 1, Meta, Tuple).
 keynew(Key, Meta, Value) ->
   case keyfind(Key, Meta) of
     {Key, _} -> Meta;

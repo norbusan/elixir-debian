@@ -25,9 +25,10 @@ defmodule IO.ANSI do
 
   import IO.ANSI.Sequence
 
-  @typep ansicode :: atom
-  @typep ansilist :: maybe_improper_list(char | ansicode | binary | ansilist, binary | ansicode | [])
-  @type  ansidata :: ansilist | ansicode | binary
+  @type ansicode :: atom
+  @type ansilist ::
+          maybe_improper_list(char | ansicode | binary | ansilist, binary | ansicode | [])
+  @type ansidata :: ansilist | ansicode | binary
 
   @doc """
   Checks if ANSI coloring is supported and enabled on this machine.
@@ -42,8 +43,8 @@ defmodule IO.ANSI do
     Application.get_env(:elixir, :ansi_enabled, false)
   end
 
-  @doc "Sets foreground color"
-  @spec color(0..255) :: String.t
+  @doc "Sets foreground color."
+  @spec color(0..255) :: String.t()
   def color(code) when code in 0..255, do: "\e[38;5;#{code}m"
 
   @doc ~S"""
@@ -51,13 +52,13 @@ defmodule IO.ANSI do
 
   Valid values for each color are in the range 0 to 5.
   """
-  @spec color(0..5, 0..5, 0..5) :: String.t
+  @spec color(0..5, 0..5, 0..5) :: String.t()
   def color(r, g, b) when r in 0..5 and g in 0..5 and b in 0..5 do
-    color(16 + (36 * r) + (6 * g) + b)
+    color(16 + 36 * r + 6 * g + b)
   end
 
-  @doc "Sets background color"
-  @spec color_background(0..255) :: String.t
+  @doc "Sets background color."
+  @spec color_background(0..255) :: String.t()
   def color_background(code) when code in 0..255, do: "\e[48;5;#{code}m"
 
   @doc ~S"""
@@ -65,106 +66,118 @@ defmodule IO.ANSI do
 
   Valid values for each color are in the range 0 to 5.
   """
-  @spec color_background(0..5, 0..5, 0..5) :: String.t
+  @spec color_background(0..5, 0..5, 0..5) :: String.t()
   def color_background(r, g, b) when r in 0..5 and g in 0..5 and b in 0..5 do
-    color_background(16 + (36 * r) + (6 * g) + b)
+    color_background(16 + 36 * r + 6 * g + b)
   end
 
-  @doc "Resets all attributes"
-  defsequence :reset, 0
+  @doc "Resets all attributes."
+  defsequence(:reset, 0)
 
-  @doc "Bright (increased intensity) or Bold"
-  defsequence :bright, 1
+  @doc "Bright (increased intensity) or bold."
+  defsequence(:bright, 1)
 
-  @doc "Faint (decreased intensity), not widely supported"
-  defsequence :faint, 2
+  @doc "Faint (decreased intensity). Not widely supported."
+  defsequence(:faint, 2)
 
-  @doc "Italic: on. Not widely supported. Sometimes treated as inverse"
-  defsequence :italic, 3
+  @doc "Italic: on. Not widely supported. Sometimes treated as inverse."
+  defsequence(:italic, 3)
 
-  @doc "Underline: Single"
-  defsequence :underline, 4
+  @doc "Underline: single."
+  defsequence(:underline, 4)
 
-  @doc "Blink: Slow. Less than 150 per minute"
-  defsequence :blink_slow, 5
+  @doc "Blink: slow. Less than 150 per minute."
+  defsequence(:blink_slow, 5)
 
-  @doc "Blink: Rapid. MS-DOS ANSI.SYS; 150 per minute or more; not widely supported"
-  defsequence :blink_rapid, 6
+  @doc "Blink: rapid. MS-DOS ANSI.SYS; 150 per minute or more; not widely supported."
+  defsequence(:blink_rapid, 6)
 
-  @doc "Image: Negative. Swap foreground and background"
-  defsequence :inverse, 7
+  @doc "Image: negative. Swap foreground and background."
+  defsequence(:inverse, 7)
 
-  @doc "Image: Negative. Swap foreground and background"
-  defsequence :reverse, 7
+  @doc "Image: negative. Swap foreground and background."
+  defsequence(:reverse, 7)
 
-  @doc "Conceal. Not widely supported"
-  defsequence :conceal, 8
+  @doc "Conceal. Not widely supported."
+  defsequence(:conceal, 8)
 
-  @doc "Crossed-out. Characters legible, but marked for deletion. Not widely supported"
-  defsequence :crossed_out, 9
+  @doc "Crossed-out. Characters legible, but marked for deletion. Not widely supported."
+  defsequence(:crossed_out, 9)
 
-  @doc "Sets primary (default) font"
-  defsequence :primary_font, 10
+  @doc "Sets primary (default) font."
+  defsequence(:primary_font, 10)
 
   for font_n <- [1, 2, 3, 4, 5, 6, 7, 8, 9] do
-    @doc "Sets alternative font #{font_n}"
-    defsequence :"font_#{font_n}", font_n + 10
+    @doc "Sets alternative font #{font_n}."
+    defsequence(:"font_#{font_n}", font_n + 10)
   end
 
-  @doc "Normal color or intensity"
-  defsequence :normal, 22
+  @doc "Normal color or intensity."
+  defsequence(:normal, 22)
 
-  @doc "Not italic"
-  defsequence :not_italic, 23
+  @doc "Not italic."
+  defsequence(:not_italic, 23)
 
-  @doc "Underline: None"
-  defsequence :no_underline, 24
+  @doc "Underline: none."
+  defsequence(:no_underline, 24)
 
-  @doc "Blink: off"
-  defsequence :blink_off, 25
+  @doc "Blink: off."
+  defsequence(:blink_off, 25)
+
+  @doc "Image: positive. Normal foreground and background."
+  defsequence(:inverse_off, 27)
+
+  @doc "Image: positive. Normal foreground and background."
+  defsequence(:reverse_off, 27)
 
   colors = [:black, :red, :green, :yellow, :blue, :magenta, :cyan, :white]
 
   for {color, code} <- Enum.with_index(colors) do
-    @doc "Sets foreground color to #{color}"
-    defsequence color, code + 30
+    @doc "Sets foreground color to #{color}."
+    defsequence(color, code + 30)
 
-    @doc "Sets background color to #{color}"
-    defsequence :"#{color}_background", code + 40
+    @doc "Sets foreground color to light #{color}."
+    defsequence(:"light_#{color}", code + 90)
+
+    @doc "Sets background color to #{color}."
+    defsequence(:"#{color}_background", code + 40)
+
+    @doc "Sets background color to light #{color}."
+    defsequence(:"light_#{color}_background", code + 100)
   end
 
-  @doc "Default text color"
-  defsequence :default_color, 39
+  @doc "Default text color."
+  defsequence(:default_color, 39)
 
-  @doc "Default background color"
-  defsequence :default_background, 49
+  @doc "Default background color."
+  defsequence(:default_background, 49)
 
-  @doc "Framed"
-  defsequence :framed, 51
+  @doc "Framed."
+  defsequence(:framed, 51)
 
-  @doc "Encircled"
-  defsequence :encircled, 52
+  @doc "Encircled."
+  defsequence(:encircled, 52)
 
-  @doc "Overlined"
-  defsequence :overlined, 53
+  @doc "Overlined."
+  defsequence(:overlined, 53)
 
-  @doc "Not framed or encircled"
-  defsequence :not_framed_encircled, 54
+  @doc "Not framed or encircled."
+  defsequence(:not_framed_encircled, 54)
 
-  @doc "Not overlined"
-  defsequence :not_overlined, 55
+  @doc "Not overlined."
+  defsequence(:not_overlined, 55)
 
-  @doc "Sends cursor home"
-  defsequence :home, "", "H"
+  @doc "Sends cursor home."
+  defsequence(:home, "", "H")
 
-  @doc "Clears screen"
-  defsequence :clear, "2", "J"
+  @doc "Clears screen."
+  defsequence(:clear, "2", "J")
 
-  @doc "Clears line"
-  defsequence :clear_line, "2", "K"
+  @doc "Clears line."
+  defsequence(:clear_line, "2", "K")
 
   defp format_sequence(other) do
-    raise ArgumentError, "invalid ANSI sequence specification: #{inspect other}"
+    raise ArgumentError, "invalid ANSI sequence specification: #{inspect(other)}"
   end
 
   @doc ~S"""
@@ -186,7 +199,7 @@ defmodule IO.ANSI do
       [[[[[[], "Hello, "] | "\e[31m"] | "\e[1m"], "world!"] | "\e[0m"]
 
   """
-  def format(chardata, emit? \\ enabled?) when is_boolean(emit?) do
+  def format(chardata, emit? \\ enabled?()) when is_boolean(emit?) do
     do_format(chardata, [], [], emit?, :maybe)
   end
 
@@ -206,7 +219,7 @@ defmodule IO.ANSI do
       [[[[[[] | "\e[1m"], 87], 111], 114], 100]
 
   """
-  def format_fragment(chardata, emit? \\ enabled?) when is_boolean(emit?) do
+  def format_fragment(chardata, emit? \\ enabled?()) when is_boolean(emit?) do
     do_format(chardata, [], [], emit?, false)
   end
 
@@ -231,7 +244,7 @@ defmodule IO.ANSI do
   end
 
   defp do_format([], [], acc, true, true) do
-    [acc | IO.ANSI.reset]
+    [acc | IO.ANSI.reset()]
   end
 
   defp do_format([], [], acc, _emit?, _append_reset) do

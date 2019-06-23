@@ -18,16 +18,22 @@ defmodule Mix.Tasks.Deps do
   Where:
 
     * app is an atom
-    * requirement is a version requirement or a regular expression
+    * requirement is a `Version` requirement or a regular expression
     * opts is a keyword list of options
+
+  For example:
+
+      {:plug, ">= 0.4.0"}
+      {:gettext, git: "https://github.com/elixir-lang/gettext.git", tag: "0.1"}
+      {:local_dependency, path: "path/to/local_dependency"}
 
   By default, dependencies are fetched using the [Hex package manager](https://hex.pm/):
 
       {:plug, ">= 0.4.0"}
 
   By specifying such dependencies, Mix will automatically install
-  Hex (if it wasn't previously installed and download a package
-  suitable to your project).
+  Hex (if it wasn't previously installed) and download a package
+  suitable to your project.
 
   Mix also supports Git and path dependencies:
 
@@ -36,33 +42,42 @@ defmodule Mix.Tasks.Deps do
 
   And also in umbrella dependencies:
 
-      {:myapp, in_umbrella: true}
+      {:my_app, in_umbrella: true}
 
   Path and in umbrella dependencies are automatically recompiled by
-  the parent project whenever they change. While fetchable dependencies
-  like the ones using `:git` are recompiled only when fetched/updated.
+  the parent project whenever they change. While fetchable dependencies,
+  like the ones using `:git`, are recompiled only when fetched/updated.
 
-  The dependencies versions are expected to follow Semantic Versioning
-  and the requirements must be specified as defined in the `Version`
-  module.
+  The dependencies' versions are expected to be formatted according to
+  Semantic Versioning and the requirements must be specified as defined
+  in the `Version` module.
+
+  ## Options
 
   Below we provide a more detailed look into the available options.
 
-  ## Dependency definition options
+  ### Dependency definition options
 
     * `:app` - when set to `false`, does not read the app file for this
-      dependency
+      dependency. By default, the app file is read
 
-    * `:env` - the environment to run the dependency on, defaults to :prod
+    * `:env` - the environment (as an atom) to run the dependency on; defaults to `:prod`
 
-    * `:compile` - a command to compile the dependency, defaults to a `mix`,
+    * `:compile` - a command (string) to compile the dependency; defaults to a `mix`,
       `rebar` or `make` command
 
-    * `:optional` - the dependency is optional and used only to specify
-      requirements
+    * `:optional` - marks the dependency as optional. In such cases, the
+      current project will always include the optional dependency but any
+      other project that depends on the current project won't be forced to
+      use the optional dependency. However, if the other project includes
+      the optional dependency on its own, the requirements and options
+      specified here will also be applied.
 
-    * `:only` - the dependency will belong only to the given environments,
-      useful when declaring dev- or test-only dependencies
+    * `:only` - the dependency is made available only in the given environments,
+      useful when declaring dev- or test-only dependencies; by default the
+      dependency will be available in all environments. The value of this option
+      can either be a single environment (like `:dev`) or a list of environments
+      (like `[:dev, :test]`)
 
     * `:override` - if set to `true` the dependency will override any other
       definitions of itself by other dependencies
@@ -70,9 +85,18 @@ defmodule Mix.Tasks.Deps do
     * `:manager` - Mix can also compile Rebar, Rebar3 and makefile projects
       and can fetch sub dependencies of Rebar and Rebar3 projects. Mix will
       try to infer the type of project but it can be overridden with this
-      option by setting it to `:mix`, `:rebar`, `:rebar3` or `:make`
+      option by setting it to `:mix`, `:rebar3`, `:rebar` or `:make`. In case
+      there are conflicting definitions, the first manager in the list above
+      will be picked up. For example, if a dependency is found with `:rebar3`
+      and `:rebar` managers in different part of the trees, `:rebar3` will
+      be automatically picked. You can find the manager by running `mix deps`
+      and override it by setting the `:override` option in a top-level project.
 
-  ## Git options (`:git`)
+    * `:runtime` - whether the dependency is part of runtime applications.
+      Defaults to `true` which automatically adds the application to the list
+      of apps that are started automatically and included in releases
+
+  ### Git options (`:git`)
 
     * `:git`        - the Git repository URI
     * `:github`     - a shortcut for specifying Git repos from GitHub, uses `git:`
@@ -80,44 +104,52 @@ defmodule Mix.Tasks.Deps do
     * `:branch`     - the Git branch to checkout
     * `:tag`        - the Git tag to checkout
     * `:submodules` - when `true`, initialize submodules for the repo
+    * `:sparse`     - checkout a single directory inside the Git repository and use it
+      as your Mix dependency. Search "sparse git checkouts" for more information.
 
-  ## Path options (`:path`)
+  ### Path options (`:path`)
 
     * `:path`        - the path for the dependency
     * `:in_umbrella` - when `true`, sets a path dependency pointing to
       "../#{app}", sharing the same environment as the current application
 
+  ### Hex options (`:hex`)
+
+  See the [Hex usage documentation](https://hex.pm/docs/usage) for Hex options.
+
   ## Deps task
 
   `mix deps` task lists all dependencies in the following format:
 
-      APP VERSION (SCM)
+      APP VERSION (SCM) (MANAGER)
       [locked at REF]
       STATUS
 
   It supports the following options:
 
-    * `--all` - check all dependencies, regardless of specified environment
+    * `--all` - checks all dependencies, regardless of specified environment
 
   """
-  @spec run(OptionParser.argv) :: :ok
+  @spec run(OptionParser.argv()) :: :ok
   def run(args) do
-    Mix.Project.get!
+    Mix.Project.get!()
     {opts, _, _} = OptionParser.parse(args)
-    loaded_opts  = if opts[:all], do: [], else: [env: Mix.env]
+    loaded_opts = if opts[:all], do: [], else: [env: Mix.env()]
 
-    shell = Mix.shell
+    shell = Mix.shell()
 
-    Enum.each loaded(loaded_opts), fn %Mix.Dep{scm: scm, manager: manager} = dep ->
-      dep   = check_lock(dep)
+    Enum.each(loaded(loaded_opts), fn dep ->
+      %Mix.Dep{scm: scm, manager: manager} = dep
+      dep = check_lock(dep)
       extra = if manager, do: " (#{manager})", else: ""
 
-      shell.info "* #{format_dep(dep)}#{extra}"
+      shell.info("* #{format_dep(dep)}#{extra}")
+
       if formatted = scm.format_lock(dep.opts) do
-        shell.info "  locked at #{formatted}"
+        shell.info("  locked at #{formatted}")
       end
 
-      shell.info "  #{format_status dep}"
-    end
+      shell.info("  #{format_status(dep)}")
+    end)
   end
 end

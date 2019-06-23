@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Kernel.ImportTest do
   use ExUnit.Case, async: true
@@ -13,25 +13,25 @@ defmodule Kernel.ImportTest do
   end
 
   test "multi-call" do
-    assert [List, String] = import Elixir.{List, unquote(:String)}
+    assert [List, String] = import(Elixir.{List, unquote(:String)})
     assert keymember?([a: 1], :a, 0)
     assert valid?("ø")
   end
 
   test "blank multi-call" do
-    assert [] = import List.{}
+    assert [] = import(List.{})
     # Buggy local duplicate is untouched
     assert duplicate([1], 2) == [1]
   end
 
   test "multi-call with options" do
-    assert [List] = import Elixir.{List}, only: []
+    assert [List] = import(Elixir.{List}, only: [])
     # Buggy local duplicate is untouched
     assert duplicate([1], 2) == [1]
   end
 
   test "import all" do
-    assert :lists = import :lists
+    assert :lists = import(:lists)
     assert flatten([1, [2], 3]) == [1, 2, 3]
   end
 
@@ -49,7 +49,7 @@ defmodule Kernel.ImportTest do
 
   test "import only via macro" do
     require ImportAvailable
-    import :lists, only: ImportAvailable.flatten
+    import :lists, only: ImportAvailable.flatten()
     assert flatten([1, [2], 3]) == [1, 2, 3]
   end
 
@@ -58,7 +58,7 @@ defmodule Kernel.ImportTest do
   end
 
   test "import with options via macro" do
-    import :lists, dynamic_opts
+    import :lists, dynamic_opts()
     assert flatten([1, [2], 3]) == [1, 2, 3]
   end
 
@@ -87,7 +87,7 @@ defmodule Kernel.ImportTest do
   end
 
   defmodule Underscored do
-    def hello(x),          do: x
+    def hello(x), do: x
     def __underscore__(x), do: x
   end
 
@@ -100,7 +100,7 @@ defmodule Kernel.ImportTest do
     assert __underscore__(3) == 3
   end
 
-  test "import non underscored" do
+  test "import non-underscored" do
     import ExplicitUnderscored, only: [__underscore__: 1]
     import Underscored
     assert hello(2) == 2
@@ -108,13 +108,13 @@ defmodule Kernel.ImportTest do
   end
 
   defmodule MessedBitwise do
-    defmacro bnot(x),   do: x
+    defmacro bnot(x), do: x
     defmacro bor(x, _), do: x
   end
 
   import Bitwise, only: :macros
 
-  test "conflicing imports with only and except" do
+  test "conflicting imports with only and except" do
     import Bitwise, only: :macros, except: [bnot: 1]
     import MessedBitwise, only: [bnot: 1]
     assert bnot(0) == 0
@@ -139,7 +139,7 @@ defmodule Kernel.ImportTest do
 
   test "import many" do
     [import(List), import(String)]
-    assert capitalize("foo")  == "Foo"
+    assert capitalize("foo") == "Foo"
     assert flatten([1, [2], 3]) == [1, 2, 3]
   end
 
@@ -154,7 +154,7 @@ defmodule Kernel.ImportTest do
     if false do
       import List
       flatten([1, [2], 3])
-      flunk
+      flunk()
     else
       # Buggy local duplicate is untouched
       assert duplicate([1], 2) == [1]
@@ -166,7 +166,8 @@ defmodule Kernel.ImportTest do
       false ->
         import List
         flatten([1, [2], 3])
-        flunk
+        flunk()
+
       true ->
         # Buggy local duplicate is untouched
         assert duplicate([1], 2) == [1]
@@ -177,7 +178,7 @@ defmodule Kernel.ImportTest do
     try do
       import List
       flatten([1, [2], 3])
-      flunk
+      flunk()
     catch
       _, _ ->
         # Buggy local duplicate is untouched

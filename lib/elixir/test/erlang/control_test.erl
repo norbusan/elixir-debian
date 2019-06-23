@@ -123,46 +123,19 @@ integer_and_float_test() ->
   {false, _} = eval("1 === 1.0"),
   {true, _} = eval("1 !== 1.0").
 
-and_test() ->
-  F = fun() ->
-    eval("defmodule Bar do\ndef foo, do: true\ndef bar, do: false\n def baz(x), do: x == 1\nend"),
-    {true, _} = eval("true and true"),
-    {false, _} = eval("true and false"),
-    {false, _} = eval("false and true"),
-    {false, _} = eval("false and false"),
-    {true, _} = eval("Bar.foo and Bar.foo"),
-    {false, _} = eval("Bar.foo and Bar.bar"),
-    {true, _} = eval("Bar.foo and Bar.baz 1"),
-    {false, _} = eval("Bar.foo and Bar.baz 2"),
-    {true, _} = eval("false and false or true"),
-    {3, _} = eval("Bar.foo and 1 + 2"),
-    {false, _} = eval("Bar.bar and :erlang.error(:bad)"),
-    ?assertError({badarg, 1}, eval("1 and 2"))
-  end,
-  test_helper:run_and_remove(F, ['Elixir.Bar']).
-
-or_test() ->
-  F = fun() ->
-    eval("defmodule Bar do\ndef foo, do: true\ndef bar, do: false\n def baz(x), do: x == 1\nend"),
-    {true, _} = eval("true or true"),
-    {true, _} = eval("true or false"),
-    {true, _} = eval("false or true"),
-    {false, _} = eval("false or false"),
-    {true, _} = eval("Bar.foo or Bar.foo"),
-    {true, _} = eval("Bar.foo or Bar.bar"),
-    {false, _} = eval("Bar.bar or Bar.bar"),
-    {true, _} = eval("Bar.bar or Bar.baz 1"),
-    {false, _} = eval("Bar.bar or Bar.baz 2"),
-    {3, _} = eval("Bar.bar or 1 + 2"),
-    {true, _} = eval("Bar.foo or :erlang.error(:bad)"),
-    ?assertError({badarg, 1}, eval("1 or 2"))
-  end,
-  test_helper:run_and_remove(F, ['Elixir.Bar']).
-
 not_test() ->
   {false, _} = eval("not true"),
   {true, _} = eval("not false"),
   ?assertError(badarg, eval("not 1")).
+
+rearrange_not_left_in_right_test() ->
+  %% TODO: Deprecate "not left in right" rearrangement.
+  {true, _} = eval("not false in []"),
+  {false, _} = eval("not true in [true]").
+
+rearrange_left_not_in_right_test() ->
+  {true, _} = eval("false not in []"),
+  {false, _} = eval("true not in [true]").
 
 andand_test() ->
   F = fun() ->
@@ -233,7 +206,7 @@ optimized_andand_test() ->
   {'case', _, _,
     [{clause, _,
       [{var, _, Var}],
-      [[{op, _, 'or', _, _}]],
+      [[{op, _, 'orelse', _, _}]],
       [{var, _, Var}]},
     {clause, _, [{var, _, '_'}], [], [{atom, 0, done}]}]
   } = to_erl("is_list([]) && :done").
@@ -242,10 +215,16 @@ optimized_oror_test() ->
   {'case', _, _,
     [{clause, 1,
       [{var, 1, _}],
-      [[{op, 1, 'or', _, _}]],
+      [[{op, 1, 'orelse', _, _}]],
       [{atom, 0, done}]},
     {clause, 1, [{var, 1, Var}], [], [{var, 1, Var}]}]
   } = to_erl("is_list([]) || :done").
 
 no_after_in_try_test() ->
   {'try', _, [_], [_], _, []} = to_erl("try do :foo.bar() else _ -> :ok end").
+
+optimized_inspect_interpolation_test() ->
+    {bin, _,
+     [{bin_element, _,
+       {call, _, {remote, _,{atom, _, 'Elixir.Kernel'}, {atom, _, inspect}}, [_]},
+       default, [binary]}]} = to_erl("\"#{inspect(1)}\"").

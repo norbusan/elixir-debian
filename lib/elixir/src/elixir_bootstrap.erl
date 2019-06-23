@@ -1,5 +1,5 @@
 %% An Erlang module that behaves like an Elixir module
-%% used for bootstraping.
+%% used for bootstrapping.
 -module(elixir_bootstrap).
 -export(['MACRO-def'/2, 'MACRO-def'/3, 'MACRO-defp'/3, 'MACRO-defmodule'/3,
          'MACRO-defmacro'/2, 'MACRO-defmacro'/3, 'MACRO-defmacrop'/3,
@@ -38,7 +38,7 @@
 define({Line, E}, Kind, Call, Expr) ->
   {EscapedCall, UC} = elixir_quote:escape(Call, true),
   {EscapedExpr, UE} = elixir_quote:escape(Expr, true),
-  Args = [Line, Kind, not(UC or UE), EscapedCall, EscapedExpr, elixir_locals:cache_env(E)],
+  Args = [Kind, not(UC or UE), EscapedCall, EscapedExpr, elixir_locals:cache_env(E#{line := Line})],
   {{'.', [], [elixir_def, store_definition]}, [], Args}.
 
 unless_loaded(Fun, Args, Callback) ->

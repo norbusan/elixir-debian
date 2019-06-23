@@ -9,8 +9,7 @@ defmodule Mix.Tasks.Archive.Uninstall do
       mix archive.uninstall archive.ez
 
   """
-  @spec run(OptionParser.argv) :: :ok
   def run(argv) do
-    Mix.Local.Installer.uninstall(:archive, argv)
+    Mix.Local.Installer.uninstall(Mix.Local.path_for(:archive), "archive", argv)
   end
 end

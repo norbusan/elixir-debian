@@ -5,30 +5,35 @@ defmodule Logger.App do
 
   @doc false
   def start(_type, _args) do
-    import Supervisor.Spec
-
-    otp_reports?  = Application.get_env(:logger, :handle_otp_reports)
+    otp_reports? = Application.get_env(:logger, :handle_otp_reports)
     sasl_reports? = Application.get_env(:logger, :handle_sasl_reports)
-    threshold     = Application.get_env(:logger, :discard_threshold_for_error_logger)
+    threshold = Application.get_env(:logger, :discard_threshold_for_error_logger)
+    error_handler = {:error_logger, Logger.ErrorHandler, {otp_reports?, sasl_reports?, threshold}}
 
-    options  = [strategy: :rest_for_one, name: Logger.Supervisor]
-    children = [worker(GenEvent, [[name: Logger]]),
-                worker(Logger.Watcher, [Logger, Logger.Config, []],
-                  [id: Logger.Config, function: :watcher]),
-                supervisor(Logger.Watcher, [Logger.Config, :handlers, []]),
-                worker(Logger.Watcher,
-                  [:error_logger, Logger.ErrorHandler,
-                    {otp_reports?, sasl_reports?, threshold}, :link],
-                  [id: Logger.ErrorHandler, function: :watcher])]
+    children = [
+      %{
+        id: :gen_event,
+        start: {:gen_event, :start_link, [{:local, Logger}]},
+        modules: :dynamic
+      },
+      {Logger.Watcher, {Logger, Logger.Config, []}},
+      {Logger.WatcherSupervisor, {Logger.Config, :handlers, []}},
+      %{
+        id: Logger.ErrorHandler,
+        start: {Logger.Watcher, :start_link, [error_handler]}
+      }
+    ]
 
     config = Logger.Config.new()
 
-    case Supervisor.start_link(children, options) do
+    case Supervisor.start_link(children, strategy: :rest_for_one, name: Logger.Supervisor) do
       {:ok, sup} ->
-        handlers = [error_logger_tty_h: otp_reports?,
-                    sasl_logger_tty_h: sasl_reports?]
-        delete_handlers(handlers)
+        if otp_reports? or sasl_reports? do
+          delete_handlers(otp_reports?, sasl_reports?)
+        end
+
         {:ok, sup, config}
+
       {:error, _} = error ->
         Logger.Config.delete(config)
         error
@@ -42,8 +47,7 @@ defmodule Logger.App do
 
   @doc false
   def stop(config) do
-    Logger.Config.deleted_handlers()
-    |> add_handlers()
+    add_handlers(Logger.Config.deleted_handlers())
     Logger.Config.delete(config)
   end
 
@@ -69,16 +73,33 @@ defmodule Logger.App do
     end
   end
 
-  defp delete_handlers(handlers) do
-    deleted? = fn({handler, delete?}) ->
-        delete? && :error_logger.delete_report_handler(handler) != {:error, :module_not_found}
+  defp delete_handlers(otp_reports?, sasl_reports?) do
+    deleted =
+      if is_pid(Process.whereis(:logger)) and Code.ensure_loaded?(:logger) do
+        with {:ok, {module, config}} <- :logger.get_handler_config(:logger_std_h),
+             :ok <- :logger.remove_handler(:logger_std_h) do
+          [{:logger_std_h, module, config}]
+        else
+          _ -> []
+        end
+      else
+        for {tty, true} <- [error_logger_tty_h: otp_reports?, sasl_report_tty_h: sasl_reports?],
+            :error_logger.delete_report_handler(tty) != {:error, :module_not_found},
+            do: tty
       end
-    [] = Enum.filter_map(handlers, deleted?, fn({handler, _}) -> handler end)
-        |> Logger.Config.deleted_handlers()
+
+    [] = Logger.Config.deleted_handlers(deleted)
     :ok
   end
 
   defp add_handlers(handlers) do
-    Enum.each(handlers, &:error_logger.add_report_handler/1)
+    for handler <- handlers do
+      case handler do
+        {handler, module, config} -> :logger.add_handler(handler, module, config)
+        handler -> :error_logger.add_report_handler(handler)
+      end
+    end
+
+    :ok
   end
 end

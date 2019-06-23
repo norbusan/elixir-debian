@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule ExUnit.RegisterTest do
   use ExUnit.Case
@@ -6,9 +6,9 @@ defmodule ExUnit.RegisterTest do
   import ExUnit.CaptureIO
 
   test "singular test types" do
-    on_exit fn ->
+    on_exit(fn ->
       ExUnit.configure(plural_rules: %{})
-    end
+    end)
 
     ExUnit.plural_rule("property", "properties")
 
@@ -16,6 +16,7 @@ defmodule ExUnit.RegisterTest do
       use ExUnit.Case
 
       :"property is true" = ExUnit.Case.register_test(__ENV__, :property, "is true", [])
+
       def unquote(:"property is true")(_) do
         assert succeed()
       end
@@ -27,17 +28,17 @@ defmodule ExUnit.RegisterTest do
       defp succeed, do: true
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     assert capture_io(fn ->
-      assert ExUnit.run == %{failures: 0, skipped: 0, total: 2}
-    end) =~ "1 property, 1 test, 0 failures"
+             assert ExUnit.run() == %{failures: 0, skipped: 0, total: 2}
+           end) =~ "1 property, 1 test, 0 failures"
   end
 
   test "plural test types" do
-    on_exit fn ->
+    on_exit(fn ->
       ExUnit.configure(plural_rules: %{})
-    end
+    end)
 
     ExUnit.plural_rule("property", "properties")
 
@@ -45,11 +46,13 @@ defmodule ExUnit.RegisterTest do
       use ExUnit.Case
 
       :"property is true" = ExUnit.Case.register_test(__ENV__, :property, "is true", [])
+
       def unquote(:"property is true")(_) do
         assert succeed()
       end
 
       :"property is also true" = ExUnit.Case.register_test(__ENV__, :property, "is also true", [])
+
       def unquote(:"property is also true")(_) do
         assert succeed()
       end
@@ -65,10 +68,10 @@ defmodule ExUnit.RegisterTest do
       defp succeed, do: true
     end
 
-    ExUnit.Server.cases_loaded()
+    ExUnit.Server.modules_loaded()
 
     assert capture_io(fn ->
-      assert ExUnit.run == %{failures: 0, skipped: 0, total: 4}
-    end) =~ "2 properties, 2 tests, 0 failures"
+             assert ExUnit.run() == %{failures: 0, skipped: 0, total: 4}
+           end) =~ "2 properties, 2 tests, 0 failures"
   end
 end

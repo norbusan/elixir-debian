@@ -1,4 +1,4 @@
-Code.require_file "../test_helper.exs", __DIR__
+Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Mix.ConfigTest do
   use MixTest.Case, async: true
@@ -62,6 +62,20 @@ defmodule Mix.ConfigTest do
     assert config() == [my_app: [key: :value]]
   end
 
+  test "import_config/1 raises for recursive import" do
+    use Mix.Config
+
+    exception =
+      assert_raise Mix.Config.LoadError, fn ->
+        import_config fixture_path("configs/imports_recursive.exs")
+      end
+
+    message = Exception.message(exception)
+
+    assert message =~ ~r/could not load config .*\/imports_recursive\.exs\n/
+    assert message =~ ~r/\(ArgumentError\) recursive load of.*\/imports_recursive.exs detected/
+  end
+
   test "import_config/1 with wildcards" do
     use Mix.Config
     import_config fixture_path("configs/good_*.exs")
@@ -91,37 +105,44 @@ defmodule Mix.ConfigTest do
   end
 
   test "read!/1" do
-    assert Mix.Config.read!(fixture_path("configs/good_config.exs")) ==
-           [my_app: [key: :value]]
+    assert Mix.Config.read!(fixture_path("configs/good_config.exs")) == [my_app: [key: :value]]
 
-    assert Mix.Config.read!(fixture_path("configs/good_import.exs")) ==
-           [my_app: [key: :value]]
+    assert Mix.Config.read!(fixture_path("configs/good_import.exs")) == [my_app: [key: :value]]
 
-    exception = assert_raise Mix.Config.LoadError, fn ->
-      Mix.Config.read! fixture_path("configs/bad_app.exs")
-    end
+    exception =
+      assert_raise Mix.Config.LoadError, fn ->
+        Mix.Config.read!(fixture_path("configs/bad_app.exs"))
+      end
 
     assert Exception.message(exception) =~ ~r"could not load config .*bad_app\.exs\n"
-    assert Exception.message(exception) =~ ~r"expected config for app :sample to return keyword list, got: :oops"
 
-    exception = assert_raise Mix.Config.LoadError, fn ->
-      Mix.Config.read! fixture_path("configs/bad_root.exs")
-    end
+    assert Exception.message(exception) =~
+             ~r"expected config for app :sample to return keyword list, got: :oops"
 
-    assert Exception.message(exception) =~ ~r"could not load config .*bad_root\.exs\n"
-    assert Exception.message(exception) =~ ~r"expected config file to return keyword list, got: :oops"
-
-    exception = assert_raise Mix.Config.LoadError, fn ->
-      Mix.Config.read! fixture_path("configs/bad_import.exs")
-    end
+    exception =
+      assert_raise Mix.Config.LoadError, fn ->
+        Mix.Config.read!(fixture_path("configs/bad_root.exs"))
+      end
 
     assert Exception.message(exception) =~ ~r"could not load config .*bad_root\.exs\n"
-    assert Exception.message(exception) =~ ~r"expected config file to return keyword list, got: :oops"
+
+    assert Exception.message(exception) =~
+             ~r"expected config file to return keyword list, got: :oops"
+
+    exception =
+      assert_raise Mix.Config.LoadError, fn ->
+        Mix.Config.read!(fixture_path("configs/bad_import.exs"))
+      end
+
+    assert Exception.message(exception) =~ ~r"could not load config .*bad_root\.exs\n"
+
+    assert Exception.message(exception) =~
+             ~r"expected config file to return keyword list, got: :oops"
   end
 
   test "persist/1" do
     assert Application.get_env(:my_app, :key) == nil
-    Mix.Config.persist [my_app: [key: :value]]
+    Mix.Config.persist(my_app: [key: :value])
     assert Application.get_env(:my_app, :key) == :value
   after
     Application.delete_env(:my_app, :key)

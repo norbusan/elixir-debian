@@ -5,15 +5,14 @@ defmodule Mix.Compilers.Test do
 
   import Record
 
-  defrecordp :source, [
+  defrecordp :source,
     source: nil,
     compile_references: [],
     runtime_references: [],
     external: []
-  ]
 
-  @stale_manifest ".compile.test_stale"
-  @manifest_vsn :v1
+  @stale_manifest "compile.test_stale"
+  @manifest_vsn 1
 
   @doc """
   Requires and runs test files.
@@ -33,18 +32,28 @@ defmodule Mix.Compilers.Test do
 
     case test_files_to_run do
       [] when stale ->
-        Mix.shell.info "No stale tests."
+        Mix.shell().info("No stale tests")
+        :noop
+
+      [] when test_patterns == [] ->
+        Mix.shell().info("There are no tests to run")
         :noop
 
       [] ->
-        Mix.shell.error "Test patterns did not match any file: " <> Enum.join(test_patterns, ", ")
+        message = "Test patterns did not match any file: " <> Enum.join(test_patterns, ", ")
+        Mix.shell().error(message)
         :noop
 
       test_files ->
+        task = Task.async(ExUnit, :run, [])
+
         try do
-          task = Task.async(ExUnit, :run, [])
-          Kernel.ParallelRequire.files(test_files, parallel_require_callbacks)
-          ExUnit.Server.cases_loaded()
+          case Kernel.ParallelCompiler.require(test_files, parallel_require_callbacks) do
+            {:ok, _, _} -> :ok
+            {:error, _, _} -> exit({:shutdown, 1})
+          end
+
+          ExUnit.Server.modules_loaded()
           %{failures: failures} = results = Task.await(task, :infinity)
 
           if failures == 0 do
@@ -52,6 +61,13 @@ defmodule Mix.Compilers.Test do
           end
 
           {:ok, results}
+        catch
+          kind, reason ->
+            stack = System.stacktrace()
+            # In case there is an error, shutdown the runner task
+            # before the error propagates up and trigger links.
+            Task.shutdown(task)
+            :erlang.raise(kind, reason, stack)
         after
           agent_stop(stale_manifest_pid)
         end
@@ -64,12 +80,12 @@ defmodule Mix.Compilers.Test do
     all_sources = read_manifest()
 
     removed =
-      for source(source: source) <- all_sources,
-          not(source in matched_test_files),
-          do: source
+      for source(source: source) <- all_sources, source not in matched_test_files, do: source
 
-    configs = Mix.Project.config_files
-    force = opts[:force] || Mix.Utils.stale?(configs, [manifest]) || test_helper_stale?(test_paths)
+    configs = Mix.Project.config_files()
+
+    force =
+      opts[:force] || Mix.Utils.stale?(configs, [manifest]) || test_helper_stale?(test_paths)
 
     changed =
       if force do
@@ -79,18 +95,21 @@ defmodule Mix.Compilers.Test do
         sources_mtimes = mtimes(all_sources)
 
         # Otherwise let's start with the new sources
-        for(source <- matched_test_files,
-            not List.keymember?(all_sources, source, source(:source)),
-            do: source)
-          ++
         # Plus the sources that have changed in disk
-        for(source(source: source, external: external) <- all_sources,
+        for(
+          source <- matched_test_files,
+          not List.keymember?(all_sources, source, source(:source)),
+          do: source
+        ) ++
+          for(
+            source(source: source, external: external) <- all_sources,
             times = Enum.map([source | external], &Map.fetch!(sources_mtimes, &1)),
             Mix.Utils.stale?(times, [modified]),
-            do: source)
+            do: source
+          )
       end
 
-    stale   = MapSet.new(changed -- removed)
+    stale = MapSet.new(changed -- removed)
     sources = update_stale_sources(all_sources, removed, changed)
 
     test_files_to_run =
@@ -110,18 +129,16 @@ defmodule Mix.Compilers.Test do
     end
   end
 
-  defp agent_write_manifest(nil),
-    do: :noop
+  defp agent_write_manifest(nil), do: :noop
 
   defp agent_write_manifest(pid) do
-    Agent.cast pid, fn sources ->
+    Agent.cast(pid, fn sources ->
       write_manifest(sources)
       sources
-    end
+    end)
   end
 
-  defp agent_stop(nil),
-    do: :noop
+  defp agent_stop(nil), do: :noop
 
   defp agent_stop(pid) do
     Agent.stop(pid, :normal, :infinity)
@@ -144,21 +161,21 @@ defmodule Mix.Compilers.Test do
   end
 
   defp update_stale_sources(sources, removed, changed) do
-    sources =
-      Enum.reject(sources, fn source(source: source) -> source in removed end)
+    sources = Enum.reject(sources, fn source(source: source) -> source in removed end)
+
     sources =
       Enum.reduce(changed, sources, &List.keystore(&2, &1, source(:source), source(source: &1)))
+
     sources
   end
 
   ## Manifest
 
-  defp manifest, do: Path.join(Mix.Project.manifest_path, @stale_manifest)
+  defp manifest, do: Path.join(Mix.Project.manifest_path(), @stale_manifest)
 
   defp read_manifest() do
     try do
-      [@manifest_vsn | sources] =
-        manifest() |> File.read!() |> :erlang.binary_to_term()
+      [@manifest_vsn | sources] = manifest() |> File.read!() |> :erlang.binary_to_term()
       sources
     rescue
       _ -> []
@@ -166,23 +183,15 @@ defmodule Mix.Compilers.Test do
   end
 
   defp write_manifest([]) do
-    manifest()
-    |> File.rm()
-
+    File.rm(manifest())
     :ok
   end
 
   defp write_manifest(sources) do
     manifest = manifest()
+    File.mkdir_p!(Path.dirname(manifest))
 
-    manifest
-    |> Path.dirname()
-    |> File.mkdir_p!()
-
-    manifest_data =
-      [@manifest_vsn | sources]
-      |> :erlang.term_to_binary(compressed: 9)
-
+    manifest_data = :erlang.term_to_binary([@manifest_vsn | sources], [:compressed])
     File.write!(manifest, manifest_data)
   end
 
@@ -203,7 +212,12 @@ defmodule Mix.Compilers.Test do
             do: module,
             into: MapSet.new()
 
-      stale_modules = find_all_dependant_on(stale_modules, elixir_manifest_entries.source, elixir_manifest_entries.module)
+      stale_modules =
+        find_all_dependent_on(
+          stale_modules,
+          elixir_manifest_entries.source,
+          elixir_manifest_entries.module
+        )
 
       for module <- stale_modules,
           source(source: source, runtime_references: r, compile_references: c) <- test_sources,
@@ -215,55 +229,58 @@ defmodule Mix.Compilers.Test do
     end
   end
 
-  defp find_all_dependant_on(modules, sources, all_modules, resolved \\ MapSet.new()) do
+  defp find_all_dependent_on(modules, sources, all_modules, resolved \\ MapSet.new()) do
     new_modules =
       for module <- modules,
-          not module in resolved,
-          dependant_module <- dependant_modules(module, all_modules, sources),
-          do: dependant_module,
+          module not in resolved,
+          dependent_module <- dependent_modules(module, all_modules, sources),
+          do: dependent_module,
           into: modules
 
     if MapSet.size(new_modules) == MapSet.size(modules) do
       new_modules
     else
-      find_all_dependant_on(new_modules, sources, all_modules, modules)
+      find_all_dependent_on(new_modules, sources, all_modules, modules)
     end
   end
 
-  defp dependant_modules(module, modules, sources) do
+  defp dependent_modules(module, modules, sources) do
     for CE.source(source: source, runtime_references: r, compile_references: c) <- sources,
         module in r or module in c,
-        CE.module(source: ^source, module: dependant_module) <- modules,
-        do: dependant_module
+        CE.module(sources: sources, module: dependent_module) <- modules,
+        source in sources,
+        do: dependent_module
   end
 
   ## ParallelRequire callback
 
   defp each_module(pid, cwd, source, module, _binary) do
-    {compile_references, runtime_references} = Kernel.LexicalTracker.remote_references(module)
+    {compile_references, struct_references, runtime_references} =
+      Kernel.LexicalTracker.remote_references(module)
+
     external = get_external_resources(module, cwd)
     source = Path.relative_to(source, cwd)
 
-    Agent.cast pid, fn sources ->
+    Agent.cast(pid, fn sources ->
       external =
         case List.keyfind(sources, source, source(:source)) do
           source(external: old_external) -> external ++ old_external
           nil -> external
         end
 
-      new_source = source(
-        source: source,
-        compile_references: compile_references,
-        runtime_references: runtime_references,
-        external: external
-      )
+      new_source =
+        source(
+          source: source,
+          compile_references: compile_references ++ struct_references,
+          runtime_references: runtime_references,
+          external: external
+        )
 
       List.keystore(sources, source, source(:source), new_source)
-    end
+    end)
   end
 
   defp get_external_resources(module, cwd) do
-    for file <- Module.get_attribute(module, :external_resource),
-        do: Path.relative_to(file, cwd)
+    for file <- Module.get_attribute(module, :external_resource), do: Path.relative_to(file, cwd)
   end
 end

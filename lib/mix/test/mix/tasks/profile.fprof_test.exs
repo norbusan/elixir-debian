@@ -1,4 +1,4 @@
-Code.require_file "../../test_helper.exs", __DIR__
+Code.require_file("../../test_helper.exs", __DIR__)
 
 defmodule Mix.Tasks.Profile.FprofTest do
   use MixTest.Case
@@ -6,18 +6,13 @@ defmodule Mix.Tasks.Profile.FprofTest do
   import ExUnit.CaptureIO
 
   alias Mix.Tasks.Profile.Fprof
-
   @moduletag apps: [:sample]
-
-  setup do
-    Mix.Project.push MixTest.Case.Sample
-  end
 
   test "profiles evaluated expression", context do
     in_tmp context.test, fn ->
       assert capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)"])
-      end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
+               Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)"])
+             end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
     end
   end
 
@@ -25,31 +20,30 @@ defmodule Mix.Tasks.Profile.FprofTest do
     in_tmp context.test, fn ->
       profile_script_name = "profile_script.ex"
 
-      File.write! profile_script_name, """
+      File.write!(profile_script_name, """
       Enum.each(1..5, fn(_) -> MapSet.new end)
-      """
+      """)
 
       assert capture_io(fn ->
-        Fprof.run([profile_script_name])
-      end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
+               Fprof.run([profile_script_name])
+             end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
     end
   end
 
   test "expands callers", context do
     in_tmp context.test, fn ->
       assert capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--callers"])
-      end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3} +<--)
+               Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--callers"])
+             end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3} +<--)
     end
   end
 
   test "expands processes", context do
     in_tmp context.test, fn ->
-      output = capture_io(fn ->
-        Fprof.run(["-e", "spawn(fn -> :ok end); Enum.each(1..5, fn(_) -> MapSet.new end)", "--details"])
-      end)
-      assert output =~ ~r(#{:erlang.pid_to_list(self)} +\d+ +\d+\.\d{3})
-      assert output =~ ~r(spawned by #{:erlang.pid_to_list(self)})
+      expr = "spawn(fn -> Process.sleep(:infinity) end); Enum.each(1..5, fn(_) -> MapSet.new end)"
+      output = capture_io(fn -> Fprof.run(["-e", expr, "--details"]) end)
+      assert output =~ ~r(#{:erlang.pid_to_list(self())} +\d+ +\d+\.\d{3})
+      assert output =~ ~r(spawned by #{:erlang.pid_to_list(self())})
       assert output =~ ~r(as :erlang.apply)
       assert output =~ ~r(initial calls:)
     end
@@ -57,33 +51,38 @@ defmodule Mix.Tasks.Profile.FprofTest do
 
   test "sort options", context do
     in_tmp context.test, fn ->
-      assert capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--sort", "acc"])
-      end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
+      expr = "Enum.each(1..5, fn(_) -> MapSet.new end)"
 
-      assert capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--sort", "own"])
-      end) =~ ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
+      assert capture_io(fn -> Fprof.run(["-e", expr, "--sort", "acc"]) end) =~
+               ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
+
+      expr = "Enum.each(1..5, fn(_) -> MapSet.new end)"
+
+      assert capture_io(fn -> Fprof.run(["-e", expr, "--sort", "own"]) end) =~
+               ~r(MapSet\.new/0 *5 *\d+\.\d{3} *\d+\.\d{3})
     end
   end
 
   test "errors on missing files", context do
     in_tmp context.test, fn ->
-      assert_raise Mix.Error, "No files matched pattern \"non-existent\" given to --require", fn ->
-        capture_io(fn -> Fprof.run ["-r", "non-existent"] end)
+      message = "No files matched pattern \"non-existent\" given to --require"
+
+      assert_raise Mix.Error, message, fn ->
+        capture_io(fn -> Fprof.run(["-r", "non-existent"]) end)
       end
 
-      assert_raise Mix.Error, "No files matched pattern \"non-existent\" given to --parallel-require", fn ->
-        capture_io(fn -> Fprof.run ["-pr", "non-existent"] end)
+      assert_raise Mix.Error, message, fn ->
+        capture_io(fn -> Fprof.run(["-pr", "non-existent"]) end)
       end
 
       assert_raise Mix.Error, "No such file: non-existent", fn ->
-        capture_io(fn -> Fprof.run ["non-existent"] end)
+        capture_io(fn -> Fprof.run(["non-existent"]) end)
       end
 
       File.mkdir_p!("lib")
+
       assert_raise Mix.Error, "No such file: lib", fn ->
-        capture_io(fn -> Fprof.run ["lib"] end)
+        capture_io(fn -> Fprof.run(["lib"]) end)
       end
     end
   end
@@ -91,12 +90,12 @@ defmodule Mix.Tasks.Profile.FprofTest do
   test "warmup", context do
     in_tmp context.test, fn ->
       assert capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)"])
-      end) =~ "Warmup..."
+               Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)"])
+             end) =~ "Warmup..."
 
       refute capture_io(fn ->
-        Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--no-warmup"])
-      end) =~ "Warmup..."
+               Fprof.run(["-e", "Enum.each(1..5, fn(_) -> MapSet.new end)", "--no-warmup"])
+             end) =~ "Warmup..."
     end
   end
 end

@@ -3,6 +3,9 @@
 -export([extract/6, unescape_chars/1, unescape_chars/2,
 unescape_tokens/1, unescape_tokens/2, unescape_map/1]).
 -include("elixir.hrl").
+-define(is_hex(S), ((S >= $0 andalso S =< $9) orelse
+                    (S >= $A andalso S =< $F) orelse
+                    (S >= $a andalso S =< $f))).
 
 %% Extract string interpolations
 
@@ -25,10 +28,20 @@ extract(Line, Column, _Scope, _Interpol, [Last | Remaining], Buffer, Output, Las
 %% Going through the string
 
 extract(Line, _Column, Scope, true, [$\\, $\n | Rest], Buffer, Output, Last) ->
-  extract(Line+1, 1, Scope, true, Rest, Buffer, Output, Last);
+  NewBuffer =
+    case Scope#elixir_tokenizer.unescape of
+      true -> Buffer;
+      false -> [$\n, $\\ |  Buffer]
+    end,
+  extract(Line+1, 1, Scope, true, Rest, NewBuffer, Output, Last);
 
 extract(Line, _Column, Scope, true, [$\\, $\r, $\n | Rest], Buffer, Output, Last) ->
-  extract(Line+1, 1, Scope, true, Rest, Buffer, Output, Last);
+  NewBuffer =
+    case Scope#elixir_tokenizer.unescape of
+      true -> Buffer;
+      false -> [$\n, $\r, $\\ |  Buffer]
+    end,
+  extract(Line+1, 1, Scope, true, Rest, NewBuffer, Output, Last);
 
 extract(Line, _Column, Scope, Interpol, [$\n | Rest], Buffer, Output, Last) ->
   extract(Line+1, 1, Scope, Interpol, Rest, [$\n | Buffer], Output, Last);
@@ -37,17 +50,17 @@ extract(Line, Column, Scope, Interpol, [$\\, Last | Rest], Buffer, Output, Last)
   extract(Line, Column+2, Scope, Interpol, Rest, [Last | Buffer], Output, Last);
 
 extract(Line, Column, Scope, true, [$\\, $#, ${ | Rest], Buffer, Output, Last) ->
-  extract(Line, Column+1, Scope, true, Rest, [${, $# | Buffer], Output, Last);
+  extract(Line, Column+1, Scope, true, Rest, [${, $#, $\\ | Buffer], Output, Last);
 
 extract(Line, Column, Scope, true, [$#, ${ | Rest], Buffer, Output, Last) ->
   Output1 = build_string(Line, Buffer, Output),
   case elixir_tokenizer:tokenize(Rest, Line, Column + 2, Scope) of
-    {error, {{EndLine, _, EndColumn}, _, "}"}, [$} | NewRest], Tokens} ->
-      Output2 = build_interpol(Line, Column, EndColumn, Tokens, Output1),
-      extract(EndLine, EndColumn, Scope, true, NewRest, [], Output2, Last);
+    {error, {{EndLine, EndColumn, _}, _, "}"}, [$} | NewRest], Tokens} ->
+      Output2 = build_interpol(Line, Column, EndLine, Tokens, Output1),
+      extract(EndLine, EndColumn + 1, Scope, true, NewRest, [], Output2, Last);
     {error, Reason, _, _} ->
       {error, Reason};
-    {ok, _EndLine, _EndColumn, _} ->
+    {ok, _} ->
       {error, {string, Line, "missing interpolation terminator:}", []}}
   end;
 
@@ -79,13 +92,13 @@ unescape_chars(String, Map) ->
   unescape_chars(String, Map, <<>>).
 
 unescape_chars(<<$\\, $x, Rest/binary>>, Map, Acc) ->
-  case Map($x) of
+  case Map(hex) of
     true  -> unescape_hex(Rest, Map, Acc);
     false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, $x>>)
   end;
 
 unescape_chars(<<$\\, $u, Rest/binary>>, Map, Acc) ->
-  case Map($u) of
+  case Map(unicode) of
     true  -> unescape_unicode(Rest, Map, Acc);
     false -> unescape_chars(Rest, Map, <<Acc/binary, $\\, $u>>)
   end;
@@ -178,6 +191,8 @@ append_codepoint(Rest, Map, List, Acc, Base) ->
       error('Elixir.ArgumentError':exception([{message, Msg}]))
   end.
 
+unescape_map(unicode) -> true;
+unescape_map(hex) -> true;
 unescape_map($0) -> 0;
 unescape_map($a) -> 7;
 unescape_map($b) -> $\b;
@@ -189,16 +204,14 @@ unescape_map($r) -> $\r;
 unescape_map($s) -> $\s;
 unescape_map($t) -> $\t;
 unescape_map($v) -> $\v;
-unescape_map($x) -> true;
-unescape_map($u) -> true;
 unescape_map(E)  -> E.
 
 % Extract Helpers
 
 finish_extraction(Line, Column, Buffer, Output, Remaining) ->
-  case build_string(Line, Buffer, Output) of
-    []    -> Final = [<<>>];
-    Final -> []
+  Final = case build_string(Line, Buffer, Output) of
+    [] -> [<<>>];
+    F  -> F
   end,
 
   {Line, Column, lists:reverse(Final), Remaining}.
@@ -207,5 +220,5 @@ build_string(_Line, [], Output) -> Output;
 build_string(_Line, Buffer, Output) ->
   [elixir_utils:characters_to_binary(lists:reverse(Buffer)) | Output].
 
-build_interpol(Line, Column, EndColumn, Buffer, Output) ->
-  [{{Line, Column, EndColumn}, lists:reverse(Buffer)} | Output].
+build_interpol(Line, Column, EndLine, Buffer, Output) ->
+  [{{Line, Column, EndLine}, lists:reverse(Buffer)} | Output].

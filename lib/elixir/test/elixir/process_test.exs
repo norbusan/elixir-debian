@@ -1,4 +1,4 @@
-Code.require_file "test_helper.exs", __DIR__
+Code.require_file("test_helper.exs", __DIR__)
 
 defmodule ProcessTest do
   use ExUnit.Case, async: true
@@ -9,7 +9,9 @@ defmodule ProcessTest do
     assert Process.put(:foo, :bar) == nil
     assert Process.put(:foo, :baz) == :bar
 
-    assert Process.get_keys() == [:foo]
+    assert Enum.member?(Process.get_keys(), :foo)
+    refute Enum.member?(Process.get_keys(), :bar)
+    refute Enum.member?(Process.get_keys(), :baz)
     assert Process.get_keys(:bar) == []
     assert Process.get_keys(:baz) == [:foo]
 
@@ -19,14 +21,17 @@ defmodule ProcessTest do
   end
 
   test "group_leader/2 and group_leader/0" do
-    another = spawn_link(fn -> :timer.sleep(1000) end)
-    assert Process.group_leader(self, another)
-    assert Process.group_leader == another
+    another = spawn_link(fn -> Process.sleep(1000) end)
+    assert Process.group_leader(self(), another)
+    assert Process.group_leader() == another
   end
 
-  test "monitoring functions are inlined by the compiler" do
+  # In contrast with other inlined functions,
+  # it is important to test that monitor/1 is inlined,
+  # this way we gain the monitor receive optimisation.
+  test "monitor/1 is inlined" do
     assert expand(quote(do: Process.monitor(pid())), __ENV__) ==
-           quote(do: :erlang.monitor(:process, pid()))
+             quote(do: :erlang.monitor(:process, pid()))
   end
 
   test "sleep/1" do
@@ -34,7 +39,7 @@ defmodule ProcessTest do
   end
 
   test "info/2" do
-    pid = spawn fn -> :timer.sleep(1000) end
+    pid = spawn(fn -> Process.sleep(1000) end)
     assert Process.info(pid, :priority) == {:priority, :normal}
     assert Process.info(pid, [:priority]) == [priority: :normal]
 
@@ -44,23 +49,17 @@ defmodule ProcessTest do
   end
 
   test "info/2 with registered name" do
-    pid = spawn fn -> nil end
+    pid = spawn(fn -> nil end)
     Process.exit(pid, :kill)
-    assert Process.info(pid, :registered_name) ==
-           nil
-    assert Process.info(pid, [:registered_name]) ==
-           nil
+    assert Process.info(pid, :registered_name) == nil
+    assert Process.info(pid, [:registered_name]) == nil
 
-    assert Process.info(self, :registered_name) ==
-           {:registered_name, []}
-    assert Process.info(self, [:registered_name]) ==
-           [registered_name: []]
+    assert Process.info(self(), :registered_name) == {:registered_name, []}
+    assert Process.info(self(), [:registered_name]) == [registered_name: []]
 
-    Process.register(self, __MODULE__)
-    assert Process.info(self, :registered_name) ==
-           {:registered_name, __MODULE__}
-    assert Process.info(self, [:registered_name]) ==
-           [registered_name: __MODULE__]
+    Process.register(self(), __MODULE__)
+    assert Process.info(self(), :registered_name) == {:registered_name, __MODULE__}
+    assert Process.info(self(), [:registered_name]) == [registered_name: __MODULE__]
   end
 
   test "send_after/3 sends messages once expired" do
@@ -68,24 +67,36 @@ defmodule ProcessTest do
     assert_receive :hello
   end
 
+  test "send_after/4 with absolute time sends message once expired" do
+    time = System.monotonic_time(:millisecond) + 10
+    Process.send_after(self(), :hello, time, abs: true)
+    assert_receive :hello
+  end
+
   test "send_after/3 returns a timer reference that can be read or cancelled" do
     timer = Process.send_after(self(), :hello, 100_000)
     refute_received :hello
-    assert is_integer Process.read_timer(timer)
-    assert is_integer Process.cancel_timer(timer)
+    assert is_integer(Process.read_timer(timer))
+    assert is_integer(Process.cancel_timer(timer))
 
     timer = Process.send_after(self(), :hello, 0)
     assert_receive :hello
     assert Process.read_timer(timer) == false
     assert Process.cancel_timer(timer) == false
+
+    timer = Process.send_after(self(), :hello, 100_000)
+    assert Process.cancel_timer(timer, async: true)
+    assert_receive {:cancel_timer, ^timer, result}
+    assert is_integer(result)
   end
 
   test "exit(pid, :normal) does not cause the target process to exit" do
-    pid = spawn_link fn ->
-      receive do
-        :done -> nil
-      end
-    end
+    pid =
+      spawn_link(fn ->
+        receive do
+          :done -> nil
+        end
+      end)
 
     trap = Process.flag(:trap_exit, true)
     true = Process.exit(pid, :normal)
@@ -102,12 +113,15 @@ defmodule ProcessTest do
 
   test "exit(pid, :normal) makes the process receive a message if it traps exits" do
     parent = self()
-    pid = spawn_link fn ->
-      Process.flag(:trap_exit, true)
-      receive do
-        {:EXIT, ^parent, :normal} -> send(parent, {:ok, self()})
-      end
-    end
+
+    pid =
+      spawn_link(fn ->
+        Process.flag(:trap_exit, true)
+
+        receive do
+          {:EXIT, ^parent, :normal} -> send(parent, {:ok, self()})
+        end
+      end)
 
     refute_receive _
     Process.exit(pid, :normal)
@@ -116,18 +130,14 @@ defmodule ProcessTest do
   end
 
   test "exit(self(), :normal) causes the calling process to exit" do
-    trap = Process.flag(:trap_exit, true)
-
-    pid = spawn_link fn -> Process.exit(self(), :normal) end
-
+    Process.flag(:trap_exit, true)
+    pid = spawn_link(fn -> Process.exit(self(), :normal) end)
     assert_receive {:EXIT, ^pid, :normal}
     refute Process.alive?(pid)
-
-    Process.flag(:trap_exit, trap)
   end
 
   defp expand(expr, env) do
-    {expr, _env} = :elixir_exp.expand(expr, env)
+    {expr, _env} = :elixir_expand.expand(expr, env)
     expr
   end
 end

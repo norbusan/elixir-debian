@@ -1,12 +1,14 @@
 ![Elixir](https://github.com/elixir-lang/elixir-lang.github.com/raw/master/images/logo/logo.png)
 =========
-[![Build Status](https://secure.travis-ci.org/elixir-lang/elixir.svg?branch=master
+[![Travis build](https://secure.travis-ci.org/elixir-lang/elixir.svg?branch=master
 "Build Status")](https://travis-ci.org/elixir-lang/elixir)
+
+Elixir is a dynamic, functional language designed for building scalable and maintainable applications.
 
 For more about Elixir, installation and documentation,
 [check Elixir's website](http://elixir-lang.org/).
 
-## Usage
+## Compiling from source
 
 To run Elixir from source, clone this repository to your machine, compile and test it:
 
@@ -24,25 +26,48 @@ If Elixir fails to build (specifically when pulling in a new version via
 `git`), be sure to remove any previous build artifacts by running
 `make clean`, then `make test`.
 
-If tests pass, you are ready to move on to the
-[Getting Started guide][1] or to try Interactive Elixir by running:
-`bin/iex` in your terminal.
+If tests pass, you are ready to move on to the [Getting Started guide][1]
+or to try Interactive Elixir by running `bin/iex` in your terminal.
 
 However, if tests fail, it is likely you have an outdated Erlang version
-(Elixir requires Erlang 18.0 or later). You can check your Erlang version
+(Elixir requires Erlang 19.0 or later). You can check your Erlang version
 by calling `erl` in the command line. You will see some information as follows:
 
-    Erlang/OTP 18 [erts-7.0] [source] [smp:2:2] [async-threads:10] [hipe] [kernel-poll:false]
+    Erlang/OTP 19 [erts-8.0] [smp:2:2] [async-threads:10] [kernel-poll:false]
 
-If you have the correct version and tests still fail, please
-[open an issue][2].
+If you have properly set up your dependencies and tests still fail,
+you may want to open up a bug report, as explained next.
+
+## Bug reports
+
+For reporting bugs, [visit our issues tracker][2] and follow the steps
+for reporting a new issue. Please disclose security vulnerabilities
+privately at elixir-security@googlegroups.com.
+
+## Proposing new features
+
+For proposing new features, please start a discussion in the
+[Elixir Core mailing list][3]. Keep in mind that it is your responsibility
+to argue and explain why a feature is useful and how it will impact the
+codebase and the community.
+
+Once a proposal is accepted, it will be added to [the issues tracker][2].
+The issues tracker focuses on *actionable items* and it holds a list of
+upcoming enhancements and pending bugs. All entries in the tracker are
+tagged for clarity and to ease collaboration.
+
+Features and bug fixes that have already been merged and will be included
+in the next release are marked as "closed" in the issues tracker and are
+added to the [CHANGELOG](CHANGELOG.md).
+
+Finally, remember all interactions in our official spaces follow our
+[Code of Conduct][7].
 
 ## Contributing
 
-We welcome everyone to contribute to Elixir and help us tackle
-existing issues! To do so, there are a few things you need to know
-about the code. First, Elixir code is divided in applications inside
-the `lib` folder:
+We welcome everyone to contribute to Elixir. To do so, there are a few
+things you need to know about the code. First, Elixir code is divided
+in applications inside the `lib` folder:
 
 * `elixir` - Contains Elixir's kernel and stdlib
 
@@ -58,7 +83,8 @@ the `lib` folder:
 
 You can run all tests in the root directory with `make test` and you can
 also run tests for a specific framework `make test_#{NAME}`, for example,
-`make test_ex_unit`.
+`make test_ex_unit`. If you just changed something in the Elixir's standard
+library, you can run only that portion through `make test_stdlib`.
 
 In case you are changing a single file, you can compile and run tests only
 for that particular file for fast development cycles. For example, if you
@@ -69,12 +95,27 @@ bin/elixirc lib/elixir/lib/string.ex -o lib/elixir/ebin
 bin/elixir lib/elixir/test/elixir/string_test.exs
 ```
 
-After your changes are done, please remember to run the full suite with
-`make test`.
+To recompile (including Erlang modules):
 
-From time to time, your tests may fail in an existing Elixir checkout and
-may require a clean start by running `make clean compile`. You can always
-check [the official build status on Travis-CI](https://travis-ci.org/elixir-lang/elixir).
+```sh
+make compile
+```
+
+After your changes are done, please remember to run the full suite with
+`make test` and then `mix format` to guarantee all files are properly
+formatted.
+
+If your contribution fails during the bootstrapping of the language,
+you can rebuild the language from scratch with:
+
+```sh
+make clean_elixir compile
+```
+
+Similarly, if you can't get Elixir to compile or the tests to pass after
+updating an existing checkout, run `make clean compile`. You can check
+[the official build status on Travis-CI](https://travis-ci.org/elixir-lang/elixir).
+More tasks can be found by reading the [Makefile](./Makefile).
 
 With tests running and passing, you are ready to contribute to Elixir and
 [send a pull request](https://help.github.com/articles/using-pull-requests/).
@@ -85,12 +126,28 @@ case you are looking for some examples:
 * [Add String.valid? – Pull Request](https://github.com/elixir-lang/elixir/pull/1058)
 * [Implement capture_io for ExUnit – Pull Request](https://github.com/elixir-lang/elixir/pull/1059)
 
-We usually keep a list of enhancements and bugs [in the issue tracker][2].
-For proposing a new feature, please start a discussion in the
-[Elixir Core mailing list][3]. Keep in mind that it is your responsibility
-to argue and explain why a feature is useful and how it will impact the
-codebase and the community. Finally, remember all interactions in our official
-spaces follow our [Code of Conduct][7].
+### Reviewing changes
+
+Once a pull request is sent, the Elixir team will review your changes.
+We outline our process below to clarify the roles of everyone involved.
+
+All pull requests must be approved by two committers before being merged into
+the repository. If any changes are necessary, the team will leave appropriate
+comments requesting changes to the code. Unfortunately we cannot guarantee a
+pull request will be merged, even when modifications are requested, as the Elixir
+team will re-evaluate the contribution as it changes.
+
+Committers may also push style changes directly to your branch. If you would
+rather manage all changes yourself, you can disable "Allow edits from maintainers"
+feature when submitting your pull request.
+
+The Elixir team may optionally assign someone to review a pull request.
+In case someone is assigned, they must explicitly approve the code before
+another team member can merge it.
+
+When the review finishes, your pull request will be squashed and merged
+into the repository. If you have carefully organized your commits and
+believe they should be merged without squashing, leave a comment.
 
 ## Building documentation
 
@@ -104,20 +161,20 @@ cd ex_doc && ../elixir/bin/mix do deps.get, compile
 cd ../elixir && make docs
 ```
 
-This will produce documentation sets for `elixir`, `mix`, etc., under
+This will produce documentation sets for `elixir`, `mix`, etc. under
 the `doc` directory. If you are planning to contribute documentation,
-[please check our best practices for writing documentation](http://elixir-lang.org/docs/stable/elixir/writing-documentation.html).
+[please check our best practices for writing documentation](https://hexdocs.pm/elixir/writing-documentation.html).
 
 ## Development links
 
-  * [Elixir Website][1]
+  * [Elixir Getting Started guide][1]
   * [Elixir Documentation][6]
   * [Elixir Core Mailing list (development)][3]
   * [Issues tracker][2]
   * [Code of Conduct][7]
   * **[#elixir-lang][4]** on [Freenode][5] IRC
 
-  [1]: http://elixir-lang.org
+  [1]: https://elixir-lang.org/getting-started/introduction.html
   [2]: https://github.com/elixir-lang/elixir/issues
   [3]: https://groups.google.com/group/elixir-lang-core
   [4]: https://webchat.freenode.net/?channels=#elixir-lang

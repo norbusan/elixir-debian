@@ -1,15 +1,15 @@
-Code.require_file "../../test_helper.exs", __DIR__
+Code.require_file("../../test_helper.exs", __DIR__)
 
 defmodule IO.ANSI.DocsTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureIO
 
   def format_heading(str) do
-    capture_io(fn -> IO.ANSI.Docs.print_heading(str, []) end) |> String.trim_trailing
+    capture_io(fn -> IO.ANSI.Docs.print_heading(str, []) end) |> String.trim_trailing()
   end
 
   def format(str) do
-    capture_io(fn -> IO.ANSI.Docs.print(str, []) end) |> String.trim_trailing
+    capture_io(fn -> IO.ANSI.Docs.print(str, []) end) |> String.trim_trailing()
   end
 
   test "heading is formatted" do
@@ -21,31 +21,31 @@ defmodule IO.ANSI.DocsTest do
 
   test "first level heading is converted" do
     result = format("# wibble\n\ntext\n")
-    assert result == "\e[33mWIBBLE\e[0m\n\e[0m\ntext\n\e[0m"
+    assert result == "\e[33m# wibble\e[0m\n\e[0m\ntext\n\e[0m"
   end
 
   test "second level heading is converted" do
     result = format("## wibble\n\ntext\n")
-    assert result == "\e[33mwibble\e[0m\n\e[0m\ntext\n\e[0m"
+    assert result == "\e[33m## wibble\e[0m\n\e[0m\ntext\n\e[0m"
   end
 
   test "third level heading is converted" do
-    result = format("## wibble\n\ntext\n")
-    assert result == "\e[33mwibble\e[0m\n\e[0m\ntext\n\e[0m"
+    result = format("### wibble\n\ntext\n")
+    assert result == "\e[33m### wibble\e[0m\n\e[0m\ntext\n\e[0m"
   end
 
   test "code block is converted" do
     result = format("line\n\n    code\n    code2\n\nline2\n")
-    assert result == "line\n\e[0m\n\e[36m\e[1m┃ code\n┃ code2\e[0m\n\e[0m\nline2\n\e[0m"
+    assert result == "line\n\e[0m\n\e[36m    code\n    code2\e[0m\n\e[0m\nline2\n\e[0m"
   end
 
   test "fenced code block is converted" do
     result = format("line\n```\ncode\ncode2\n```\nline2\n")
-    assert result == "line\n\e[0m\n\e[36m\e[1m┃ code\n┃ code2\e[0m\n\e[0m\nline2\n\e[0m"
+    assert result == "line\n\e[0m\n\e[36m    code\n    code2\e[0m\n\e[0m\nline2\n\e[0m"
     result = format("line\n```elixir\ncode\ncode2\n```\nline2\n")
-    assert result == "line\n\e[0m\n\e[36m\e[1m┃ code\n┃ code2\e[0m\n\e[0m\nline2\n\e[0m"
+    assert result == "line\n\e[0m\n\e[36m    code\n    code2\e[0m\n\e[0m\nline2\n\e[0m"
     result = format("line\n~~~elixir\ncode\n```\n~~~\nline2\n")
-    assert result == "line\n\e[0m\n\e[36m\e[1m┃ code\n┃ ```\e[0m\n\e[0m\nline2\n\e[0m"
+    assert result == "line\n\e[0m\n\e[36m    code\n    ```\e[0m\n\e[0m\nline2\n\e[0m"
   end
 
   test "* list is converted" do
@@ -75,7 +75,7 @@ defmodule IO.ANSI.DocsTest do
 
   test "* lists with code" do
     result = format("  * one\n        two three")
-    assert result == "  • one\n\e[36m\e[1m    ┃ two three\e[0m\n\e[0m\n\e[0m"
+    assert result == "  • one\n\e[36m        two three\e[0m\n\e[0m\n\e[0m"
   end
 
   test "- list is converted" do
@@ -161,7 +161,7 @@ defmodule IO.ANSI.DocsTest do
     assert result == "\e[36mhello world\e[0m unit test \e[36mhello world\e[0m\n\e[0m"
   end
 
-  test "star/underscore preceeded by space doesn't get interpreted" do
+  test "star/underscore preceded by space doesn't get interpreted" do
     result = format("_unit _size")
     assert result == "_unit _size\n\e[0m"
 
@@ -172,7 +172,7 @@ defmodule IO.ANSI.DocsTest do
     assert result == "*unit *size\n\e[0m"
   end
 
-  test "star/underscore/backtick preceeded by non-space delimiters gets interpreted" do
+  test "star/underscore/backtick preceded by non-space delimiters gets interpreted" do
     result = format("(`hello world`)")
     assert result == "(\e[36mhello world\e[0m)\n\e[0m"
     result = format("<`hello world`>")
@@ -209,7 +209,7 @@ defmodule IO.ANSI.DocsTest do
     assert result == "foo*bar*\n\e[0m"
   end
 
-  test "backtick preceeded by space gets interpreted" do
+  test "backtick preceded by space gets interpreted" do
     result = format("`unit `size")
     assert result == "\e[36munit \e[0msize\n\e[0m"
   end
@@ -280,41 +280,58 @@ defmodule IO.ANSI.DocsTest do
 
   test "escaping of underlines within links does not escape surrounding text" do
     result = format("_emphasis_ (https://en.wikipedia.org/wiki/ANSI_escape_code) more _emphasis_")
-    assert result == "\e[4memphasis\e[0m (https://en.wikipedia.org/wiki/ANSI_escape_code) more \e[4memphasis\e[0m\n\e[0m"
+
+    assert result ==
+             "\e[4memphasis\e[0m (https://en.wikipedia.org/wiki/ANSI_escape_code) more \e[4memphasis\e[0m\n\e[0m"
   end
 
   test "lone thing that looks like a table line isn't" do
-    assert format("one\n2 | 3\ntwo\n") ==
-           "one 2 | 3 two\n\e[0m"
+    assert format("one\n2 | 3\ntwo\n") == "one 2 | 3 two\n\e[0m"
   end
 
   test "lone table line at end of input isn't" do
-    assert format("one\n2 | 3") ==
-           "one 2 | 3\n\e[0m"
+    assert format("one\n2 | 3") == "one 2 | 3\n\e[0m"
   end
 
   test "two successive table lines are a table" do
-    assert format("a | b\none | two\n") ==
-           "a   | b  \none | two\n\e[0m"  # note spacing
+    # note spacing
+    assert format("a | b\none | two\n") == "a   | b  \none | two\n\e[0m"
   end
 
   test "table with heading" do
     assert format("column 1 | and 2\n-- | --\na | b\none | two\n") ==
-           "\e[7mcolumn 1 | and 2\e[0m\na        | b    \none      | two  \n\e[0m"
+             "\e[7mcolumn 1 | and 2\e[0m\na        | b    \none      | two  \n\e[0m"
+  end
+
+  test "table with heading alignment" do
+    table = """
+    column 1 | 2        | and three
+    -------: | :------: | :-----
+        a    |  even    | c\none | odd | three
+    """
+
+    expected =
+      """
+      \e[7mcolumn 1 |   2   | and three\e[0m
+             a | even  | c\s\s\s\s\s\s\s\s
+           one |  odd  | three\s\s\s\s
+      \e[0m
+      """
+      |> String.trim_trailing()
+
+    assert format(table) == expected
   end
 
   test "table with formatting in cells" do
-    assert format("`a` | _b_\nc | d") ==
-           "\e[36ma\e[0m | \e[4mb\e[0m\nc | d\n\e[0m"
+    assert format("`a` | _b_\nc | d") == "\e[36ma\e[0m | \e[4mb\e[0m\nc | d\n\e[0m"
   end
 
   test "table with variable number of columns" do
-    assert format("a | b | c\nd | e") ==
-           "a | b | c\nd | e |  \n\e[0m"
+    assert format("a | b | c\nd | e") == "a | b | c\nd | e |  \n\e[0m"
   end
 
   test "one reference link label per line" do
     assert format("  [id]: //example.com\n  [Elixir]:  http://elixir-lang.org") ==
-           "  [id]: //example.com\n  [Elixir]:  http://elixir-lang.org"
+             "  [id]: //example.com\n  [Elixir]:  http://elixir-lang.org"
   end
 end
