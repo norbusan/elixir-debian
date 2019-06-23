@@ -116,10 +116,9 @@ defmodule Kernel.CLI do
             exit(reason)
 
           kind, reason ->
-            stack = System.stacktrace()
-            print_error(kind, reason, stack)
+            print_error(kind, reason, __STACKTRACE__)
             send(parent, {self(), {:shutdown, 1}})
-            exit(to_exit(kind, reason, stack))
+            exit(to_exit(kind, reason, __STACKTRACE__))
         else
           _ ->
             send(parent, {self(), res})
@@ -176,7 +175,7 @@ defmodule Kernel.CLI do
     "    " <> String.replace(string, "\n", "\n    ")
   end
 
-  @elixir_internals [:elixir, :elixir_expand, :elixir_compiler, :elixir_module] ++
+  @elixir_internals [:elixir, :elixir_aliases, :elixir_expand, :elixir_compiler, :elixir_module] ++
                       [:elixir_clauses, :elixir_lexical, :elixir_def, :elixir_map] ++
                       [:elixir_erl, :elixir_erl_clauses, :elixir_erl_pass, Kernel.ErrorHandler]
 

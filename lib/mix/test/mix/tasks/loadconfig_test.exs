@@ -7,7 +7,7 @@ defmodule Mix.Tasks.LoadconfigTest do
   test "reads and persists project configuration", context do
     Mix.Project.push(MixTest.Case.Sample)
 
-    in_tmp context.test, fn ->
+    in_tmp(context.test, fn ->
       write_config("""
       [my_app: [key: :project]]
       """)
@@ -24,7 +24,7 @@ defmodule Mix.Tasks.LoadconfigTest do
       # Later values should have higher precedence
       Mix.Task.run("loadconfig", [fixture_path("configs/good_config.exs")])
       assert Application.fetch_env(:my_app, :key) == {:ok, :value}
-    end
+    end)
   end
 
   @tag apps: [:config_app]
@@ -32,7 +32,7 @@ defmodule Mix.Tasks.LoadconfigTest do
     Mix.ProjectStack.post_config(config_path: "fresh.config")
     Mix.Project.push(MixTest.Case.Sample)
 
-    in_tmp context.test, fn ->
+    in_tmp(context.test, fn ->
       write_config("fresh.config", """
       [config_app: [key: :value]]
       """)
@@ -43,10 +43,31 @@ defmodule Mix.Tasks.LoadconfigTest do
 
       File.rm("fresh.config")
 
-      assert_raise Mix.Config.LoadError, ~r"could not load config fresh\.config", fn ->
+      assert_raise Code.LoadError, ~r"could not load .*/fresh\.config", fn ->
         Mix.Task.run("loadconfig", [])
       end
-    end
+    end)
+  end
+
+  test "updates config files and config mtime", context do
+    Mix.Project.push(MixTest.Case.Sample)
+
+    in_tmp(context.test, fn ->
+      mtime = Mix.Project.config_mtime()
+      config = Path.expand("config/config.exs")
+      refute config in Mix.Project.config_files()
+
+      write_config(config, "[]")
+      Mix.Task.run("loadconfig", [config])
+      assert config in Mix.Project.config_files()
+      assert Mix.Project.config_mtime() > mtime
+
+      # Touching it should not have any deadlocks
+      File.touch!(config, {{2030, 1, 1}, {0, 0, 0}})
+      Mix.Task.run("loadconfig", [config])
+      assert config in Mix.Project.config_files()
+      assert Mix.Project.config_mtime() > mtime
+    end)
   end
 
   defp write_config(path \\ "config/config.exs", contents) do

@@ -309,32 +309,6 @@ defmodule Code.Formatter.IntegrationTest do
     """
   end
 
-  test "case with empty clause" do
-    ExUnit.CaptureIO.capture_io(:stderr, fn ->
-      bad = """
-      def hello(world) do
-        case world do
-          :world -> IO.inspect world
-
-          _ ->
-        end
-      end
-      """
-
-      assert_format bad, """
-      def hello(world) do
-        case world do
-          :world ->
-            IO.inspect(world)
-
-          _ ->
-            nil
-        end
-      end
-      """
-    end)
-  end
-
   test "anonymous function with parens around integer argument" do
     bad = """
     fn (1) -> "hello" end
@@ -380,6 +354,25 @@ defmodule Code.Formatter.IntegrationTest do
     """
 
     assert_format bad, good, line_length: 18
+  end
+
+  test "keyword lists in last line" do
+    assert_same """
+    content =
+      config(VeryLongModuleNameThatWillCauseBreak, "new.html",
+        conn: conn,
+        changeset: changeset,
+        categories: categories
+      )
+    """
+
+    assert_same """
+    content =
+      config VeryLongModuleNameThatWillCauseBreak, "new.html",
+        conn: conn,
+        changeset: changeset,
+        categories: categories
+    """
   end
 
   test "do at the end of the line with single argument" do
@@ -451,6 +444,20 @@ defmodule Code.Formatter.IntegrationTest do
             | :invalid
             # | :unknown
             | :other
+    """
+  end
+
+  test "when with keywords inside call" do
+    assert_same """
+    quote((bar(foo(1)) when bat: foo(1)), [])
+    """
+
+    assert_same """
+    quote(do: (bar(foo(1)) when bat: foo(1)), line: 1)
+    """
+
+    assert_same """
+    typespec(quote(do: (bar(foo(1)) when bat: foo(1))), [foo: 1], [])
     """
   end
 

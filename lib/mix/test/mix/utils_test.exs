@@ -38,13 +38,19 @@ defmodule Mix.UtilsTest do
   end
 
   test "extract stale" do
-    time = {{2030, 1, 1}, {0, 0, 0}}
+    # 2030-01-01 00:00:00
+    time = 1_893_456_000
     assert Mix.Utils.extract_stale([__ENV__.file], [time]) == []
 
-    time = {{2000, 1, 1}, {0, 0, 0}}
+    # 2000-01-01 00:00:00
+    time = 946_684_800
     assert Mix.Utils.extract_stale([__ENV__.file], [time]) == [__ENV__.file]
 
     assert Mix.Utils.extract_stale([__ENV__.file], [__ENV__.file]) == []
+  end
+
+  test "handles missing target files" do
+    assert Mix.Utils.stale?([__ENV__.file], []) == true
   end
 
   test "symlink or copy" do

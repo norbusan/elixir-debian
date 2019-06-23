@@ -25,59 +25,13 @@
 -export([start/2, stop/1, config_change/3]).
 
 start(_Type, _Args) ->
-  %% In case there is a shell, we can't really change its
-  %% encoding, so we just set binary to true. Otherwise
-  %% we must set the encoding as the user with no shell
-  %% has encoding set to latin1.
-  Opts =
-    case init:get_argument(noshell) of
-      {ok, _} -> [binary, {encoding, utf8}];
-      error   -> [binary]
-    end,
-
-  %% Whenever we change this check, we should also change escript.build.
-  OTPRelease =
-    case string:to_integer(erlang:system_info(otp_release)) of
-      {Num, _} when Num >= 19 ->
-        Num;
-      _ ->
-        io:format(standard_error, "unsupported Erlang version, expected Erlang 19+~n", []),
-        erlang:halt(1)
-    end,
-
-  %% We need to make sure the re module is preloaded
-  %% to make function_exported checks on it fast.
-  %% TODO: Remove this once we support OTP 20+.
-  _ = code:ensure_loaded(re),
-
-  case code:ensure_loaded(?system) of
-    {module, ?system} ->
-      Endianness = ?system:endianness(),
-      case ?system:compiled_endianness() of
-        Endianness -> ok;
-        _ ->
-          io:format(standard_error,
-            "warning: Elixir is running in a system with a different endianness than the one its "
-            "source code was compiled in. Please make sure Elixir and all source files were compiled "
-            "in a machine with the same endianness as the current one: ~ts~n", [Endianness])
-      end;
-    {error, _} ->
-      ok
-  end,
-
-  ok = io:setopts(standard_io, Opts),
-  ok = io:setopts(standard_error, [{encoding, utf8}]),
-
+  OTPRelease = parse_otp_release(),
   Encoding = file:native_name_encoding(),
-  case Encoding of
-    latin1 ->
-      io:format(standard_error,
-        "warning: the VM is running with native name encoding of latin1 which may cause "
-        "Elixir to malfunction as it expects utf8. Please ensure your locale is set to UTF-8 "
-        "(which can be verified by running \"locale\" in your shell)~n", []);
-    _ ->
-      ok
-  end,
+
+  preload_common_modules(),
+  set_stdio_and_stderr_to_binary_and_maybe_utf8(),
+  check_file_encoding(Encoding),
+  check_endianness(),
 
   %% TODO: Remove OTPRelease check once we support OTP 20+.
   Tokenizer = case code:ensure_loaded('Elixir.String.Tokenizer') of
@@ -85,23 +39,35 @@ start(_Type, _Args) ->
     _ -> elixir_tokenizer
   end,
 
-  URIConfig = [{{uri, <<"ftp">>}, 21},
-               {{uri, <<"sftp">>}, 22},
-               {{uri, <<"tftp">>}, 69},
-               {{uri, <<"http">>}, 80},
-               {{uri, <<"https">>}, 443},
-               {{uri, <<"ldap">>}, 389}],
-  CompilerOpts = #{docs => true, ignore_module_conflict => false,
-                   debug_info => true, warnings_as_errors => false,
-                   relative_paths => true},
+  URIConfig = [
+    {{uri, <<"ftp">>}, 21},
+    {{uri, <<"sftp">>}, 22},
+    {{uri, <<"tftp">>}, 69},
+    {{uri, <<"http">>}, 80},
+    {{uri, <<"https">>}, 443},
+    {{uri, <<"ldap">>}, 389}
+  ],
+
+  CompilerOpts = #{
+    docs => true,
+    ignore_module_conflict => false,
+    debug_info => true,
+    warnings_as_errors => false,
+    relative_paths => true
+  },
+
   {ok, [[Home] | _]} = init:get_argument(home),
-  Config = [{at_exit, []},
-            {argv, []},
-            {bootstrap, false},
-            {compiler_options, CompilerOpts},
-            {home, unicode:characters_to_binary(Home, Encoding, Encoding)},
-            {identifier_tokenizer, Tokenizer}
-            | URIConfig],
+
+  Config = [
+    {at_exit, []},
+    {argv, []},
+    {bootstrap, false},
+    {compiler_options, CompilerOpts},
+    {home, unicode:characters_to_binary(Home, Encoding, Encoding)},
+    {identifier_tokenizer, Tokenizer}
+    | URIConfig
+  ],
+
   Tab = elixir_config:new(Config),
   case elixir_sup:start_link() of
     {ok, Sup} ->
@@ -116,6 +82,72 @@ stop(Tab) ->
 
 config_change(_Changed, _New, _Remove) ->
   ok.
+
+set_stdio_and_stderr_to_binary_and_maybe_utf8() ->
+  %% In case there is a shell, we can't really change its
+  %% encoding, so we just set binary to true. Otherwise
+  %% we must set the encoding as the user with no shell
+  %% has encoding set to latin1.
+  Opts =
+    case init:get_argument(noshell) of
+      {ok, _} -> [binary, {encoding, utf8}];
+      error   -> [binary]
+    end,
+
+  ok = io:setopts(standard_io, Opts),
+  ok = io:setopts(standard_error, [{encoding, utf8}]),
+  ok.
+
+preload_common_modules() ->
+  %% We attempt to load those modules here so throughout
+  %% the codebase we can avoid code:ensure_loaded/1 checks.
+  _ = code:ensure_loaded('Elixir.Kernel'),
+  _ = code:ensure_loaded('Elixir.Macro.Env'),
+
+  %% We need to make sure the re module is preloaded to make
+  %% function_exported checks inside Regex.version is fast.
+  %% TODO: Remove this once we support OTP 20+.
+  _ = code:ensure_loaded(re),
+
+  ok.
+
+parse_otp_release() ->
+  %% Whenever we change this check, we should also change escript.build and Makefile.
+  case string:to_integer(erlang:system_info(otp_release)) of
+    {Num, _} when Num >= 19 ->
+      Num;
+    _ ->
+      io:format(standard_error, "unsupported Erlang/OTP version, expected Erlang/OTP 19+~n", []),
+      erlang:halt(1)
+  end.
+
+check_endianness() ->
+  case code:ensure_loaded(?system) of
+    {module, ?system} ->
+      Endianness = ?system:endianness(),
+      case ?system:compiled_endianness() of
+        Endianness ->
+          ok;
+        _ ->
+          io:format(standard_error,
+            "warning: Elixir is running in a system with a different endianness than the one its "
+            "source code was compiled in. Please make sure Elixir and all source files were compiled "
+            "in a machine with the same endianness as the current one: ~ts~n", [Endianness])
+      end;
+    {error, _} ->
+      ok
+  end.
+
+check_file_encoding(Encoding) ->
+  case Encoding of
+    latin1 ->
+      io:format(standard_error,
+        "warning: the VM is running with native name encoding of latin1 which may cause "
+        "Elixir to malfunction as it expects utf8. Please ensure your locale is set to UTF-8 "
+        "(which can be verified by running \"locale\" in your shell)~n", []);
+    _ ->
+      ok
+  end.
 
 %% Boot and process given options. Invoked by Elixir's script.
 
@@ -141,7 +173,7 @@ env_for_eval(Opts) ->
     requires := elixir_dispatch:default_requires(),
     functions := elixir_dispatch:default_functions(),
     macros := elixir_dispatch:default_macros()
- }, Opts).
+  }, Opts).
 
 env_for_eval(Env, Opts) ->
   Line = case lists:keyfind(line, 1, Opts) of
@@ -220,7 +252,7 @@ eval_forms(Tree, Binding, E) ->
   eval_forms(Tree, Binding, E, elixir_env:env_to_scope(E)).
 eval_forms(Tree, Binding, Env, Scope) ->
   {ParsedBinding, ParsedVars, ParsedScope} = elixir_erl_var:load_binding(Binding, Scope),
-  ParsedEnv = Env#{vars := ParsedVars},
+  ParsedEnv = elixir_env:with_vars(Env, ParsedVars),
   {Erl, NewEnv, NewScope} = quoted_to_erl(Tree, ParsedEnv, ParsedScope),
 
   case Erl of
@@ -263,7 +295,7 @@ quoted_to_erl(Quoted, Env) ->
 
 quoted_to_erl(Quoted, Env, Scope) ->
   {Expanded, NewEnv} = elixir_expand:expand(Quoted, Env),
-  {Erl, NewScope}    = elixir_erl_pass:translate(Expanded, Scope),
+  {Erl, NewScope} = elixir_erl_pass:translate(Expanded, Scope),
   {Erl, NewEnv, NewScope}.
 
 %% Converts a given string (charlist) into quote expression
@@ -272,9 +304,9 @@ string_to_tokens(String, StartLine, File, Opts) when is_integer(StartLine), is_b
   case elixir_tokenizer:tokenize(String, StartLine, [{file, File} | Opts]) of
     {ok, _Tokens} = Ok ->
       Ok;
-    {error, {Line, {ErrorPrefix, ErrorSuffix}, Token}, _Rest, _SoFar} ->
+    {error, {Line, _, {ErrorPrefix, ErrorSuffix}, Token}, _Rest, _SoFar} ->
       {error, {Line, {to_binary(ErrorPrefix), to_binary(ErrorSuffix)}, to_binary(Token)}};
-    {error, {Line, Error, Token}, _Rest, _SoFar} ->
+    {error, {Line, _, Error, Token}, _Rest, _SoFar} ->
       {error, {Line, to_binary(Error), to_binary(Token)}}
   end.
 
@@ -282,15 +314,24 @@ tokens_to_quoted(Tokens, File, Opts) ->
   handle_parsing_opts(File, Opts),
 
   try elixir_parser:parse(Tokens) of
-    {ok, Forms} -> {ok, Forms};
-    {error, {{Line, _, _}, _, [Error, Token]}} -> {error, {Line, to_binary(Error), to_binary(Token)}};
-    {error, {Line, _, [Error, Token]}} -> {error, {Line, to_binary(Error), to_binary(Token)}}
-  catch
-    {error, {{Line, _, _}, _, [Error, Token]}} -> {error, {Line, to_binary(Error), to_binary(Token)}};
-    {error, {Line, _, [Error, Token]}} -> {error, {Line, to_binary(Error), to_binary(Token)}}
+    {ok, Forms} ->
+      {ok, Forms};
+    {error, {Line, _, [{ErrorPrefix, ErrorSuffix}, Token]}} ->
+      {error, {parser_line(Line), {to_binary(ErrorPrefix), to_binary(ErrorSuffix)}, to_binary(Token)}};
+    {error, {Line, _, [Error, Token]}} ->
+      {error, {parser_line(Line), to_binary(Error), to_binary(Token)}}
   after
     erase(elixir_parser_file),
+    erase(elixir_parser_columns),
     erase(elixir_formatter_metadata)
+  end.
+
+parser_line({Line, _, _}) ->
+  Line;
+parser_line(Meta) ->
+  case lists:keyfind(line, 1, Meta) of
+    {line, L} -> L;
+    false -> 0
   end.
 
 'string_to_quoted!'(String, StartLine, File, Opts) ->
@@ -310,10 +351,8 @@ to_binary(List) when is_list(List) -> elixir_utils:characters_to_binary(List);
 to_binary(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8).
 
 handle_parsing_opts(File, Opts) ->
-  FormatterMetadata =
-    lists:keyfind(formatter_metadata, 1, Opts) == {formatter_metadata, true},
-  Columns =
-    lists:keyfind(columns, 1, Opts) == {columns, true},
+  FormatterMetadata = lists:keyfind(formatter_metadata, 1, Opts) == {formatter_metadata, true},
+  Columns = lists:keyfind(columns, 1, Opts) == {columns, true},
   put(elixir_parser_file, File),
   put(elixir_parser_columns, Columns),
   put(elixir_formatter_metadata, FormatterMetadata).

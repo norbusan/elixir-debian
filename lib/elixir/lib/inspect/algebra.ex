@@ -25,16 +25,19 @@ defmodule Inspect.Opts do
 
     * `:limit` - limits the number of items that are printed for tuples,
       bitstrings, maps, lists and any other collection of items. It does not
-      apply to strings nor charlists and defaults to 50.
+      apply to strings nor charlists and defaults to 50. If you don't want to limit
+      the number of items to a particular number, use `:infinity`.
 
     * `:printable_limit` - limits the number of bytes that are printed for strings
-      and char lists. Defaults to 4096.
+      and char lists. Defaults to 4096. If you don't want to limit the number of items
+      to a particular number, use `:infinity`.
 
     * `:pretty` - if set to `true` enables pretty printing, defaults to `false`.
 
     * `:width` - defaults to 80 characters, used when pretty is `true` or when
       printing to IO devices. Set to 0 to force each item to be printed on its
-      own line.
+      own line. If you don't want to limit the number of items to a particular
+      number, use `:infinity`.
 
     * `:base` - prints integers as `:binary`, `:octal`, `:decimal`, or `:hex`,
       defaults to `:decimal`. When inspecting binaries any `:base` other than
@@ -101,7 +104,7 @@ defmodule Inspect.Algebra do
   additions, like support for binary nodes and a break mode that
   maximises use of horizontal space.
 
-      iex> Inspect.Algebra.empty
+      iex> Inspect.Algebra.empty()
       :doc_nil
 
       iex> "foo"
@@ -110,7 +113,7 @@ defmodule Inspect.Algebra do
   With the functions in this module, we can concatenate different
   elements together and render them:
 
-      iex> doc = Inspect.Algebra.concat(Inspect.Algebra.empty, "foo")
+      iex> doc = Inspect.Algebra.concat(Inspect.Algebra.empty(), "foo")
       iex> Inspect.Algebra.format(doc, 80)
       ["foo"]
 
@@ -229,19 +232,6 @@ defmodule Inspect.Algebra do
     quote do: {:doc_color, unquote(doc), unquote(color)}
   end
 
-  defmacrop is_doc(doc) do
-    if Macro.Env.in_guard?(__CALLER__) do
-      do_is_doc(doc)
-    else
-      var = quote(do: doc)
-
-      quote do
-        unquote(var) = unquote(doc)
-        unquote(do_is_doc(var))
-      end
-    end
-  end
-
   @docs [
     :doc_string,
     :doc_cons,
@@ -254,12 +244,9 @@ defmodule Inspect.Algebra do
     :doc_collapse
   ]
 
-  defp do_is_doc(doc) do
-    quote do
-      is_binary(unquote(doc)) or unquote(doc) in [:doc_nil, :doc_line] or
-        (is_tuple(unquote(doc)) and elem(unquote(doc), 0) in unquote(@docs))
-    end
-  end
+  defguard is_doc(doc)
+           when is_binary(doc) or doc in [:doc_nil, :doc_line] or
+                  (is_tuple(doc) and elem(doc, 0) in @docs)
 
   # Elixir + Inspect.Opts conveniences
 
@@ -276,8 +263,6 @@ defmodule Inspect.Algebra do
         Inspect.inspect(struct, opts)
       rescue
         caught_exception ->
-          stacktrace = System.stacktrace()
-
           # Because we try to raise a nice error message in case
           # we can't inspect a struct, there is a chance the error
           # message itself relies on the struct being printed, so
@@ -302,7 +287,7 @@ defmodule Inspect.Algebra do
               if opts.safe do
                 Inspect.inspect(exception, opts)
               else
-                reraise(exception, stacktrace)
+                reraise(exception, __STACKTRACE__)
               end
             after
               Process.delete(:inspect_trap)
@@ -341,20 +326,21 @@ defmodule Inspect.Algebra do
 
       iex> doc = Inspect.Algebra.container_doc("[", Enum.to_list(1..5), "]",
       ...>         %Inspect.Opts{limit: :infinity}, fn i, _opts -> to_string(i) end)
-      iex> Inspect.Algebra.format(doc, 5) |> IO.iodata_to_binary
+      iex> Inspect.Algebra.format(doc, 5) |> IO.iodata_to_binary()
       "[1,\n 2,\n 3,\n 4,\n 5]"
 
       iex> doc = Inspect.Algebra.container_doc("[", Enum.to_list(1..5), "]",
       ...>         %Inspect.Opts{limit: 3}, fn i, _opts -> to_string(i) end)
-      iex> Inspect.Algebra.format(doc, 20) |> IO.iodata_to_binary
+      iex> Inspect.Algebra.format(doc, 20) |> IO.iodata_to_binary()
       "[1, 2, 3, ...]"
 
       iex> doc = Inspect.Algebra.container_doc("[", Enum.to_list(1..5), "]",
       ...>         %Inspect.Opts{limit: 3}, fn i, _opts -> to_string(i) end, separator: "!")
-      iex> Inspect.Algebra.format(doc, 20) |> IO.iodata_to_binary
+      iex> Inspect.Algebra.format(doc, 20) |> IO.iodata_to_binary()
       "[1! 2! 3! ...]"
 
   """
+  @doc since: "1.6.0"
   @spec container_doc(t, [any], t, Inspect.Opts.t(), (term, Inspect.Opts.t() -> t), keyword()) ::
           t
   def container_doc(left, collection, right, inspect, fun, opts \\ [])
@@ -447,7 +433,7 @@ defmodule Inspect.Algebra do
 
   ## Examples
 
-      iex> Inspect.Algebra.empty
+      iex> Inspect.Algebra.empty()
       :doc_nil
 
   """
@@ -482,6 +468,7 @@ defmodule Inspect.Algebra do
       ["olá", " ", "mundo"]
 
   """
+  @doc since: "1.6.0"
   @spec string(String.t()) :: doc_string
   def string(string) when is_binary(string) do
     doc_string(string, String.length(string))
@@ -520,6 +507,7 @@ defmodule Inspect.Algebra do
   @doc ~S"""
   Colors a document if the `color_key` has a color in the options.
   """
+  @doc since: "1.4.0"
   @spec color(t, Inspect.Opts.color_key(), Inspect.Opts.t()) :: doc_color
   def color(doc, color_key, %Inspect.Opts{syntax_colors: syntax_colors}) when is_doc(doc) do
     if precolor = Keyword.get(syntax_colors, color_key) do
@@ -550,7 +538,7 @@ defmodule Inspect.Algebra do
       ["hello", "\n     ", "world"]
 
   """
-  @spec nest(t, non_neg_integer) :: doc_nest
+  @spec nest(t, non_neg_integer | :cursor | :reset, :always | :break) :: doc_nest
   def nest(doc, level, mode \\ :always)
 
   def nest(doc, :cursor, mode) when is_doc(doc) and mode in [:always, :break] do
@@ -604,6 +592,7 @@ defmodule Inspect.Algebra do
   Collapse any new lines and whitespace following this
   node, emitting up to `max` new lines.
   """
+  @doc since: "1.6.0"
   @spec collapse_lines(pos_integer) :: doc_collapse
   def collapse_lines(max) when is_integer(max) and max > 0 do
     doc_collapse(max)
@@ -650,7 +639,8 @@ defmodule Inspect.Algebra do
       })
 
   """
-  @spec next_break_fits(t) :: doc_fits
+  @doc since: "1.6.0"
+  @spec next_break_fits(t, :enabled | :disabled) :: doc_fits
   def next_break_fits(doc, mode \\ @next_break_fits)
       when is_doc(doc) and mode in [:enabled, :disabled] do
     doc_fits(doc, mode)
@@ -659,6 +649,7 @@ defmodule Inspect.Algebra do
   @doc """
   Forces the current group to be unfit.
   """
+  @doc since: "1.6.0"
   @spec force_unfit(t) :: doc_force
   def force_unfit(doc) when is_doc(doc) do
     doc_force(doc)
@@ -692,6 +683,7 @@ defmodule Inspect.Algebra do
   This function is used by `container_doc/4` and friends to the
   maximum number of entries on the same line.
   """
+  @doc since: "1.6.0"
   @spec flex_break(binary) :: doc_break
   def flex_break(string \\ " ") when is_binary(string) do
     doc_break(string, :flex)
@@ -704,6 +696,7 @@ defmodule Inspect.Algebra do
   This function is used by `container_doc/6` and friends
   to the maximum number of entries on the same line.
   """
+  @doc since: "1.6.0"
   @spec flex_glue(t, binary, t) :: t
   def flex_glue(doc1, break_string \\ " ", doc2) when is_binary(break_string) do
     concat(doc1, concat(flex_break(break_string), doc2))
@@ -764,7 +757,7 @@ defmodule Inspect.Algebra do
       ["Hello,", "\n", "A", "\n", "B"]
 
   """
-  @spec group(t) :: doc_group
+  @spec group(t, :self | :inherit) :: doc_group
   def group(doc, mode \\ :self) when is_doc(doc) do
     doc_group(doc, mode)
   end
@@ -789,16 +782,18 @@ defmodule Inspect.Algebra do
 
   ## Examples
 
-    iex> doc = Inspect.Algebra.concat(
-    ...>   Inspect.Algebra.concat(
-    ...>     "Hughes",
-    ...>     Inspect.Algebra.line()
-    ...>   ), "Wadler"
-    ...> )
-    iex> Inspect.Algebra.format(doc, 80)
-    ["Hughes", "\n", "Wadler"]
+      iex> doc =
+      ...>   Inspect.Algebra.concat(
+      ...>     Inspect.Algebra.concat(
+      ...>       "Hughes",
+      ...>       Inspect.Algebra.line()
+      ...>     ), "Wadler"
+      ...>   )
+      iex> Inspect.Algebra.format(doc, 80)
+      ["Hughes", "\n", "Wadler"]
 
   """
+  @doc since: "1.6.0"
   @spec line() :: t
   def line(), do: :doc_line
 

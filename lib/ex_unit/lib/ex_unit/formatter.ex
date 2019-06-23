@@ -61,7 +61,7 @@ defmodule ExUnit.Formatter do
       iex> format_time(10000, 20000)
       "Finished in 0.03 seconds (0.02s on load, 0.01s on tests)"
 
-      iex> format_time(10000, 200000)
+      iex> format_time(10000, 200_000)
       "Finished in 0.2 seconds (0.2s on load, 0.01s on tests)"
 
   """
@@ -122,7 +122,7 @@ defmodule ExUnit.Formatter do
 
         failure_header(failures, index) <>
           text <> format_stacktrace(stack, module, name, formatter)
-      end) <> report(tags, failures, width, formatter)
+      end)
   end
 
   @doc false
@@ -140,30 +140,13 @@ defmodule ExUnit.Formatter do
       note: if_value(struct.message, &format_message(&1, formatter)),
       code: if_value(struct.expr, &code_multiline(&1, padding_size)),
       code: unless_value(struct.expr, fn -> get_code(test, stack) || @no_value end),
+      arguments: if_value(struct.args, &format_args(&1, width)),
       left: left,
       right: right
     ]
     |> format_meta(formatter, label_padding_size)
     |> make_into_lines(counter_padding)
   end
-
-  defp report(tags, failures, width, formatter) do
-    case Map.take(tags, List.wrap(tags[:report])) do
-      report when map_size(report) == 0 ->
-        ""
-
-      report ->
-        report_spacing(failures) <>
-          extra_info("tags:", formatter) <>
-          Enum.map_join(report, "", fn {key, value} ->
-            prefix = "       #{key}: "
-            prefix <> inspect_multiline(value, byte_size(prefix), width) <> "\n"
-          end)
-    end
-  end
-
-  defp report_spacing([_]), do: ""
-  defp report_spacing(_), do: "\n"
 
   # TODO: Deprecate on Elixir v1.8
   @doc false
@@ -172,12 +155,12 @@ defmodule ExUnit.Formatter do
   end
 
   @doc """
-  Receives a test case and formats its failure.
+  Receives a test module and formats its failure.
   """
   def format_test_all_failure(test_module, failures, counter, width, formatter) do
     name = test_module.name
 
-    test_case_info(with_counter(counter, "#{inspect(name)}: "), formatter) <>
+    test_module_info(with_counter(counter, "#{inspect(name)}: "), formatter) <>
       Enum.map_join(Enum.with_index(failures), "", fn {{kind, reason, stack}, index} ->
         {text, stack} = format_kind_reason(test_module, kind, reason, stack, width, formatter)
         failure_header(failures, index) <> text <> format_stacktrace(stack, name, nil, formatter)
@@ -279,6 +262,19 @@ defmodule ExUnit.Formatter do
   defp format_message(value, formatter) do
     value = String.replace(value, "\n", "\n" <> @counter_padding)
     formatter.(:error_info, value)
+  end
+
+  defp format_args(args, width) do
+    entries =
+      for {arg, i} <- Enum.with_index(args, 1) do
+        """
+
+                 # #{i}
+                 #{inspect_multiline(arg, 9, width)}
+        """
+      end
+
+    "\n" <> IO.iodata_to_binary(entries)
   end
 
   defp code_multiline(expr, padding_size) when is_binary(expr) do
@@ -395,8 +391,10 @@ defmodule ExUnit.Formatter do
     "#{counter}) #{msg}"
   end
 
-  defp test_case_info(msg, nil), do: msg <> "failure on setup_all callback, test invalidated\n"
-  defp test_case_info(msg, formatter), do: test_case_info(formatter.(:test_case_info, msg), nil)
+  defp test_module_info(msg, nil), do: msg <> "failure on setup_all callback, test invalidated\n"
+
+  defp test_module_info(msg, formatter),
+    do: test_module_info(formatter.(:test_module_info, msg), nil)
 
   defp test_info(msg, nil), do: msg <> "\n"
   defp test_info(msg, formatter), do: test_info(formatter.(:test_info, msg), nil)

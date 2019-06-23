@@ -105,7 +105,8 @@ defmodule ProtocolTest do
     message = "protocol ProtocolTest.Sample not implemented for :foo"
 
     assert_raise Protocol.UndefinedError, message, fn ->
-      Sample.ok(:foo)
+      sample = Sample
+      sample.ok(:foo)
     end
   end
 
@@ -122,10 +123,12 @@ defmodule ProtocolTest do
       end
     )
 
-    docs = Code.get_docs(SampleDocsProto, :docs)
-    assert {{:ok, 1}, _, :def, [{:term, _, nil}], "Ok"} = List.keyfind(docs, {:ok, 1}, 0)
+    {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(SampleDocsProto)
 
-    deprecated = Sample.__info__(:deprecated)
+    assert {{:function, :ok, 1}, _, ["ok(term)"], %{"en" => "Ok"}, _} =
+             List.keyfind(docs, {:function, :ok, 1}, 0)
+
+    deprecated = SampleDocsProto.__info__(:deprecated)
     assert [{{:ok, 1}, "Reason"}] = deprecated
   end
 
@@ -195,7 +198,7 @@ defmodule ProtocolTest do
   end
 
   defp get_callbacks(beam, name, arity) do
-    callbacks = Kernel.Typespec.beam_callbacks(beam)
+    {:ok, callbacks} = Code.Typespec.fetch_callbacks(beam)
     List.keyfind(callbacks, {name, arity}, 0) |> elem(1)
   end
 
@@ -377,11 +380,11 @@ defmodule Protocol.ConsolidationTest do
   end
 
   test "consolidation keeps docs" do
-    {:ok, {Sample, [{'ExDc', docs_bin}]}} = :beam_lib.chunks(@sample_binary, ['ExDc'])
-    {:elixir_docs_v1, docs} = :erlang.binary_to_term(docs_bin)
-    ok_doc = Keyword.get(docs, :docs) |> List.keyfind({:ok, 1}, 0)
+    {:ok, {Sample, [{'Docs', docs_bin}]}} = :beam_lib.chunks(@sample_binary, ['Docs'])
+    {:docs_v1, _, _, _, _, _, docs} = :erlang.binary_to_term(docs_bin)
+    ok_doc = List.keyfind(docs, {:function, :ok, 1}, 0)
 
-    assert {{:ok, 1}, _, :def, [{:term, _, nil}], "Ok"} = ok_doc
+    assert {{:function, :ok, 1}, _, ["ok(term)"], %{"en" => "Ok"}, _} = ok_doc
   end
 
   test "consolidation keeps deprecated" do
@@ -397,7 +400,7 @@ defmodule Protocol.ConsolidationTest do
   end
 
   test "consolidated keeps callbacks" do
-    callbacks = Kernel.Typespec.beam_callbacks(@sample_binary)
+    {:ok, callbacks} = Code.Typespec.fetch_callbacks(@sample_binary)
     assert callbacks != []
   end
 
@@ -432,7 +435,8 @@ defmodule Protocol.ConsolidationTest do
         "This protocol is implemented for: Protocol.ConsolidationTest.ImplStruct"
 
     assert_raise Protocol.UndefinedError, message, fn ->
-      Sample.ok(:foo)
+      sample = Sample
+      sample.ok(:foo)
     end
   end
 

@@ -19,6 +19,9 @@ defmodule Mix.Tasks.Profile.Fprof do
       mix profile.fprof -e Hello.world
       mix profile.fprof my_script.exs arg1 arg2 arg3
 
+  This task is automatically reenabled, so you can profile multiple times
+  in the same Mix invocation.
+
   ## Command line options
 
     * `--callers` - prints detailed information about immediate callers and called functions
@@ -84,7 +87,7 @@ defmodule Mix.Tasks.Profile.Fprof do
   the total time spent in the function was 50ms.
 
   For a detailed explanation it's worth reading the analysis in
-  [Erlang documentation for fprof](http://www.erlang.org/doc/man/fprof.html#analysis).
+  [Erlang/OTP documentation for fprof](http://www.erlang.org/doc/man/fprof.html#analysis).
 
   ## Caveats
 
@@ -127,6 +130,7 @@ defmodule Mix.Tasks.Profile.Fprof do
 
   def run(args) do
     {opts, head} = OptionParser.parse_head!(args, aliases: @aliases, strict: @switches)
+    Mix.Task.reenable("profile.fprof")
 
     Mix.Tasks.Run.run(
       ["--no-mix-exs" | args],
@@ -146,7 +150,7 @@ defmodule Mix.Tasks.Profile.Fprof do
           fn ->
             unquote(Code.string_to_quoted!(code_string))
           end,
-          unquote(opts)
+          unquote(Macro.escape(Enum.map(opts, &parse_opt/1)))
         )
       end
 
@@ -154,8 +158,22 @@ defmodule Mix.Tasks.Profile.Fprof do
     Code.compile_quoted(content)
   end
 
-  @doc false
-  def profile(fun, opts) do
+  defp parse_opt({:sort, "acc"}), do: {:sort, :acc}
+  defp parse_opt({:sort, "own"}), do: {:sort, :own}
+  defp parse_opt({:sort, other}), do: Mix.raise("Invalid sort option: #{other}")
+  defp parse_opt(other), do: other
+
+  @doc """
+  Allows to programatically run the `fprof` profiler on expression in `fun`.
+
+  ## Options
+
+    * `:callers` - prints detailed information about immediate callers and called functions
+    * `:details` - includes profile data for each profiled process
+    * `:sort` - sorts the output by given key: `:acc` (default) or `:own`
+
+  """
+  def profile(fun, opts \\ []) when is_function(fun, 0) do
     fun
     |> profile_and_analyse(opts)
     |> print_output
@@ -166,12 +184,6 @@ defmodule Mix.Tasks.Profile.Fprof do
       IO.puts("Warmup...")
       fun.()
     end
-
-    sorting =
-      case Keyword.get(opts, :sort, "acc") do
-        "acc" -> :acc
-        "own" -> :own
-      end
 
     {:ok, tracer} = :fprof.profile(:start)
     :fprof.apply(fun, [], tracer: tracer)
@@ -184,7 +196,7 @@ defmodule Mix.Tasks.Profile.Fprof do
         totals: true,
         details: Keyword.get(opts, :details, false),
         callers: Keyword.get(opts, :callers, false),
-        sort: sorting
+        sort: Keyword.get(opts, :sort, :acc)
       )
     else
       :ok ->

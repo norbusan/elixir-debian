@@ -127,6 +127,10 @@ defmodule Macro do
     raise ArgumentError, bad_pipe(expr, call_args)
   end
 
+  def pipe(expr, {:<<>>, _, _} = call_args, _integer) do
+    raise ArgumentError, bad_pipe(expr, call_args)
+  end
+
   # {:fn, _, _} is what we get when we pipe into an anonymous function without
   # calling it, e.g., `:foo |> (fn x -> x end)`.
   def pipe(expr, {:fn, _, _}, _integer) do
@@ -197,6 +201,7 @@ defmodule Macro do
       [{:var1, [], __MODULE__}, {:var2, [], __MODULE__}]
 
   """
+  @doc since: "1.5.0"
   def generate_arguments(0, _), do: []
 
   def generate_arguments(amount, context)
@@ -351,12 +356,7 @@ defmodule Macro do
   def decompose_call(_), do: :error
 
   @doc """
-  Recursively escapes a value so it can be inserted
-  into a syntax tree.
-
-  One may pass `unquote: true` to `escape/2`
-  which leaves `unquote/1` statements unescaped, effectively
-  unquoting the contents on escape.
+  Recursively escapes a value so it can be inserted into a syntax tree.
 
   ## Examples
 
@@ -369,10 +369,57 @@ defmodule Macro do
       iex> Macro.escape({:unquote, [], [1]}, unquote: true)
       1
 
+  ## Options
+
+    * `:unquote` - when true, this function leaves `unquote/1` and
+      `unquote_splicing/1` statements unescaped, effectively unquoting
+      the contents on escape. This option is useful only when escaping
+      ASTs which may have quoted fragments in them. Defaults to false.
+
+    * `:prune_metadata` - when true, removes metadata from escaped AST
+      nodes. Note this option changes the semantics of escaped code and
+      it should only be used when escaping ASTs, never values. Defaults
+      to false.
+      
+      As an example, `ExUnit` stores the AST of every assertion, so when
+      an assertion fails we can show code snippets to users. Without this
+      option, each time the test module is compiled, we get a different
+      MD5 of the module byte code, because the AST contains metadata,
+      such as counters, specific to the compilation environment. By pruning
+      the metadata, we ensure that the module is deterministic and reduce
+      the amount of data `ExUnit` needs to keep around.
+
+  ## Comparison to `Kernel.quote/2`
+
+  The `escape/2` function is sometimes confused with `Kernel.SpecialForms.quote/2`,
+  because the above examples behave the same with both. The key difference is
+  best illustrated when the value to escape is stored in a variable.
+
+      iex> Macro.escape({:a, :b, :c})
+      {:{}, [], [:a, :b, :c]}
+      iex> quote do: {:a, :b, :c}
+      {:{}, [], [:a, :b, :c]}
+
+      iex> value = {:a, :b, :c}
+      iex> Macro.escape(value)
+      {:{}, [], [:a, :b, :c]}
+
+      iex> quote do: value
+      {:value, [], __MODULE__}
+
+      iex> value = {:a, :b, :c}
+      iex> quote do: unquote(value)
+      {:a, :b, :c}
+
+  `escape/2` is used to escape *values* (either directly passed or variable
+  bound), while `Kernel.SpecialForms.quote/2` produces syntax trees for
+  expressions.
   """
   @spec escape(term, keyword) :: Macro.t()
   def escape(expr, opts \\ []) do
-    elem(:elixir_quote.escape(expr, Keyword.get(opts, :unquote, false)), 0)
+    unquote = Keyword.get(opts, :unquote, false)
+    kind = if Keyword.get(opts, :prune_metadata, false), do: :prune_metadata, else: :default
+    elem(:elixir_quote.escape(expr, kind, unquote), 0)
   end
 
   @doc """
@@ -416,8 +463,8 @@ defmodule Macro do
   defp find_invalid(bin) when is_binary(bin), do: nil
 
   defp find_invalid(fun) when is_function(fun) do
-    unless :erlang.fun_info(fun, :env) == {:env, []} and
-             :erlang.fun_info(fun, :type) == {:type, :external} do
+    unless Function.info(fun, :env) == {:env, []} and
+             Function.info(fun, :type) == {:type, :external} do
       {:error, fun}
     end
   end
@@ -500,13 +547,21 @@ defmodule Macro do
   end
 
   @doc false
+  @deprecated "Traverse over the arguments using Enum.map/2 instead"
   def unescape_tokens(tokens) do
-    :elixir_interpolation.unescape_tokens(tokens)
+    case :elixir_interpolation.unescape_tokens(tokens) do
+      {:ok, unescaped_tokens} -> unescaped_tokens
+      {:error, reason} -> raise ArgumentError, to_string(reason)
+    end
   end
 
   @doc false
+  @deprecated "Traverse over the arguments using Enum.map/2 instead"
   def unescape_tokens(tokens, map) do
-    :elixir_interpolation.unescape_tokens(tokens, map)
+    case :elixir_interpolation.unescape_tokens(tokens, map) do
+      {:ok, unescaped_tokens} -> unescaped_tokens
+      {:error, reason} -> raise ArgumentError, to_string(reason)
+    end
   end
 
   @doc """
@@ -780,7 +835,7 @@ defmodule Macro do
 
         binary when is_binary(binary) ->
           binary = inspect_no_limit(binary)
-          :binary.part(binary, 1, byte_size(binary) - 2)
+          binary_part(binary, 1, byte_size(binary) - 2)
       end)
 
     <<?", parts::binary, ?">>
@@ -1052,7 +1107,7 @@ defmodule Macro do
 
     * Macros (local or remote)
     * Aliases are expanded (if possible) and return atoms
-    * Compilation environment macros (`__ENV__/0`, `__MODULE__/0` and `__DIR__/0`)
+    * Compilation environment macros (`__CALLER__/0`, `__DIR__/0`, `__ENV__/0` and `__MODULE__/0`)
     * Module attributes reader (`@foo`)
 
   If the expression cannot be expanded, it returns the expression
@@ -1087,7 +1142,7 @@ defmodule Macro do
       end
 
   The compilation will fail because `My.Module` when quoted
-  is not an atom, but a syntax tree as follow:
+  is not an atom, but a syntax tree as follows:
 
       {:__aliases__, [], [:My, :Module]}
 
@@ -1167,7 +1222,7 @@ defmodule Macro do
   # Expand possible macro import invocation
   defp do_expand_once({atom, meta, context} = original, env)
        when is_atom(atom) and is_list(meta) and is_atom(context) do
-    if :lists.member({atom, Keyword.get(meta, :counter, context)}, env.vars) do
+    if Macro.Env.has_var?(env, {atom, Keyword.get(meta, :counter, context)}) do
       {original, false}
     else
       case do_expand_once({atom, meta, []}, env) do
@@ -1181,7 +1236,7 @@ defmodule Macro do
        when is_atom(atom) and is_list(args) and is_list(meta) do
     arity = length(args)
 
-    if :elixir_import.special_form(atom, arity) do
+    if special_form?(atom, arity) do
       {original, false}
     else
       module = env.module
@@ -1199,6 +1254,12 @@ defmodule Macro do
         {:ok, receiver, quoted} ->
           next = :erlang.unique_integer()
           {:elixir_quote.linify_with_context_counter(0, {receiver, next}, quoted), true}
+
+        {:ok, Kernel, op, [arg]} when op in [:+, :-] ->
+          case expand_once(arg, env) do
+            integer when is_integer(integer) -> {apply(Kernel, op, [integer]), true}
+            _ -> {original, false}
+          end
 
         {:ok, _receiver, _name, _args} ->
           {original, false}
@@ -1235,6 +1296,39 @@ defmodule Macro do
   defp do_expand_once(other, _env), do: {other, false}
 
   @doc """
+  Returns `true` if the given name and arity is a special form.
+  """
+  @doc since: "1.7.0"
+  @spec special_form?(name :: atom(), arity()) :: boolean()
+  def special_form?(name, arity) when is_atom(name) and is_integer(arity) do
+    :elixir_import.special_form(name, arity)
+  end
+
+  @doc """
+  Returns `true` if the given name and arity is an operator.
+  """
+  @doc since: "1.7.0"
+  @spec operator?(name :: atom(), arity()) :: boolean()
+  def operator?(name, 2) when is_atom(name), do: Identifier.binary_op(name) != :error
+  def operator?(name, 1) when is_atom(name), do: Identifier.unary_op(name) != :error
+  def operator?(name, arity) when is_atom(name) and is_integer(arity), do: false
+
+  @doc """
+  Returns `true` if the given quoted expression is an AST literal.
+  """
+  @doc since: "1.7.0"
+  @spec quoted_literal?(literal) :: true
+  @spec quoted_literal?(expr) :: false
+  def quoted_literal?(term)
+
+  def quoted_literal?({left, right}), do: quoted_literal?(left) and quoted_literal?(right)
+  def quoted_literal?(list) when is_list(list), do: Enum.all?(list, &quoted_literal?/1)
+
+  def quoted_literal?(term) do
+    is_atom(term) or is_number(term) or is_binary(term) or is_function(term)
+  end
+
+  @doc """
   Receives an AST node and expands it until it can no longer
   be expanded.
 
@@ -1266,25 +1360,25 @@ defmodule Macro do
 
   ## Examples
 
-      iex> Macro.underscore "FooBar"
+      iex> Macro.underscore("FooBar")
       "foo_bar"
 
-      iex> Macro.underscore "Foo.Bar"
+      iex> Macro.underscore("Foo.Bar")
       "foo/bar"
 
-      iex> Macro.underscore Foo.Bar
+      iex> Macro.underscore(Foo.Bar)
       "foo/bar"
 
   In general, `underscore` can be thought of as the reverse of
   `camelize`, however, in some cases formatting may be lost:
 
-      iex> Macro.underscore "SAPExample"
+      iex> Macro.underscore("SAPExample")
       "sap_example"
 
-      iex> Macro.camelize "sap_example"
+      iex> Macro.camelize("sap_example")
       "SapExample"
 
-      iex> Macro.camelize "hello_10"
+      iex> Macro.camelize("hello_10")
       "Hello10"
 
   """
@@ -1333,15 +1427,15 @@ defmodule Macro do
 
   ## Examples
 
-      iex> Macro.camelize "foo_bar"
+      iex> Macro.camelize("foo_bar")
       "FooBar"
 
-  If uppercase characters are present, they are not modified in anyway
+  If uppercase characters are present, they are not modified in any way
   as a mechanism to preserve acronyms:
 
-      iex> Macro.camelize "API.V1"
+      iex> Macro.camelize("API.V1")
       "API.V1"
-      iex> Macro.camelize "API_SPEC"
+      iex> Macro.camelize("API_SPEC")
       "API_SPEC"
 
   """

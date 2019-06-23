@@ -8,12 +8,12 @@ defmodule Port do
   ## Example
 
       iex> port = Port.open({:spawn, "cat"}, [:binary])
-      iex> send port, {self(), {:command, "hello"}}
-      iex> send port, {self(), {:command, "world"}}
+      iex> send(port, {self(), {:command, "hello"}})
+      iex> send(port, {self(), {:command, "world"}})
       iex> flush()
       {#Port<0.1444>, {:data, "hello"}}
       {#Port<0.1444>, {:data, "world"}}
-      iex> send port, {self(), :close}
+      iex> send(port, {self(), :close})
       :ok
       iex> flush()
       {#Port<0.1464>, :closed}
@@ -117,7 +117,7 @@ defmodule Port do
   reimplementing core part of the Runtime System, such as the `:user` and
   `:shell` processes.
 
-  ## Zombie processes
+  ## Zombie OS processes
 
   A port can be closed via the `close/1` function or by sending a `{pid, :close}`
   message. However, if the VM crashes, a long-running program started by the port
@@ -177,8 +177,8 @@ defmodule Port do
   Inlined by the compiler.
   """
   @spec open(name, list) :: port
-  def open(name, settings) do
-    :erlang.open_port(name, settings)
+  def open(name, options) do
+    :erlang.open_port(name, options)
   end
 
   @doc """
@@ -265,6 +265,7 @@ defmodule Port do
 
   Inlined by the compiler.
   """
+  @doc since: "1.6.0"
   @spec monitor(port | {name :: atom, node :: atom} | name :: atom) :: reference
   def monitor(port) do
     :erlang.monitor(:port, port)
@@ -281,6 +282,7 @@ defmodule Port do
 
   Inlined by the compiler.
   """
+  @doc since: "1.6.0"
   @spec demonitor(reference, options :: [:flush | :info]) :: boolean
   defdelegate demonitor(monitor_ref, options \\ []), to: :erlang
 

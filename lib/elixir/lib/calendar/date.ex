@@ -3,8 +3,8 @@ defmodule Date do
   A Date struct and functions.
 
   The Date struct contains the fields year, month, day and calendar.
-  New dates can be built with the `new/3` function or using the `~D`
-  sigil:
+  New dates can be built with the `new/3` function or using the
+  [`~D`](`Kernel.sigil_D/2`) sigil:
 
       iex> ~D[2000-01-01]
       ~D[2000-01-01]
@@ -29,7 +29,7 @@ defmodule Date do
 
   ## Comparing dates
 
-  Comparisons in Elixir using `==`, `>`, `<` and similar are structural
+  Comparisons in Elixir using `==/2`, `>/2`, `</2` and similar are structural
   and based on the `Date` struct fields. For proper comparison between
   dates, use the `compare/2` function.
 
@@ -85,8 +85,9 @@ defmodule Date do
       true
       iex> Enum.reduce(range, 0, fn _date, acc -> acc - 1 end)
       -366
-  """
 
+  """
+  @doc since: "1.5.0"
   @spec range(Date.t(), Date.t()) :: Date.Range.t()
   def range(%Date{calendar: calendar} = first, %Date{calendar: calendar} = last) do
     {first_days, _} = to_iso_days(first)
@@ -114,6 +115,7 @@ defmodule Date do
       true
 
   """
+  @doc since: "1.4.0"
   @spec utc_today(Calendar.calendar()) :: t
   def utc_today(calendar \\ Calendar.ISO)
 
@@ -129,7 +131,7 @@ defmodule Date do
   end
 
   @doc """
-  Returns true if the year in the given `date` is a leap year.
+  Returns `true` if the year in the given `date` is a leap year.
 
   ## Examples
 
@@ -145,6 +147,7 @@ defmodule Date do
       true
 
   """
+  @doc since: "1.4.0"
   @spec leap_year?(Calendar.date()) :: boolean()
   def leap_year?(date)
 
@@ -165,11 +168,29 @@ defmodule Date do
       29
 
   """
+  @doc since: "1.4.0"
   @spec days_in_month(Calendar.date()) :: Calendar.day()
   def days_in_month(date)
 
   def days_in_month(%{calendar: calendar, year: year, month: month}) do
     calendar.days_in_month(year, month)
+  end
+
+  @doc """
+  Returns the number of months in the given `date` year.
+
+  ## Example
+
+      iex> Date.months_in_year(~D[1900-01-13])
+      12
+
+  """
+  @doc since: "1.7.0"
+  @spec months_in_year(Calendar.date()) :: Calendar.month()
+  def months_in_year(date)
+
+  def months_in_year(%{calendar: calendar, year: year}) do
+    calendar.months_in_year(year)
   end
 
   @doc """
@@ -212,6 +233,8 @@ defmodule Date do
       "2000-02-28"
       iex> Date.to_string(~N[2000-02-28 01:23:45])
       "2000-02-28"
+      iex> Date.to_string(~D[-0100-12-15])
+      "-0100-12-15"
 
   """
   @spec to_string(Calendar.date()) :: String.t()
@@ -240,18 +263,29 @@ defmodule Date do
   @spec from_iso8601(String.t(), Calendar.calendar()) :: {:ok, t} | {:error, atom}
   def from_iso8601(string, calendar \\ Calendar.ISO)
 
-  def from_iso8601(<<year::4-bytes, ?-, month::2-bytes, ?-, day::2-bytes>>, calendar) do
-    with {year, ""} <- Integer.parse(year),
-         {month, ""} <- Integer.parse(month),
-         {day, ""} <- Integer.parse(day) do
-      with {:ok, date} <- new(year, month, day, Calendar.ISO), do: convert(date, calendar)
-    else
-      _ -> {:error, :invalid_format}
+  def from_iso8601(<<?-, rest::binary>>, calendar) do
+    with {:ok, %{year: year} = date} <- raw_from_iso8601(rest, calendar) do
+      {:ok, %{date | year: -year}}
     end
   end
 
-  def from_iso8601(<<_::binary>>, _calendar) do
-    {:error, :invalid_format}
+  def from_iso8601(<<rest::binary>>, calendar) do
+    raw_from_iso8601(rest, calendar)
+  end
+
+  [match_date, guard_date, read_date] = Calendar.ISO.__match_date__()
+
+  defp raw_from_iso8601(string, calendar) do
+    with unquote(match_date) <- string,
+         true <- unquote(guard_date) do
+      {year, month, day} = unquote(read_date)
+
+      with {:ok, date} <- new(year, month, day, Calendar.ISO) do
+        convert(date, calendar)
+      end
+    else
+      _ -> {:error, :invalid_format}
+    end
   end
 
   @doc """
@@ -266,6 +300,7 @@ defmodule Date do
       ~D[2015-01-23]
       iex> Date.from_iso8601!("2015:01:23")
       ** (ArgumentError) cannot parse "2015:01:23" as date, reason: :invalid_format
+
   """
   @spec from_iso8601!(String.t(), Calendar.calendar()) :: t
   def from_iso8601!(string, calendar \\ Calendar.ISO) do
@@ -302,9 +337,17 @@ defmodule Date do
 
   """
   @spec to_iso8601(Calendar.date(), :extended | :basic) :: String.t()
-  def to_iso8601(date, format \\ :extended) when format in [:basic, :extended] do
-    %{year: year, month: month, day: day} = convert!(date, Calendar.ISO)
+  def to_iso8601(date, format \\ :extended)
+
+  def to_iso8601(%{calendar: Calendar.ISO} = date, format) when format in [:basic, :extended] do
+    %{year: year, month: month, day: day} = date
     Calendar.ISO.date_to_iso8601(year, month, day, format)
+  end
+
+  def to_iso8601(%{calendar: _} = date, format) when format in [:basic, :extended] do
+    date
+    |> convert!(Calendar.ISO)
+    |> to_iso8601()
   end
 
   @doc """
@@ -397,6 +440,7 @@ defmodule Date do
       :eq
 
   """
+  @doc since: "1.4.0"
   @spec compare(Calendar.date(), Calendar.date()) :: :lt | :eq | :gt
   def compare(%{calendar: calendar} = date1, %{calendar: calendar} = date2) do
     %{year: year1, month: month1, day: day1} = date1
@@ -444,6 +488,7 @@ defmodule Date do
       {:ok, %Date{calendar: Calendar.Holocene, year: 12000, month: 1, day: 1}}
 
   """
+  @doc since: "1.5.0"
   @spec convert(Calendar.date(), Calendar.calendar()) ::
           {:ok, t} | {:error, :incompatible_calendars}
   def convert(%{calendar: calendar, year: year, month: month, day: day}, calendar) do
@@ -477,6 +522,7 @@ defmodule Date do
       %Date{calendar: Calendar.Holocene, year: 12000, month: 1, day: 1}
 
   """
+  @doc since: "1.5.0"
   @spec convert!(Calendar.date(), Calendar.calendar()) :: t
   def convert!(date, calendar) do
     case convert(date, calendar) do
@@ -502,11 +548,13 @@ defmodule Date do
       ~D[2000-01-01]
       iex> Date.add(~D[2000-01-01], 2)
       ~D[2000-01-03]
-
       iex> Date.add(~N[2000-01-01 09:00:00], 2)
       ~D[2000-01-03]
+      iex> Date.add(~D[-0010-01-01], -2)
+      ~D[-0011-12-30]
 
   """
+  @doc since: "1.5.0"
   @spec add(Calendar.date(), integer()) :: t
   def add(%{calendar: calendar} = date, days) do
     {iso_days, fraction} = to_iso_days(date)
@@ -526,11 +574,13 @@ defmodule Date do
       2
       iex> Date.diff(~D[2000-01-01], ~D[2000-01-03])
       -2
-
+      iex> Date.diff(~D[0000-01-02], ~D[-0001-12-30])
+      3
       iex> Date.diff(~D[2000-01-01], ~N[2000-01-03 09:00:00])
       -2
 
   """
+  @doc since: "1.5.0"
   @spec diff(Calendar.date(), Calendar.date()) :: integer
   def diff(%{calendar: Calendar.ISO} = date1, %{calendar: Calendar.ISO} = date2) do
     %{year: year1, month: month1, day: day1} = date1
@@ -584,8 +634,11 @@ defmodule Date do
       2
       iex> Date.day_of_week(~N[2016-11-01 01:23:45])
       2
+      iex> Date.day_of_week(~D[-0015-10-30])
+      3
 
   """
+  @doc since: "1.4.0"
   @spec day_of_week(Calendar.date()) :: non_neg_integer()
   def day_of_week(date)
 

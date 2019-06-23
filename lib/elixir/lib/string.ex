@@ -7,7 +7,7 @@ defmodule String do
   ## Codepoints and grapheme cluster
 
   The functions in this module act according to the Unicode
-  Standard, version 10.0.0.
+  Standard, version 11.0.0.
 
   As per the standard, a codepoint is a single Unicode Character,
   which may be represented by one or more bytes.
@@ -203,18 +203,31 @@ defmodule String do
   is generated at runtime and does not survive compile term.
   """
 
+  @typedoc """
+  A UTF-8 encoded binary.
+
+  Note `String.t()` and `binary()` are equivalent to analysis tools.
+  Although, for those reading the documentation, `String.t()` implies
+  it is a UTF-8 encoded binary.
+  """
   @type t :: binary
+
+  @typedoc "A UTF-8 codepoint. It may be one or more bytes."
   @type codepoint :: t
+
+  @typedoc "Multiple codepoints that may be perceived as a single character by readers"
   @type grapheme :: t
+
+  @typedoc "Pattern used in functions like `replace/3` and `split/2`"
   @type pattern :: t | [t] | :binary.cp()
 
   @conditional_mappings [:greek]
 
   @doc """
-  Checks if a string contains only printable characters.
+  Checks if a string contains only printable characters up to `character_limit`.
 
-  Takes an optional `limit` as a second argument. `printable?/2` only
-  checks the printability of the string up to the `limit`.
+  Takes an optional `character_limit` as a second argument. If `character_limit` is `0`, this
+  function will return `true`.
 
   ## Examples
 
@@ -227,37 +240,47 @@ defmodule String do
       iex> String.printable?("abc" <> <<0>>, 2)
       true
 
-  """
-  @spec printable?(t) :: boolean
-  @spec printable?(t, non_neg_integer | :infinity) :: boolean
-  def printable?(string, counter \\ :infinity)
+      iex> String.printable?("abc" <> <<0>>, 0)
+      true
 
-  def printable?(<<>>, _), do: true
-  def printable?(_, 0), do: true
+  """
+  @spec printable?(t, 0) :: true
+  @spec printable?(t, pos_integer | :infinity) :: boolean
+  def printable?(string, character_limit \\ :infinity)
+      when is_binary(string) and
+             (character_limit == :infinity or
+                (is_integer(character_limit) and character_limit >= 0)) do
+    recur_printable?(string, character_limit)
+  end
+
+  defp recur_printable?(_string, 0), do: true
+  defp recur_printable?(<<>>, _character_limit), do: true
 
   for char <- 0x20..0x7E do
-    def printable?(<<unquote(char), rest::binary>>, counter) do
-      printable?(rest, decrement(counter))
+    defp recur_printable?(<<unquote(char), rest::binary>>, character_limit) do
+      recur_printable?(rest, decrement(character_limit))
     end
   end
 
   for char <- '\n\r\t\v\b\f\e\d\a' do
-    def printable?(<<unquote(char), rest::binary>>, counter) do
-      printable?(rest, decrement(counter))
+    defp recur_printable?(<<unquote(char), rest::binary>>, character_limit) do
+      recur_printable?(rest, decrement(character_limit))
     end
   end
 
-  def printable?(<<char::utf8, rest::binary>>, counter)
-      when char in 0xA0..0xD7FF
-      when char in 0xE000..0xFFFD
-      when char in 0x10000..0x10FFFF do
-    printable?(rest, decrement(counter))
+  defp recur_printable?(<<char::utf8, rest::binary>>, character_limit)
+       when char in 0xA0..0xD7FF
+       when char in 0xE000..0xFFFD
+       when char in 0x10000..0x10FFFF do
+    recur_printable?(rest, decrement(character_limit))
   end
 
-  def printable?(binary, _) when is_binary(binary), do: false
+  defp recur_printable?(_string, _character_limit) do
+    false
+  end
 
   defp decrement(:infinity), do: :infinity
-  defp decrement(counter), do: counter - 1
+  defp decrement(character_limit), do: character_limit - 1
 
   @doc ~S"""
   Divides a string into substrings at each Unicode whitespace
@@ -287,7 +310,8 @@ defmodule String do
   Divides a string into substrings based on a pattern.
 
   Returns a list of these substrings. The pattern can
-  be a string, a list of strings, or a regular expression.
+  be a string, a list of strings, a regular expression,
+  or a compiled pattern.
 
   The string is split into as many parts as possible by
   default, but can be controlled via the `:parts` option.
@@ -343,6 +367,12 @@ defmodule String do
       iex> String.split("abc", ~r{b}, include_captures: true)
       ["a", "b", "c"]
 
+  A compiled pattern:
+
+      iex> pattern = :binary.compile_pattern([" ", ","])
+      iex> String.split("1,2 3,4", pattern)
+      ["1", "2", "3", "4"]
+
   Splitting on empty string returns graphemes:
 
       iex> String.split("abc", "")
@@ -357,21 +387,15 @@ defmodule String do
       iex> String.split("abc", "", parts: 3)
       ["", "a", "bc"]
 
-  A precompiled pattern can also be given:
-
-      iex> pattern = :binary.compile_pattern([" ", ","])
-      iex> String.split("1,2 3,4", pattern)
-      ["1", "2", "3", "4"]
-
   Note this function can split within or across grapheme boundaries.
   For example, take the grapheme "é" which is made of the characters
-  "e" and the acute accent. The following returns true:
+  "e" and the acute accent. The following returns `true`:
 
       iex> String.split(String.normalize("é", :nfd), "e")
       ["", "́"]
 
   However, if "é" is represented by the single character "e with acute"
-  accent, then it will return false:
+  accent, then it will return `false`:
 
       iex> String.split(String.normalize("é", :nfc), "e")
       ["é"]
@@ -433,8 +457,8 @@ defmodule String do
   @doc """
   Returns an enumerable that splits a string on demand.
 
-  This is in contrast to `split/3` which splits all
-  the string upfront.
+  This is in contrast to `split/3` which splits the
+  entire string upfront.
 
   Note splitter does not support regular expressions
   (as it is often more efficient to have the regular
@@ -455,6 +479,12 @@ defmodule String do
 
       iex> String.splitter("abcd", "", trim: true) |> Enum.take(10)
       ["a", "b", "c", "d"]
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern([" ", ","])
+      iex> String.splitter("1,2 3,4 5,6 7,8,...,99999", pattern) |> Enum.take(4)
+      ["1", "2", "3", "4"]
 
   """
   @spec splitter(t, pattern, keyword) :: Enumerable.t()
@@ -508,19 +538,19 @@ defmodule String do
 
   ## Examples
 
-      iex> String.split_at "sweetelixir", 5
+      iex> String.split_at("sweetelixir", 5)
       {"sweet", "elixir"}
 
-      iex> String.split_at "sweetelixir", -6
+      iex> String.split_at("sweetelixir", -6)
       {"sweet", "elixir"}
 
-      iex> String.split_at "abc", 0
+      iex> String.split_at("abc", 0)
       {"", "abc"}
 
-      iex> String.split_at "abc", 1000
+      iex> String.split_at("abc", 1000)
       {"abc", ""}
 
-      iex> String.split_at "abc", -1000
+      iex> String.split_at("abc", -1000)
       {"", "abc"}
 
   """
@@ -644,14 +674,18 @@ defmodule String do
   end
 
   def upcase(string, :ascii) when is_binary(string) do
-    for <<x <- string>>,
-      do: if(x >= ?a and x <= ?z, do: <<x - 32>>, else: <<x>>),
-      into: ""
+    IO.iodata_to_binary(upcase_ascii(string))
   end
 
   def upcase(string, mode) when mode in @conditional_mappings do
     String.Casing.upcase(string, [], mode)
   end
+
+  defp upcase_ascii(<<char, rest::bits>>) when char >= ?a and char <= ?z,
+    do: [char - 32 | upcase_ascii(rest)]
+
+  defp upcase_ascii(<<char, rest::bits>>), do: [char | upcase_ascii(rest)]
+  defp upcase_ascii(<<>>), do: []
 
   @doc """
   Converts all characters in the given string to lowercase according to `mode`.
@@ -700,14 +734,18 @@ defmodule String do
   end
 
   def downcase(string, :ascii) when is_binary(string) do
-    for <<x <- string>>,
-      do: if(x >= ?A and x <= ?Z, do: <<x + 32>>, else: <<x>>),
-      into: ""
+    IO.iodata_to_binary(downcase_ascii(string))
   end
 
   def downcase(string, mode) when mode in @conditional_mappings do
     String.Casing.downcase(string, [], mode)
   end
+
+  defp downcase_ascii(<<char, rest::bits>>) when char >= ?A and char <= ?Z,
+    do: [char + 32 | downcase_ascii(rest)]
+
+  defp downcase_ascii(<<char, rest::bits>>), do: [char | downcase_ascii(rest)]
+  defp downcase_ascii(<<>>), do: []
 
   @doc """
   Converts the first character in the given string to
@@ -745,12 +783,12 @@ defmodule String do
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_trailing/1 instead"
   defdelegate rstrip(binary), to: String.Break, as: :trim_trailing
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_trailing/2 with a binary as second argument instead"
   def rstrip(string, char) when is_integer(char) do
     replace_trailing(string, <<char::utf8>>, "")
   end
@@ -960,26 +998,26 @@ defmodule String do
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_leading/1 instead"
   defdelegate lstrip(binary), to: String.Break, as: :trim_leading
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim_leading/2 with a binary as second argument instead"
   def lstrip(string, char) when is_integer(char) do
     replace_leading(string, <<char::utf8>>, "")
   end
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim/1 instead"
   def strip(string) do
     trim(string)
   end
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.trim/2 with a binary second argument instead"
   def strip(string, char) do
     trim(string, <<char::utf8>>)
   end
@@ -1204,15 +1242,29 @@ defmodule String do
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
-  def rjust(subject, len, pad \\ ?\s) when is_integer(pad) and is_integer(len) and len >= 0 do
+  @deprecated "Use String.pad_leading/2 instead"
+  def rjust(subject, len) do
+    rjust(subject, len, ?\s)
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.pad_leading/3 with a binary padding instead"
+  def rjust(subject, len, pad) when is_integer(pad) and is_integer(len) and len >= 0 do
     pad(:leading, subject, len, [<<pad::utf8>>])
   end
 
   @doc false
   # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
-  def ljust(subject, len, pad \\ ?\s) when is_integer(pad) and is_integer(len) and len >= 0 do
+  @deprecated "Use String.pad_trailing/2 instead"
+  def ljust(subject, len) do
+    ljust(subject, len, ?\s)
+  end
+
+  @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.pad_trailing/3 with a binary padding instead"
+  def ljust(subject, len, pad) when is_integer(pad) and is_integer(len) and len >= 0 do
     pad(:trailing, subject, len, [<<pad::utf8>>])
   end
 
@@ -1220,7 +1272,7 @@ defmodule String do
   Returns a new string created by replacing occurrences of `pattern` in
   `subject` with `replacement`.
 
-  The `pattern` may be a string or a regular expression.
+  The `pattern` may be a string, a regular expression, or a compiled pattern.
 
   By default it replaces all occurrences but this behaviour can be controlled
   through the `:global` option; see the "Options" section below.
@@ -1270,6 +1322,12 @@ defmodule String do
 
       iex> String.replace("a,b,c", ",", "[]", insert_replaced: [1, 1])
       "a[,,]b[,,]c"
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern(",")
+      iex> String.replace("a,b,c", pattern, "[]", insert_replaced: 2)
+      "a[],b[],c"
 
   When an empty string is provided as a `pattern`, the function will treat it as
   an implicit empty string between each grapheme and the string will be
@@ -1343,7 +1401,7 @@ defmodule String do
       "̀e"
       iex> String.reverse("̀e")
       "è"
-      iex> String.reverse String.reverse("̀e")
+      iex> String.reverse(String.reverse("̀e"))
       "è"
 
   In the first example the accent is before the vowel, so
@@ -1446,13 +1504,13 @@ defmodule String do
       iex> String.valid?("ø")
       true
 
-      iex> String.valid?(<<0xFFFF :: 16>>)
+      iex> String.valid?(<<0xFFFF::16>>)
       false
 
       iex> String.valid?(<<0xEF, 0xB7, 0x90>>)
       true
 
-      iex> String.valid?("asd" <> <<0xFFFF :: 16>>)
+      iex> String.valid?("asd" <> <<0xFFFF::16>>)
       false
 
   """
@@ -1465,7 +1523,7 @@ defmodule String do
 
   @doc false
   # TODO: Remove on 2.0
-  # (hard-deprecated in elixir_dispatch)
+  @deprecated "Use String.valid?/1 instead"
   def valid_character?(string) do
     case string do
       <<_::utf8>> -> valid?(string)
@@ -1574,7 +1632,7 @@ defmodule String do
   @spec next_grapheme(t) :: {grapheme, t} | nil
   def next_grapheme(binary) do
     case next_grapheme_size(binary) do
-      {size, rest} -> {:binary.part(binary, 0, size), rest}
+      {size, rest} -> {binary_part(binary, 0, size), rest}
       nil -> nil
     end
   end
@@ -1736,7 +1794,7 @@ defmodule String do
       ""
 
   """
-  @spec slice(t, integer, integer) :: grapheme
+  @spec slice(t, integer, non_neg_integer) :: grapheme
 
   def slice(_, _, 0) do
     ""
@@ -1865,36 +1923,55 @@ defmodule String do
   @doc """
   Returns `true` if `string` starts with any of the prefixes given.
 
-  `prefix` can be either a single prefix or a list of prefixes.
+  `prefix` can be either a string, a list of strings, or a compiled
+  pattern.
 
   ## Examples
 
-      iex> String.starts_with? "elixir", "eli"
+      iex> String.starts_with?("elixir", "eli")
       true
-      iex> String.starts_with? "elixir", ["erlang", "elixir"]
+      iex> String.starts_with?("elixir", ["erlang", "elixir"])
       true
-      iex> String.starts_with? "elixir", ["erlang", "ruby"]
+      iex> String.starts_with?("elixir", ["erlang", "ruby"])
       false
+
+  A compiled pattern can also be given:
+
+      iex> pattern = :binary.compile_pattern(["erlang", "elixir"])
+      iex> String.starts_with?("elixir", pattern)
+      true
 
   An empty string will always match:
 
-      iex> String.starts_with? "elixir", ""
+      iex> String.starts_with?("elixir", "")
       true
-      iex> String.starts_with? "elixir", ["", "other"]
+      iex> String.starts_with?("elixir", ["", "other"])
       true
 
   """
-  @spec starts_with?(t, t | [t]) :: boolean
-  def starts_with?(string, []) when is_binary(string) do
-    false
+  @spec starts_with?(t, pattern) :: boolean
+  def starts_with?(string, prefix) when is_binary(string) and is_binary(prefix) do
+    starts_with_string?(string, byte_size(string), prefix)
   end
 
   def starts_with?(string, prefix) when is_binary(string) and is_list(prefix) do
-    "" in prefix or Kernel.match?({0, _}, :binary.match(string, prefix))
+    string_size = byte_size(string)
+    Enum.any?(prefix, &starts_with_string?(string, string_size, &1))
   end
 
   def starts_with?(string, prefix) when is_binary(string) do
-    "" == prefix or Kernel.match?({0, _}, :binary.match(string, prefix))
+    Kernel.match?({0, _}, :binary.match(string, prefix))
+  end
+
+  @compile {:inline, starts_with_string?: 3}
+  defp starts_with_string?(string, string_size, prefix) when is_binary(prefix) do
+    prefix_size = byte_size(prefix)
+
+    if prefix_size <= string_size do
+      prefix == binary_part(string, 0, prefix_size)
+    else
+      false
+    end
   end
 
   @doc """
@@ -1904,39 +1981,40 @@ defmodule String do
 
   ## Examples
 
-      iex> String.ends_with? "language", "age"
+      iex> String.ends_with?("language", "age")
       true
-      iex> String.ends_with? "language", ["youth", "age"]
+      iex> String.ends_with?("language", ["youth", "age"])
       true
-      iex> String.ends_with? "language", ["youth", "elixir"]
+      iex> String.ends_with?("language", ["youth", "elixir"])
       false
 
   An empty suffix will always match:
 
-      iex> String.ends_with? "language", ""
+      iex> String.ends_with?("language", "")
       true
-      iex> String.ends_with? "language", ["", "other"]
+      iex> String.ends_with?("language", ["", "other"])
       true
 
   """
   @spec ends_with?(t, t | [t]) :: boolean
-  def ends_with?(string, suffixes) when is_binary(string) and is_list(suffixes) do
-    Enum.any?(suffixes, &do_ends_with(string, &1))
+  def ends_with?(string, suffix) when is_binary(string) and is_binary(suffix) do
+    ends_with_string?(string, byte_size(string), suffix)
   end
 
-  def ends_with?(string, suffix) when is_binary(string) do
-    do_ends_with(string, suffix)
-  end
-
-  defp do_ends_with(_string, "") do
-    true
-  end
-
-  defp do_ends_with(string, suffix) when is_binary(suffix) do
+  def ends_with?(string, suffix) when is_binary(string) and is_list(suffix) do
     string_size = byte_size(string)
+    Enum.any?(suffix, &ends_with_string?(string, string_size, &1))
+  end
+
+  @compile {:inline, ends_with_string?: 3}
+  defp ends_with_string?(string, string_size, suffix) when is_binary(suffix) do
     suffix_size = byte_size(suffix)
-    scope = {string_size - suffix_size, suffix_size}
-    suffix_size <= string_size and :nomatch != :binary.match(string, suffix, scope: scope)
+
+    if suffix_size <= string_size do
+      suffix == binary_part(string, string_size - suffix_size, suffix_size)
+    else
+      false
+    end
   end
 
   @doc """
@@ -1959,39 +2037,40 @@ defmodule String do
   @doc """
   Checks if `string` contains any of the given `contents`.
 
-  `contents` can be either a single string or a list of strings.
+  `contents` can be either a string, a list of strings,
+  or a compiled pattern.
 
   ## Examples
 
-      iex> String.contains? "elixir of life", "of"
+      iex> String.contains?("elixir of life", "of")
       true
-      iex> String.contains? "elixir of life", ["life", "death"]
+      iex> String.contains?("elixir of life", ["life", "death"])
       true
-      iex> String.contains? "elixir of life", ["death", "mercury"]
+      iex> String.contains?("elixir of life", ["death", "mercury"])
       false
+
+  The argument can also be a compiled pattern:
+
+      iex> pattern = :binary.compile_pattern(["life", "death"])
+      iex> String.contains?("elixir of life", pattern)
+      true
 
   An empty string will always match:
 
-      iex> String.contains? "elixir of life", ""
+      iex> String.contains?("elixir of life", "")
       true
-      iex> String.contains? "elixir of life", ["", "other"]
-      true
-
-  The argument can also be a precompiled pattern:
-
-      iex> pattern = :binary.compile_pattern(["life", "death"])
-      iex> String.contains? "elixir of life", pattern
+      iex> String.contains?("elixir of life", ["", "other"])
       true
 
   Note this function can match within or across grapheme boundaries.
   For example, take the grapheme "é" which is made of the characters
-  "e" and the acute accent. The following returns true:
+  "e" and the acute accent. The following returns `true`:
 
       iex> String.contains?(String.normalize("é", :nfd), "e")
       true
 
   However, if "é" is represented by the single character "e with acute"
-  accent, then it will return false:
+  accent, then it will return `false`:
 
       iex> String.contains?(String.normalize("é", :nfc), "e")
       false
@@ -2024,6 +2103,7 @@ defmodule String do
 
       iex> String.to_charlist("æß")
       'æß'
+
   """
   @spec to_charlist(t) :: charlist
   def to_charlist(string) when is_binary(string) do
@@ -2043,14 +2123,14 @@ defmodule String do
   Converts a string to an atom.
 
   Warning: this function creates atoms dynamically and atoms are
-  not garbage collected. Therefore, `string` should not be an
+  not garbage-collected. Therefore, `string` should not be an
   untrusted value, such as input received from a socket or during
   a web request. Consider using `to_existing_atom/1` instead.
 
   By default, the maximum number of atoms is `1_048_576`. This limit
   can be raised or lowered using the VM option `+t`.
 
-  The maximum atom size is of 255 characters. Prior to OTP 20,
+  The maximum atom size is of 255 characters. Prior to Erlang/OTP 20,
   only latin1 characters are allowed.
 
   Inlined by the compiler.
@@ -2069,7 +2149,7 @@ defmodule String do
   @doc """
   Converts a string to an existing atom.
 
-  The maximum atom size is of 255 characters. Prior to OTP 20,
+  The maximum atom size is of 255 characters. Prior to Erlang/OTP 20,
   only latin1 characters are allowed.
 
   Inlined by the compiler.
@@ -2160,6 +2240,8 @@ defmodule String do
       0.8222222222222223
       iex> String.jaro_distance("even", "odd")
       0.0
+      iex> String.jaro_distance("same", "same")
+      1.0
 
   """
   @spec jaro_distance(t, t) :: float
@@ -2254,16 +2336,16 @@ defmodule String do
       [eq: "fox ", del: "ho", ins: "jum", eq: "ps over the ", del: "dog", ins: "lazy cat"]
 
   """
-  @spec myers_difference(t, t) :: [{:eq | :ins | :del, t}] | nil
+  @spec myers_difference(t, t) :: [{:eq | :ins | :del, t}]
   def myers_difference(string1, string2) do
     graphemes(string1)
     |> List.myers_difference(graphemes(string2))
     |> Enum.map(fn {kind, chars} -> {kind, IO.iodata_to_binary(chars)} end)
   end
 
-  # TODO: Remove by 2.0
-  # (hard-deprecated in elixir_dispatch)
   @doc false
+  # TODO: Remove by 2.0
+  @deprecated "Use String.to_charlist/1 instead"
   @spec to_char_list(t) :: charlist
   def to_char_list(string), do: String.to_charlist(string)
 end

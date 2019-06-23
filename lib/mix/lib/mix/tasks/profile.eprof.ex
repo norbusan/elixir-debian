@@ -21,17 +21,20 @@ defmodule Mix.Tasks.Profile.Eprof do
       mix profile.eprof -e "[1, 2, 3] |> Enum.reverse |> Enum.map(&Integer.to_string/1)"
       mix profile.eprof my_script.exs arg1 arg2 arg3
 
+  This task is automatically reenabled, so you can profile multiple times
+  in the same Mix invocation.
+
   ## Command line options
 
     * `--matching` - only profile calls matching the given `Module.function/arity` pattern
     * `--calls` - filters out any results with a call count lower than this
     * `--time` - filters out any results that took lower than specified (in µs)
-    * `--sort` - sort the results by `time` or `calls` (default: `time`)
+    * `--sort` - sorts the results by `time` or `calls` (default: `time`)
     * `--config`, `-c` - loads the given configuration file
-    * `--eval`, `-e` - evaluate the given code
+    * `--eval`, `-e` - evaluates the given code
     * `--require`, `-r` - requires pattern before running the command
     * `--parallel`, `-p` - makes all requires parallel
-    * `--no-warmup` - skip the warmup step before profiling
+    * `--no-warmup` - skips the warmup step before profiling
     * `--no-compile` - does not compile even if files require compilation
     * `--no-deps-check` - does not check dependencies
     * `--no-archives-check` - does not check archives
@@ -123,6 +126,7 @@ defmodule Mix.Tasks.Profile.Eprof do
 
   def run(args) do
     {opts, head} = OptionParser.parse_head!(args, aliases: @aliases, strict: @switches)
+    Mix.Task.reenable("profile.eprof")
 
     Mix.Tasks.Run.run(
       ["--no-mix-exs" | args],
@@ -134,13 +138,15 @@ defmodule Mix.Tasks.Profile.Eprof do
   end
 
   defp profile_code(code_string, opts) do
+    opts = Enum.map(opts, &parse_opt/1)
+
     content =
       quote do
         unquote(__MODULE__).profile(
           fn ->
             unquote(Code.string_to_quoted!(code_string))
           end,
-          unquote(opts)
+          unquote(Macro.escape(opts))
         )
       end
 
@@ -148,8 +154,34 @@ defmodule Mix.Tasks.Profile.Eprof do
     Code.compile_quoted(content)
   end
 
-  @doc false
-  def profile(fun, opts) do
+  defp parse_opt({:matching, matching}) do
+    case Mix.Utils.parse_mfa(matching) do
+      {:ok, [m, f, a]} -> {:matching, {m, f, a}}
+      {:ok, [m, f]} -> {:matching, {m, f, :_}}
+      {:ok, [m]} -> {:matching, {m, :_, :_}}
+      :error -> Mix.raise("Invalid matching pattern: #{matching}")
+    end
+  end
+
+  defp parse_opt({:sort, "time"}), do: {:sort, :time}
+  defp parse_opt({:sort, "calls"}), do: {:sort, :calls}
+  defp parse_opt({:sort, other}), do: Mix.raise("Invalid sort option: #{other}")
+  defp parse_opt(other), do: other
+
+  @doc """
+  Allows to programatically run the `eprof` profiler on expression in `fun`.
+
+  ## Options
+
+    * `:matching` - only profile calls matching the given pattern in form of
+      `{module, function, arity}`, where each element may be replaced by `:_`
+      to allow any value
+    * `:calls` - filters out any results with a call count lower than this
+    * `:time` - filters out any results that took lower than specified (in µs)
+    * `:sort` - sort the results by `:time` or `:calls` (default: `:time`)
+
+  """
+  def profile(fun, opts \\ []) when is_function(fun, 0) do
     fun
     |> profile_and_analyse(opts)
     |> print_output()
@@ -162,7 +194,7 @@ defmodule Mix.Tasks.Profile.Eprof do
     end
 
     :eprof.start()
-    :eprof.profile([], fun, matching_pattern(opts))
+    :eprof.profile([], fun, Keyword.get(opts, :matching, {:_, :_, :_}))
 
     results =
       Enum.map(:eprof.dump(), fn {pid, call_results} ->
@@ -180,21 +212,6 @@ defmodule Mix.Tasks.Profile.Eprof do
     results
   end
 
-  defp matching_pattern(opts) do
-    case Keyword.get(opts, :matching) do
-      nil ->
-        {:_, :_, :_}
-
-      matching ->
-        case Mix.Utils.parse_mfa(matching) do
-          {:ok, [m, f, a]} -> {m, f, a}
-          {:ok, [m, f]} -> {m, f, :_}
-          {:ok, [m]} -> {m, :_, :_}
-          :error -> Mix.raise("Invalid matching pattern: #{matching}")
-        end
-    end
-  end
-
   defp filter_results(call_results, opts) do
     calls_opt = Keyword.get(opts, :calls, 0)
     time_opt = Keyword.get(opts, :time, 0)
@@ -205,12 +222,7 @@ defmodule Mix.Tasks.Profile.Eprof do
   end
 
   defp sort_results(call_results, opts) do
-    sort_by =
-      Keyword.get(opts, :sort, "time")
-      |> String.to_existing_atom()
-      |> sort_function
-
-    Enum.sort_by(call_results, sort_by)
+    Enum.sort_by(call_results, sort_function(Keyword.get(opts, :sort, :time)))
   end
 
   defp sort_function(:time), do: fn {_mfa, {_count, time}} -> time end

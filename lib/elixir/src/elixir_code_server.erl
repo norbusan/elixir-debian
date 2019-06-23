@@ -6,8 +6,8 @@
 
 -define(timeout, 30000).
 -record(elixir_code_server, {
-  loaded=#{},
-  mod_pool={[], 0},
+  required=#{},
+  mod_pool={[], [], 0},
   mod_ets=#{},
   compilation_status=#{}
 }).
@@ -24,40 +24,37 @@ start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, ok, []).
 
 init(ok) ->
-  %% We attempt to load those modules here so throughout
-  %% the codebase we can avoid code:is_loaded/1 checks.
-  _ = code:ensure_loaded('Elixir.Macro.Env'),
-
   %% The table where we store module definitions
   _ = ets:new(elixir_modules, [set, protected, named_table, {read_concurrency, true}]),
-
   {ok, #elixir_code_server{}}.
 
-handle_call({defmodule, Pid, Tuple}, _From, Config) ->
-  {Ref, New} = defmodule(Pid, Tuple, Config),
-  {reply, Ref, New};
-
-handle_call({lookup, Module}, _From, Config) ->
-  {reply, ets:lookup(elixir_modules, Module), Config};
+handle_call({defmodule, Module, Pid, Tuple}, _From, Config) ->
+  case ets:lookup(elixir_modules, Module) of
+    [] ->
+      {Ref, NewConfig} = defmodule(Pid, Tuple, Config),
+      {reply, {ok, Ref}, NewConfig};
+    [CurrentTuple] ->
+      {reply, {error, CurrentTuple}, Config}
+  end;
 
 handle_call({undefmodule, Ref}, _From, Config) ->
   {reply, ok, undefmodule(Ref, Config)};
 
 handle_call({acquire, Path}, From, Config) ->
-  Current = Config#elixir_code_server.loaded,
+  Current = Config#elixir_code_server.required,
   case maps:find(Path, Current) of
     {ok, true} ->
-      {reply, loaded, Config};
+      {reply, required, Config};
     {ok, {Ref, List}} when is_list(List), is_reference(Ref) ->
       Queued = maps:put(Path, {Ref, [From | List]}, Current),
-      {reply, {queued, Ref}, Config#elixir_code_server{loaded=Queued}};
+      {reply, {queued, Ref}, Config#elixir_code_server{required=Queued}};
     error ->
       Queued = maps:put(Path, {make_ref(), []}, Current),
-      {reply, proceed, Config#elixir_code_server{loaded=Queued}}
+      {reply, proceed, Config#elixir_code_server{required=Queued}}
   end;
 
-handle_call(loaded, _From, Config) ->
-  {reply, [F || {F, true} <- maps:to_list(Config#elixir_code_server.loaded)], Config};
+handle_call(required, _From, Config) ->
+  {reply, [F || {F, true} <- maps:to_list(Config#elixir_code_server.required)], Config};
 
 handle_call({compilation_status, CompilerPid}, _From, Config) ->
   CompilationStatusList = Config#elixir_code_server.compilation_status,
@@ -68,11 +65,17 @@ handle_call({compilation_status, CompilerPid}, _From, Config) ->
 
 handle_call(retrieve_compiler_module, _From, Config) ->
   case Config#elixir_code_server.mod_pool of
-    {[H | T], Counter} ->
-      {reply, module_tuple(H), Config#elixir_code_server{mod_pool={T, Counter}}};
-    {[], Counter} ->
-      {reply, module_tuple(Counter), Config#elixir_code_server{mod_pool={[], Counter+1}}}
+    {Used, [Mod | Unused], Counter} ->
+      {reply, Mod, Config#elixir_code_server{mod_pool={Used, Unused, Counter}}};
+    {Used, [], Counter} ->
+      {reply, compiler_module(Counter), Config#elixir_code_server{mod_pool={Used, [], Counter+1}}}
   end;
+
+handle_call(purge_compiler_modules, _From, Config) ->
+  {Used, Unused, Counter} = Config#elixir_code_server.mod_pool,
+  _ = [code:purge(Module) || Module <- Used],
+  ModPool = {[], Used ++ Unused, Counter},
+  {reply, {ok, length(Used)}, Config#elixir_code_server{mod_pool=ModPool}};
 
 handle_call(Request, _From, Config) ->
   {stop, {badcall, Request}, Config}.
@@ -91,27 +94,35 @@ handle_cast({reset_warnings, CompilerPid}, Config) ->
   CompilationStatusNew = maps:put(CompilerPid, ok, CompilationStatusCurrent),
   {noreply, Config#elixir_code_server{compilation_status=CompilationStatusNew}};
 
-handle_cast({loaded, Path}, Config) ->
-  Current = Config#elixir_code_server.loaded,
+handle_cast({required, Path}, Config) ->
+  Current = Config#elixir_code_server.required,
   case maps:find(Path, Current) of
     {ok, true} ->
       {noreply, Config};
     {ok, {Ref, List}} when is_list(List), is_reference(Ref) ->
-      _ = [Pid ! {elixir_code_server, Ref, loaded} || {Pid, _Tag} <- lists:reverse(List)],
+      _ = [Pid ! {elixir_code_server, Ref, required} || {Pid, _Tag} <- lists:reverse(List)],
       Done = maps:put(Path, true, Current),
-      {noreply, Config#elixir_code_server{loaded=Done}};
+      {noreply, Config#elixir_code_server{required=Done}};
     error ->
       Done = maps:put(Path, true, Current),
-      {noreply, Config#elixir_code_server{loaded=Done}}
+      {noreply, Config#elixir_code_server{required=Done}}
   end;
 
-handle_cast({unload_files, Files}, Config) ->
-  Current  = Config#elixir_code_server.loaded,
-  Unloaded = maps:without(Files, Current),
-  {noreply, Config#elixir_code_server{loaded=Unloaded}};
+handle_cast({unrequire_files, Files}, Config) ->
+  Current  = Config#elixir_code_server.required,
+  Unrequired = maps:without(Files, Current),
+  {noreply, Config#elixir_code_server{required=Unrequired}};
 
-handle_cast({return_compiler_module, H}, #elixir_code_server{mod_pool={T, Counter}} = Config) ->
-  {noreply, Config#elixir_code_server{mod_pool={[H | T], Counter}}};
+handle_cast({return_compiler_module, Module, Purgeable}, Config) ->
+  {Used, Unused, Counter} = Config#elixir_code_server.mod_pool,
+
+  ModPool =
+    case Purgeable of
+      true -> {Used, [Module | Unused], Counter};
+      false -> {[Module | Used], Unused, Counter}
+    end,
+
+  {noreply, Config#elixir_code_server{mod_pool=ModPool}};
 
 handle_cast(Request, Config) ->
   {stop, {badcast, Request}, Config}.
@@ -128,8 +139,8 @@ terminate(_Reason, _Config) ->
 code_change(_Old, Config, _Extra) ->
   {ok, Config}.
 
-module_tuple(I) ->
-  {list_to_atom("elixir_compiler_" ++ integer_to_list(I)), I}.
+compiler_module(I) ->
+  list_to_atom("elixir_compiler_" ++ integer_to_list(I)).
 
 defmodule(Pid, Tuple, #elixir_code_server{mod_ets=ModEts} = Config) ->
   ets:insert(elixir_modules, Tuple),

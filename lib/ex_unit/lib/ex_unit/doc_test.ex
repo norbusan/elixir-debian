@@ -34,7 +34,7 @@ defmodule ExUnit.DocTest do
 
   A very basic example is:
 
-      iex> 1+1
+      iex> 1 + 1
       2
 
   Expressions on multiple lines are also supported:
@@ -57,13 +57,13 @@ defmodule ExUnit.DocTest do
       iex> a = 1
       1
 
-      iex> a + 1  # will fail with a "undefined function a/0" error
+      iex> a + 1 # will fail with a "undefined function a/0" error
       2
 
   If you don't want to assert for every result in a doctest, you can omit
   the result:
 
-      iex> pid = spawn fn -> :ok end
+      iex> pid = spawn(fn -> :ok end)
       iex> is_pid(pid)
       true
 
@@ -104,7 +104,7 @@ defmodule ExUnit.DocTest do
   The first is to rely on the fact that doctest can compare internal
   structures as long as they are at the root. So one could write:
 
-      iex> map = %{users: Enum.into([:foo, :bar], MapSet.new)}
+      iex> map = %{users: Enum.into([:foo, :bar], MapSet.new())}
       iex> map.users
       #MapSet<[:foo, :bar]>
 
@@ -116,8 +116,8 @@ defmodule ExUnit.DocTest do
   Alternatively, since doctest results are actually evaluated, you can have
   the MapSet building expression as the doctest result:
 
-      iex> %{users: Enum.into([:foo, :bar], MapSet.new)}
-      %{users: Enum.into([:foo, :bar], MapSet.new)}
+      iex> %{users: Enum.into([:foo, :bar], MapSet.new())}
+      %{users: Enum.into([:foo, :bar], MapSet.new())}
 
   The downside of this approach is that the doctest result is not really
   what users would see in the terminal.
@@ -150,6 +150,7 @@ defmodule ExUnit.DocTest do
   defmodule Error do
     defexception [:message]
 
+    @impl true
     def exception(opts) do
       module = Keyword.fetch!(opts, :module)
       message = Keyword.fetch!(opts, :message)
@@ -164,7 +165,7 @@ defmodule ExUnit.DocTest do
   This macro is used to generate ExUnit test cases for doctests.
 
   Calling `doctest(Module)` will generate tests for all doctests found
-  in the module `Module`
+  in the `module`.
 
   Options can also be given:
 
@@ -177,7 +178,8 @@ defmodule ExUnit.DocTest do
     * `:import` - when `true`, one can test a function defined in the module
       without referring to the module name. However, this is not feasible when
       there is a clash with a module like Kernel. In these cases, `:import`
-      should be set to `false` and a full `M.f` construct should be used.
+      should be set to `false` and a full `Module.function` construct should be
+      used.
 
   ## Examples
 
@@ -185,20 +187,20 @@ defmodule ExUnit.DocTest do
 
   This macro is auto-imported with every `ExUnit.Case`.
   """
-  defmacro doctest(mod, opts \\ []) do
+  defmacro doctest(module, opts \\ []) do
     require =
-      if is_atom(Macro.expand(mod, __CALLER__)) do
+      if is_atom(Macro.expand(module, __CALLER__)) do
         quote do
-          require unquote(mod)
+          require unquote(module)
         end
       end
 
     tests =
-      quote bind_quoted: [mod: mod, opts: opts] do
+      quote bind_quoted: [module: module, opts: opts] do
         env = __ENV__
-        file = ExUnit.DocTest.__file__(mod)
+        file = ExUnit.DocTest.__file__(module)
 
-        for {name, test} <- ExUnit.DocTest.__doctests__(mod, opts) do
+        for {name, test} <- ExUnit.DocTest.__doctests__(module, opts) do
           @file file
           doc = ExUnit.Case.register_test(env, :doctest, name, [])
           def unquote(doc)(_), do: unquote(test)
@@ -294,7 +296,7 @@ defmodule ExUnit.DocTest do
         # Put all tests into one context
         (unquote_splicing(tests))
       rescue
-        e in [ExUnit.AssertionError] ->
+        e in ExUnit.AssertionError ->
           reraise e, stack
 
         error ->
@@ -303,7 +305,7 @@ defmodule ExUnit.DocTest do
               inspect(Exception.message(error))
 
           error = [message: message, expr: unquote(String.trim(whole_expr))]
-          reraise ExUnit.AssertionError, error, System.stacktrace()
+          reraise ExUnit.AssertionError, error, __STACKTRACE__
       end
     end
   end
@@ -321,7 +323,7 @@ defmodule ExUnit.DocTest do
 
         actual ->
           expr = "#{unquote(String.trim(expr))} === #{unquote(String.trim(expected))}"
-          error = [message: "Doctest failed", expr: expr, left: actual]
+          error = [message: "Doctest failed", expr: expr, left: actual, right: expected]
           reraise ExUnit.AssertionError, error, unquote(stack)
       end
     end
@@ -344,7 +346,7 @@ defmodule ExUnit.DocTest do
 
         actual ->
           expr = "inspect(#{unquote(String.trim(expr))}) === #{unquote(String.trim(expected))}"
-          error = [message: "Doctest failed", expr: expr, left: actual]
+          error = [message: "Doctest failed", expr: expr, left: actual, right: expected]
           reraise ExUnit.AssertionError, error, unquote(stack)
       end
     end
@@ -407,13 +409,17 @@ defmodule ExUnit.DocTest do
     rescue
       e ->
         ex_message = "(#{inspect(e.__struct__)}) #{Exception.message(e)}"
+        message = "Doctest did not compile, got: #{ex_message}"
+
+        opts =
+          if String.valid?(expr) do
+            [message: message, expr: String.trim(expr)]
+          else
+            [message: message]
+          end
 
         quote do
-          message = "Doctest did not compile, got: #{unquote(ex_message)}"
-
-          reraise ExUnit.AssertionError,
-                  [message: message, expr: unquote(String.trim(expr))],
-                  unquote(stack)
+          reraise ExUnit.AssertionError, unquote(opts), unquote(stack)
         end
     end
   end
@@ -421,39 +427,50 @@ defmodule ExUnit.DocTest do
   ## Extraction of the tests
 
   defp extract(module) do
-    all_docs = Code.get_docs(module, :all)
+    case Code.fetch_docs(module) do
+      {:docs_v1, anno, _, _, moduledoc, _, docs} ->
+        extract_from_moduledoc(anno, moduledoc, module) ++
+          extract_from_docs(Enum.sort(docs), module)
 
-    unless all_docs do
-      raise Error,
-        module: module,
-        message:
-          "could not retrieve the documentation for module #{inspect(module)}. " <>
-            "The module was not compiled with documentation or its BEAM file cannot be accessed"
+      {:error, reason} ->
+        raise Error,
+          module: module,
+          message:
+            "could not retrieve the documentation for module #{inspect(module)}. " <>
+              explain_docs_error(reason)
     end
-
-    moduledocs = extract_from_moduledoc(all_docs[:moduledoc], module)
-
-    docs =
-      for doc <- all_docs[:docs],
-          doc <- extract_from_doc(doc, module),
-          do: doc
-
-    moduledocs ++ docs
   end
 
-  defp extract_from_moduledoc({_, doc}, _module) when doc in [false, nil], do: []
+  defp explain_docs_error(:module_not_found),
+    do: "The BEAM file of the module cannot be accessed"
 
-  defp extract_from_moduledoc({line, doc}, module) do
-    for test <- extract_tests(line, doc, module) do
+  defp explain_docs_error(:chunk_not_found),
+    do: "The module was not compiled with documentation"
+
+  defp explain_docs_error({:invalid_chunk, _}),
+    do: "The documentation chunk in the module is invalid"
+
+  defp extract_from_moduledoc(_, doc, _module) when doc in [:none, :hidden], do: []
+
+  defp extract_from_moduledoc(anno, %{"en" => doc}, module) do
+    for test <- extract_tests(:erl_anno.line(anno), doc, module) do
       normalize_test(test, :moduledoc)
     end
   end
 
-  defp extract_from_doc({_, _, _, _, doc}, _module) when doc in [false, nil], do: []
+  defp extract_from_docs(docs, module) do
+    for doc <- docs, doc <- extract_from_doc(doc, module), do: doc
+  end
 
-  defp extract_from_doc({fa, line, _, _, doc}, module) do
+  defp extract_from_doc({{kind, _, _}, _, _, doc, _}, _module)
+       when kind not in [:function, :macro] or doc in [:none, :hidden],
+       do: []
+
+  defp extract_from_doc({{_, name, arity}, anno, _, %{"en" => doc}, _}, module) do
+    line = :erl_anno.line(anno)
+
     for test <- extract_tests(line, doc, module) do
-      normalize_test(test, fa)
+      normalize_test(test, {name, arity})
     end
   end
 
@@ -549,7 +566,7 @@ defmodule ExUnit.DocTest do
     length = byte_size(line) - indent
 
     if length > 0 do
-      :binary.part(line, indent, length)
+      binary_part(line, indent, length)
     else
       ""
     end

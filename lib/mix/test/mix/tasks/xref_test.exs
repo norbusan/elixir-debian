@@ -144,12 +144,12 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   defp assert_all_calls(files, expected) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       generate_files(files)
 
       Mix.Task.run("compile")
       assert Enum.sort(Mix.Tasks.Xref.calls()) == Enum.sort(expected)
-    end
+    end)
   end
 
   ## Warnings
@@ -299,7 +299,7 @@ defmodule Mix.Tasks.XrefTest do
     }
 
     warning = """
-    warning: A.a/0 is deprecated. Use A.c/0 instead.
+    warning: A.a/0 is deprecated. Use A.c/0 instead
       lib/b.ex:2
 
     """
@@ -554,29 +554,29 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   defp assert_warnings(files, expected) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       generate_files(files)
       output = capture_io(:stderr, fn -> Mix.Task.run("compile.xref") end)
       assert output == expected
-    end
+    end)
   end
 
   defp assert_no_warnings(files) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       generate_files(files)
       output = capture_io(:stderr, fn -> Mix.Task.run("compile.xref") end)
       assert output == ""
-    end
+    end)
   end
 
   ## Unreachable
 
   test "unreachable: reports nothing with no references" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", "defmodule A do end")
 
       assert Mix.Task.run("xref", ["unreachable"]) == :ok
-    end
+    end)
   end
 
   test "unreachable: reports missing functions" do
@@ -613,7 +613,7 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   defp assert_unreachable(contents, expected, args \\ []) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", contents)
 
       capture_io(:stderr, fn ->
@@ -621,17 +621,17 @@ defmodule Mix.Tasks.XrefTest do
       end)
 
       assert ^expected = receive_until_no_messages([])
-    end
+    end)
   end
 
   ## Deprecated
 
   test "deprecated: reports nothing with no references" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", "defmodule A do end")
 
       assert Mix.Task.run("xref", ["deprecated"]) == :ok
-    end
+    end)
   end
 
   test "deprecated: reports deprecated functions" do
@@ -665,7 +665,7 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   defp assert_deprecated(contents, expected, args \\ []) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", contents)
 
       capture_io(:stderr, fn ->
@@ -673,7 +673,7 @@ defmodule Mix.Tasks.XrefTest do
       end)
 
       assert ^expected = receive_until_no_messages([])
-    end
+    end)
   end
 
   ## Exclude
@@ -689,6 +689,7 @@ defmodule Mix.Tasks.XrefTest do
       end
     end
 
+    Mix.Project.pop()
     Mix.Project.push(ExcludeSample)
 
     files = %{
@@ -912,39 +913,39 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   test "callers: no argument gives error" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       message = "xref doesn't support this command. For more information run \"mix help xref\""
 
       assert_raise Mix.Error, message, fn ->
         assert Mix.Task.run("xref", ["callers"]) == :error
       end
-    end
+    end)
   end
 
   test "callers: gives nice error for quotable but invalid callers spec" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       message =
         "xref callers CALLEE expects Module, Module.function, or Module.function/arity, got: Module.func(arg)"
 
       assert_raise Mix.Error, message, fn ->
         Mix.Task.run("xref", ["callers", "Module.func(arg)"])
       end
-    end
+    end)
   end
 
   test "callers: gives nice error for unquotable callers spec" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       message =
         "xref callers CALLEE expects Module, Module.function, or Module.function/arity, got: %"
 
       assert_raise Mix.Error, message, fn ->
         Mix.Task.run("xref", ["callers", "%"])
       end
-    end
+    end)
   end
 
   defp assert_callers(callee, files, expected) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       for {file, contents} <- files do
         File.write!(file, contents)
       end
@@ -954,7 +955,7 @@ defmodule Mix.Tasks.XrefTest do
       end)
 
       assert ^expected = receive_until_no_messages([])
-    end
+    end)
   end
 
   ## Graph
@@ -1075,7 +1076,7 @@ defmodule Mix.Tasks.XrefTest do
   end
 
   test "graph: with dynamic module" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       B.define()
       """)
@@ -1097,11 +1098,11 @@ defmodule Mix.Tasks.XrefTest do
                "lib/b.ex"
              }
              """
-    end
+    end)
   end
 
   test "graph: with struct" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       defmodule A do
         def fun do
@@ -1125,11 +1126,11 @@ defmodule Mix.Tasks.XrefTest do
                "lib/b.ex"
              }
              """
-    end
+    end)
   end
 
   test "graph: with mixed cyclic dependencies" do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       defmodule A.Behaviour do
         @callback foo :: :foo
@@ -1165,11 +1166,11 @@ defmodule Mix.Tasks.XrefTest do
                "lib/b.ex"
              }
              """
-    end
+    end)
   end
 
   defp assert_graph(opts \\ [], expected) do
-    in_fixture "no_mixfile", fn ->
+    in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       defmodule A do
         def a do
@@ -1206,7 +1207,7 @@ defmodule Mix.Tasks.XrefTest do
                receive_until_no_messages([])
 
       assert normalize_graph_output(result) == normalize_graph_output(expected)
-    end
+    end)
   end
 
   defp normalize_graph_output(graph) do
@@ -1215,7 +1216,9 @@ defmodule Mix.Tasks.XrefTest do
 
   describe "inside umbrellas" do
     test "generates reports considering siblings" do
-      in_fixture "umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.pop()
+
+      in_fixture("umbrella_dep/deps/umbrella", fn ->
         Mix.Project.in_project(:bar, "apps/bar", fn _ ->
           File.write!("lib/bar.ex", """
           defmodule Bar do
@@ -1250,7 +1253,7 @@ defmodule Mix.Tasks.XrefTest do
                  lib/bar.ex:3: Foo.foo/0
                  """
         end)
-      end
+      end)
     end
   end
 

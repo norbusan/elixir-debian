@@ -21,7 +21,7 @@ defmodule ExUnitTest do
     ExUnit.Server.modules_loaded()
 
     assert capture_io(fn ->
-             assert ExUnit.run() == %{failures: 2, skipped: 0, total: 2}
+             assert ExUnit.run() == %{failures: 2, skipped: 0, total: 2, excluded: 0}
            end) =~ "2 tests, 2 failures"
   end
 
@@ -41,7 +41,7 @@ defmodule ExUnitTest do
     ExUnit.Server.modules_loaded()
 
     assert capture_io(fn ->
-             assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1}
+             assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
            end) =~ "1 test, 1 failure"
   end
 
@@ -136,6 +136,26 @@ defmodule ExUnitTest do
     assert config[:max_cases] == 1
   end
 
+  test "filters to the given test ids when an `only_test_ids` option is provided" do
+    defmodule TestIdTestModule do
+      use ExUnit.Case
+
+      test "passing", do: :ok
+      test "failing", do: assert(1 == 2)
+    end
+
+    test_ids =
+      MapSet.new([
+        {TestIdTestModule, :"test failing"},
+        {TestIdTestModule, :"test missing"},
+        {MissingModule, :"test passing"}
+      ])
+
+    {result, output} = run_with_filter([only_test_ids: test_ids], [])
+    assert result == %{failures: 1, skipped: 0, excluded: 0, total: 1}
+    assert output =~ "1 test, 1 failure"
+  end
+
   test "filtering cases with tags" do
     defmodule ParityTest do
       use ExUnit.Case
@@ -154,24 +174,24 @@ defmodule ExUnitTest do
 
     # Empty because it is already loaded
     {result, output} = run_with_filter([], [])
-    assert result == %{failures: 1, skipped: 0, total: 4}
+    assert result == %{failures: 1, skipped: 0, total: 4, excluded: 0}
     assert output =~ "4 tests, 1 failure"
 
     {result, output} = run_with_filter([exclude: [even: true]], [ParityTest])
-    assert result == %{failures: 0, skipped: 1, total: 4}
-    assert output =~ "4 tests, 0 failures, 1 skipped"
+    assert result == %{failures: 0, skipped: 0, excluded: 1, total: 4}
+    assert output =~ "4 tests, 0 failures, 1 excluded"
 
     {result, output} = run_with_filter([exclude: :even], [ParityTest])
-    assert result == %{failures: 0, skipped: 3, total: 4}
-    assert output =~ "4 tests, 0 failures, 3 skipped"
+    assert result == %{failures: 0, skipped: 0, excluded: 3, total: 4}
+    assert output =~ "4 tests, 0 failures, 3 excluded"
 
     {result, output} = run_with_filter([exclude: :even, include: [even: true]], [ParityTest])
-    assert result == %{failures: 1, skipped: 2, total: 4}
-    assert output =~ "4 tests, 1 failure, 2 skipped"
+    assert result == %{failures: 1, skipped: 0, excluded: 2, total: 4}
+    assert output =~ "4 tests, 1 failure, 2 excluded"
 
     {result, output} = run_with_filter([exclude: :test, include: [even: true]], [ParityTest])
-    assert result == %{failures: 1, skipped: 3, total: 4}
-    assert output =~ "4 tests, 1 failure, 3 skipped"
+    assert result == %{failures: 1, skipped: 0, excluded: 3, total: 4}
+    assert output =~ "4 tests, 1 failure, 3 excluded"
   end
 
   test "log capturing" do
@@ -228,7 +248,7 @@ defmodule ExUnitTest do
               assert 1 = 2
             rescue
               e in ExUnit.AssertionError ->
-                {:error, e, System.stacktrace()}
+                {:error, e, __STACKTRACE__}
             end
 
           error2 =
@@ -236,7 +256,7 @@ defmodule ExUnitTest do
               assert 3 > 4
             rescue
               e in ExUnit.AssertionError ->
-                {:error, e, System.stacktrace()}
+                {:error, e, __STACKTRACE__}
             end
 
           raise ExUnit.MultiError, errors: [error1, error2]
@@ -248,7 +268,7 @@ defmodule ExUnitTest do
 
     output =
       capture_io(fn ->
-        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1}
+        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
       end)
 
     assert output =~ "1 test, 1 failure"
@@ -257,7 +277,14 @@ defmodule ExUnitTest do
     assert output =~ "Failure #2"
 
     assert_raise ExUnit.MultiError, ~r/oops/, fn ->
-      error = {:error, RuntimeError.exception("oops"), System.stacktrace()}
+      stack =
+        try do
+          raise("oops")
+        rescue
+          _ -> __STACKTRACE__
+        end
+
+      error = {:error, RuntimeError.exception("oops"), stack}
       raise ExUnit.MultiError, errors: [error]
     end
   end
@@ -296,7 +323,7 @@ defmodule ExUnitTest do
 
     output =
       capture_io(fn ->
-        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1}
+        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
       end)
 
     assert output =~ "Not implemented"
@@ -323,10 +350,12 @@ defmodule ExUnitTest do
 
     output =
       capture_io(fn ->
-        assert ExUnit.run() == %{failures: 0, skipped: 2, total: 2}
+        assert ExUnit.run() == %{failures: 0, skipped: 2, total: 2, excluded: 0}
       end)
 
-    assert output =~ "2 tests, 0 failures, 2 skipped"
+    assert output =~ "2 tests"
+    assert output =~ "0 failures"
+    assert output =~ "2 skipped"
   end
 
   test "filtering cases with :module tag" do
@@ -342,16 +371,16 @@ defmodule ExUnitTest do
 
     # Empty because it is already loaded
     {result, output} = run_with_filter([exclude: :module], [])
-    assert result == %{failures: 0, skipped: 2, total: 2}
-    assert output =~ "2 tests, 0 failures, 2 skipped"
+    assert result == %{failures: 0, skipped: 0, excluded: 2, total: 2}
+    assert output =~ "2 tests, 0 failures, 2 excluded"
 
     {result, output} =
       [exclude: :test, include: [module: "ExUnitTest.SecondTestModule"]]
       |> run_with_filter([FirstTestModule, SecondTestModule])
 
-    assert result == %{failures: 1, skipped: 1, total: 2}
+    assert result == %{failures: 1, skipped: 0, excluded: 1, total: 2}
     assert output =~ "1) test false (ExUnitTest.SecondTestModule)"
-    assert output =~ "2 tests, 1 failure, 1 skipped"
+    assert output =~ "2 tests, 1 failure, 1 excluded"
   end
 
   test "raises on reserved tag :file in module" do
@@ -391,7 +420,7 @@ defmodule ExUnitTest do
 
     output =
       capture_io(fn ->
-        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1}
+        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
       end)
 
     assert output =~ "trying to set reserved field :file"
@@ -412,7 +441,7 @@ defmodule ExUnitTest do
 
     output =
       capture_io(fn ->
-        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1}
+        assert ExUnit.run() == %{failures: 1, skipped: 0, total: 1, excluded: 0}
       end)
 
     assert output =~ "trying to set reserved field :async"
@@ -432,7 +461,7 @@ defmodule ExUnitTest do
     ExUnit.Server.modules_loaded()
 
     capture_io(fn ->
-      assert ExUnit.run() == %{failures: 0, skipped: 0, total: 1}
+      assert ExUnit.run() == %{failures: 0, skipped: 0, total: 1, excluded: 0}
     end)
   end
 
@@ -463,7 +492,7 @@ defmodule ExUnitTest do
     ExUnit.Server.modules_loaded()
 
     assert capture_io(fn ->
-             assert ExUnit.run() == %{failures: 0, skipped: 0, total: 3}
+             assert ExUnit.run() == %{failures: 0, skipped: 0, total: 3, excluded: 0}
            end) =~ "3 tests, 0 failures"
 
     ExUnit.configure(seed: global_seed)

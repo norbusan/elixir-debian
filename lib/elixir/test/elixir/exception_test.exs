@@ -10,9 +10,7 @@ defmodule ExceptionTest do
       try do
         raise "a"
       rescue
-        _ ->
-          [top | _] = System.stacktrace()
-          top
+        _ -> hd(__STACKTRACE__)
       end
 
     file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
@@ -46,11 +44,11 @@ defmodule ExceptionTest do
   end
 
   test "normalize/2" do
-    assert Exception.normalize(:throw, :badarg) == :badarg
-    assert Exception.normalize(:exit, :badarg) == :badarg
-    assert Exception.normalize({:EXIT, self()}, :badarg) == :badarg
-    assert Exception.normalize(:error, :badarg).__struct__ == ArgumentError
-    assert Exception.normalize(:error, %ArgumentError{}).__struct__ == ArgumentError
+    assert Exception.normalize(:throw, :badarg, []) == :badarg
+    assert Exception.normalize(:exit, :badarg, []) == :badarg
+    assert Exception.normalize({:EXIT, self()}, :badarg, []) == :badarg
+    assert Exception.normalize(:error, :badarg, []).__struct__ == ArgumentError
+    assert Exception.normalize(:error, %ArgumentError{}, []).__struct__ == ArgumentError
   end
 
   test "format/2 without stacktrace" do
@@ -58,10 +56,10 @@ defmodule ExceptionTest do
       try do
         throw(:stack)
       catch
-        :stack -> System.stacktrace()
+        :stack -> __STACKTRACE__
       end
 
-    assert Exception.format(:error, :badarg) ==
+    assert Exception.format(:error, :badarg, stacktrace) ==
              "** (ArgumentError) argument error\n" <> Exception.format_stacktrace(stacktrace)
   end
 
@@ -70,7 +68,7 @@ defmodule ExceptionTest do
   end
 
   test "format/2 with EXIT (has no stacktrace)" do
-    assert Exception.format({:EXIT, self()}, :badarg) ==
+    assert Exception.format({:EXIT, self()}, :badarg, []) ==
              "** (EXIT from #{inspect(self())}) :badarg"
   end
 
@@ -84,23 +82,29 @@ defmodule ExceptionTest do
   end
 
   test "format_stacktrace/1 from file" do
-    assert_raise ArgumentError, fn ->
+    try do
       Code.eval_string("def foo do end", [], file: "my_file")
+    rescue
+      ArgumentError ->
+        assert Exception.format_stacktrace(__STACKTRACE__) =~ "my_file:1: (file)"
+    else
+      _ -> flunk("expected failure")
     end
-
-    assert Exception.format_stacktrace(System.stacktrace()) =~ "my_file:1: (file)"
   end
 
   test "format_stacktrace/1 from module" do
-    assert_raise ArgumentError, fn ->
+    try do
       Code.eval_string(
         "defmodule FmtStack do raise ArgumentError, ~s(oops) end",
         [],
         file: "my_file"
       )
+    rescue
+      ArgumentError ->
+        assert Exception.format_stacktrace(__STACKTRACE__) =~ "my_file:1: (module)"
+    else
+      _ -> flunk("expected failure")
     end
-
-    assert Exception.format_stacktrace(System.stacktrace()) =~ "my_file:1: (module)"
   end
 
   test "format_stacktrace_entry/1 with no file or line" do
@@ -414,9 +418,196 @@ defmodule ExceptionTest do
     assert formatted =~ ~r"\s{16}:not_a_real_module\.function/0"
   end
 
-  # TODO: Remove this check once we depend only on 20
-  if :erlang.system_info(:otp_release) >= '20' do
-    describe "blaming" do
+  describe "blaming" do
+    test "does not annotate throws/exits" do
+      stack = [{Keyword, :pop, [%{}, :key, nil], [line: 13]}]
+      assert Exception.blame(:throw, :function_clause, stack) == {:function_clause, stack}
+      assert Exception.blame(:exit, :function_clause, stack) == {:function_clause, stack}
+    end
+
+    test "annotates badarg on apply" do
+      assert blame_message([], & &1.foo) ==
+               "you attempted to apply :foo on []. If you are using apply/3, make sure " <>
+                 "the module is an atom. If you are using the dot syntax, such as " <>
+                 "map.field or module.function, make sure the left side of the dot is an atom or a map"
+
+      assert blame_message([], &apply(&1, :foo, [])) ==
+               "you attempted to apply :foo on []. If you are using apply/3, make sure " <>
+                 "the module is an atom. If you are using the dot syntax, such as " <>
+                 "map.field or module.function, make sure the left side of the dot is an atom or a map"
+
+      assert blame_message([], &apply(Kernel, &1, [1, 2])) ==
+               "you attempted to apply [] on module Kernel. Functions (the second argument of apply) must always be an atom"
+
+      assert blame_message(123, &apply(Kernel, :+, &1)) ==
+               "you attempted to apply :+ on module Kernel with arguments 123. " <>
+                 "Arguments (the third argument of apply) must always be a list"
+    end
+
+    test "annotates undefined function error with suggestions" do
+      assert blame_message(Enum, & &1.map(:ok)) == """
+             function Enum.map/1 is undefined or private. Did you mean one of:
+
+                   * map/2
+             """
+
+      assert blame_message(Enum, & &1.man(:ok)) == """
+             function Enum.man/1 is undefined or private. Did you mean one of:
+
+                   * map/2
+                   * max/1
+                   * max/2
+                   * min/1
+                   * min/2
+             """
+
+      assert blame_message(:erlang, & &1.gt_cookie()) == """
+             function :erlang.gt_cookie/0 is undefined or private. Did you mean one of:
+
+                   * get_cookie/0
+                   * set_cookie/2
+             """
+    end
+
+    test "annotates undefined function clause error with macro hints" do
+      assert blame_message(Integer, & &1.is_odd(1)) ==
+               "function Integer.is_odd/1 is undefined or private. However there is " <>
+                 "a macro with the same name and arity. Be sure to require Integer if " <>
+                 "you intend to invoke this macro"
+    end
+
+    test "annotates undefined function clause error with nil hints" do
+      assert blame_message(nil, & &1.foo) ==
+               "function nil.foo/0 is undefined. If you are using the dot syntax, " <>
+                 "such as map.field or module.function, make sure the left side of the dot is an atom or a map"
+    end
+
+    test "annotates key error with suggestions if keys are atoms" do
+      message = blame_message(%{first: nil, second: nil}, fn map -> map.firts end)
+
+      assert message == """
+             key :firts not found in: %{first: nil, second: nil}. Did you mean one of:
+
+                   * :first
+             """
+
+      message = blame_message(%{"first" => nil, "second" => nil}, fn map -> map.firts end)
+
+      assert message == "key :firts not found in: %{\"first\" => nil, \"second\" => nil}"
+
+      message =
+        blame_message(%{"first" => nil, "second" => nil}, fn map -> Map.fetch!(map, "firts") end)
+
+      assert message == "key \"firts\" not found in: %{\"first\" => nil, \"second\" => nil}"
+
+      message =
+        blame_message([first: nil, second: nil], fn kwlist -> Keyword.fetch!(kwlist, :firts) end)
+
+      assert message == """
+             key :firts not found in: [first: nil, second: nil]. Did you mean one of:
+
+                   * :first
+             """
+    end
+
+    test "annotates key error with suggestions for structs" do
+      message = blame_message(%URI{}, fn map -> map.schema end)
+      assert message =~ "key :schema not found in: %URI{"
+      assert message =~ "Did you mean one of:"
+      assert message =~ "* :scheme"
+    end
+
+    if :erlang.system_info(:otp_release) >= '21' do
+      test "annotates +/1 arithmetic errors" do
+        assert blame_message(:foo, &(+&1)) == "bad argument in arithmetic expression: +(:foo)"
+      end
+
+      test "annotates -/1 arithmetic errors" do
+        assert blame_message(:foo, &(-&1)) == "bad argument in arithmetic expression: -(:foo)"
+      end
+
+      test "annotates div arithmetic errors" do
+        assert blame_message(0, &div(10, &1)) ==
+                 "bad argument in arithmetic expression: div(10, 0)"
+      end
+
+      test "annotates rem arithmetic errors" do
+        assert blame_message(0, &rem(10, &1)) ==
+                 "bad argument in arithmetic expression: rem(10, 0)"
+      end
+
+      test "annotates band arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &band(10, &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.band(10, :foo)"
+
+        assert blame_message(:foo, &(10 &&& &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.band(10, :foo)"
+      end
+
+      test "annotates bor arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &bor(10, &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bor(10, :foo)"
+
+        assert blame_message(:foo, &(10 ||| &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bor(10, :foo)"
+      end
+
+      test "annotates bxor arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &bxor(10, &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bxor(10, :foo)"
+
+        assert blame_message(:foo, &(10 ^^^ &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bxor(10, :foo)"
+      end
+
+      test "annotates bsl arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &bsl(10, &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bsl(10, :foo)"
+
+        assert blame_message(:foo, &(10 <<< &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bsl(10, :foo)"
+      end
+
+      test "annotates bsr arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &bsr(10, &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bsr(10, :foo)"
+
+        assert blame_message(:foo, &(10 >>> &1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bsr(10, :foo)"
+      end
+
+      test "annotates bnot arithmetic errors" do
+        use Bitwise
+
+        assert blame_message(:foo, &bnot(&1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bnot(:foo)"
+
+        assert blame_message(:foo, &(~~~&1)) ==
+                 "bad argument in arithmetic expression: Bitwise.bnot(:foo)"
+      end
+    end
+
+    defp blame_message(arg, fun) do
+      try do
+        fun.(arg)
+      rescue
+        e ->
+          Exception.blame(:error, e, __STACKTRACE__) |> elem(0) |> Exception.message()
+      end
+    end
+
+    # TODO: Remove this check once we depend only on 20
+    if :erlang.system_info(:otp_release) >= '20' do
       test "annotates function clause errors" do
         args = [%{}, :key, nil]
 
@@ -425,12 +616,6 @@ defmodule ExceptionTest do
 
         assert %FunctionClauseError{kind: :def, args: ^args, clauses: [_]} = exception
         assert stack == [{Keyword, :pop, 3, [line: 13]}]
-      end
-
-      test "does not annotate throws/exits" do
-        stack = [{Keyword, :pop, [%{}, :key, nil], [line: 13]}]
-        assert Exception.blame(:throw, :function_clause, stack) == {:function_clause, stack}
-        assert Exception.blame(:exit, :function_clause, stack) == {:function_clause, stack}
       end
 
       test "annotates args and clauses from mfa" do
@@ -483,21 +668,21 @@ defmodule ExceptionTest do
                  "{[+value+], []}"
                ]
       end
-    end
 
-    defp annotated_clauses_to_string(clauses) do
-      Enum.map(clauses, fn args_and_clauses ->
-        Macro.to_string(args_and_clauses, fn
-          %{match?: true, node: node}, _string ->
-            "+" <> Macro.to_string(node) <> "+"
+      defp annotated_clauses_to_string(clauses) do
+        Enum.map(clauses, fn args_and_clauses ->
+          Macro.to_string(args_and_clauses, fn
+            %{match?: true, node: node}, _string ->
+              "+" <> Macro.to_string(node) <> "+"
 
-          %{match?: false, node: node}, _string ->
-            "-" <> Macro.to_string(node) <> "-"
+            %{match?: false, node: node}, _string ->
+              "-" <> Macro.to_string(node) <> "-"
 
-          _node, string ->
-            string
+            _node, string ->
+              string
+          end)
         end)
-      end)
+      end
     end
   end
 
@@ -546,46 +731,11 @@ defmodule ExceptionTest do
       assert %UndefinedFunctionError{module: Foo, function: :bar, arity: 1}
              |> message == "function Foo.bar/1 is undefined (module Foo is not available)"
 
+      assert %UndefinedFunctionError{module: nil, function: :bar, arity: 3}
+             |> message == "function nil.bar/3 is undefined"
+
       assert %UndefinedFunctionError{module: nil, function: :bar, arity: 0}
-             |> message == "function nil.bar/0 is undefined or private"
-    end
-
-    test "UndefinedFunctionError with suggestions" do
-      assert %UndefinedFunctionError{module: Enum, function: :map, arity: 1}
-             |> message == """
-             function Enum.map/1 is undefined or private. Did you mean one of:
-
-                   * map/2
-             """
-
-      assert %UndefinedFunctionError{module: Enum, function: :man, arity: 1}
-             |> message == """
-             function Enum.man/1 is undefined or private. Did you mean one of:
-
-                   * map/2
-                   * max/1
-                   * max/2
-                   * min/1
-                   * min/2
-             """
-
-      assert %UndefinedFunctionError{module: :erlang, function: :gt_cookie, arity: 0}
-             |> message == """
-             function :erlang.gt_cookie/0 is undefined or private. Did you mean one of:
-
-                   * get_cookie/0
-                   * set_cookie/2
-             """
-    end
-
-    test "UndefinedFunctionError when the mfa is a macro but require wasn't called" do
-      _ = Code.ensure_loaded(Integer)
-
-      assert %UndefinedFunctionError{module: Integer, function: :is_odd, arity: 1}
-             |> message ==
-               "function Integer.is_odd/1 is undefined or private. However there is " <>
-                 "a macro with the same name and arity. Be sure to require Integer if " <>
-                 "you intend to invoke this macro"
+             |> message == "function nil.bar/0 is undefined"
     end
 
     test "FunctionClauseError" do

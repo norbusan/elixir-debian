@@ -449,14 +449,15 @@ defmodule Code.Formatter.CommentsTest do
 
       assert_format bad, ~S"""
       # fn
-      # before head
-      # middle head
-      # after head
-      fn hello ->
-        # before body
-        # middle body
-        world
-        # after body
+      fn
+        # before head
+        # middle head
+        hello ->
+          # after head
+          # before body
+          # middle body
+          world
+          # after body
       end
       """
     end
@@ -649,6 +650,42 @@ defmodule Code.Formatter.CommentsTest do
         # comment
       else
         # comment
+      end
+      """
+    end
+
+    test "with one-line clauses" do
+      bad = ~S"""
+      assert do # do
+        # before
+        one -> two
+      end
+      """
+
+      assert_format bad, ~S"""
+      # do
+      assert do
+        # before
+        one -> two
+      end
+      """
+
+      bad = ~S"""
+      assert do # do
+        # before
+        one -> two
+        # after
+        three -> four
+      end
+      """
+
+      assert_format bad, ~S"""
+      # do
+      assert do
+        # before
+        one -> two
+        # after
+        three -> four
       end
       """
     end

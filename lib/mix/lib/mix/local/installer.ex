@@ -213,7 +213,12 @@ defmodule Mix.Local.Installer do
         package_name
       end
 
-    {:fetcher, {String.to_atom(app_name), version, hex: String.to_atom(package_name)}}
+    dep_opts =
+      opts
+      |> Keyword.take([:organization])
+      |> Keyword.put(:hex, String.to_atom(package_name))
+
+    {:fetcher, {String.to_atom(app_name), version, dep_opts}}
   end
 
   def parse_args(["hex" | [_package_name | rest]], _opts) do
@@ -231,9 +236,9 @@ defmodule Mix.Local.Installer do
   @doc """
   A common implementation for uninstalling archives and scripts.
   """
-  @spec uninstall(Path.t(), String.t(), OptionParser.argv()) :: Path.t() | nil
-  def uninstall(root, listing, argv) do
-    {_, argv, _} = OptionParser.parse(argv)
+  @spec uninstall(Path.t(), String.t(), OptionParser.argv(), keyword) :: Path.t() | nil
+  def uninstall(root, listing, argv, switches) do
+    {opts, argv} = OptionParser.parse!(argv, switches: switches)
 
     if name = List.first(argv) do
       path = Path.join(root, name)
@@ -244,7 +249,7 @@ defmodule Mix.Local.Installer do
           Mix.Task.rerun(listing)
           nil
 
-        should_uninstall?(path) ->
+        should_uninstall?(path, opts) ->
           File.rm_rf!(path)
           path
 
@@ -256,14 +261,14 @@ defmodule Mix.Local.Installer do
     end
   end
 
-  defp should_uninstall?(path) do
-    Mix.shell().yes?("Are you sure you want to uninstall #{path}?")
+  defp should_uninstall?(path, opts) do
+    opts[:force] || Mix.shell().yes?("Are you sure you want to uninstall #{path}?")
   end
 
   @doc """
   Fetches `dep_spec` with `in_fetcher` and then runs `in_package`.
 
-  Generates a new mix project in a temporary directory with the given `dep_spec`
+  Generates a new Mix project in a temporary directory with the given `dep_spec`
   added to a mix.exs. Then, `in_fetcher` is executed in the fetcher project. By
   default, this fetches the dependency, but you can provide an `in_fetcher`
   during test or for other purposes. After the `in_fetcher` is executed,
@@ -277,30 +282,37 @@ defmodule Mix.Local.Installer do
       File.mkdir_p!(tmp_path)
 
       File.write!(Path.join(tmp_path, "mix.exs"), """
-      defmodule Mix.Local.Installer.Fetcher.MixProject do
+      defmodule Mix.Local.Installer.MixProject do
         use Mix.Project
 
         def project do
-          [app: Mix.Local.Installer.Fetcher,
-           version: "1.0.0",
-           deps: [#{inspect(dep_spec)}]]
+          [
+            app: :mix_local_installer,
+            version: "1.0.0",
+            deps: [#{inspect(dep_spec)}]
+          ]
         end
       end
       """)
 
       with_mix_env_prod(fn ->
-        Mix.Project.in_project(Mix.Local.Installer.Fetcher, tmp_path, in_fetcher)
+        Mix.ProjectStack.on_clean_slate(fn ->
+          Mix.Project.in_project(:mix_local_installer, tmp_path, in_fetcher)
 
-        package_name = elem(dep_spec, 0)
-        package_name_string = Atom.to_string(package_name)
-        package_path = Path.join([tmp_path, "deps", package_name_string])
+          package_name = elem(dep_spec, 0)
+          package_name_string = Atom.to_string(package_name)
+          package_path = Path.join([tmp_path, "deps", package_name_string])
 
-        post_config = [
-          deps_path: Path.join(tmp_path, "deps"),
-          lockfile: Path.join(tmp_path, "mix.lock")
-        ]
+          post_config = [
+            deps_path: Path.join(tmp_path, "deps"),
+            lockfile: Path.join(tmp_path, "mix.lock")
+          ]
 
-        Mix.Project.in_project(package_name, package_path, post_config, in_package)
+          Mix.Project.in_project(package_name, package_path, post_config, fn mix_exs ->
+            in_fetcher.(mix_exs)
+            in_package.(mix_exs)
+          end)
+        end)
       end)
     end)
   after
@@ -309,7 +321,7 @@ defmodule Mix.Local.Installer do
   end
 
   defp in_fetcher(_mix_exs) do
-    Mix.Task.run("deps.get", [])
+    Mix.Task.run("deps.get", ["--only", Atom.to_string(Mix.env())])
   end
 
   defp with_tmp_dir(fun) do

@@ -6,7 +6,7 @@ This document covers all of Elixir syntax constructs as a reference and then dis
 
 ## Reserved words
 
-Those are the reserved words in the Elixir language. They are detailed throughout this guide but summed up here for convenience:
+These are the reserved words in the Elixir language. They are detailed throughout this guide but summed up here for convenience:
 
   * `true`, `false`, `nil` - used as atoms
   * `when`, `and`, `or`, `not`, `in` - used as operators
@@ -21,7 +21,7 @@ Integers (`1234`) and floats (`123.4`) in Elixir are represented as a sequence o
 
 ### Atoms
 
-Atoms in Elixir start with a colon (`:`) which must be followed by non-combining Unicode characters and underscore. The atom may continue using a sequence of Unicode characters, including numbers, underscore and `@`. Atoms may end in `!` or `?`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require OTP 20.
+Atoms in Elixir start with a colon (`:`) which must be followed by non-combining Unicode characters and underscore. The atom may continue using a sequence of Unicode characters, including numbers, underscore and `@`. Atoms may end in `!` or `?`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
 
 All operators in Elixir are also valid atoms. Valid examples are `:foo`, `:FOO`, `:foo_42`, `:foo@bar` and `:++`. Invalid examples are `:@foo` (`@` is not allowed at start), `:123` (numbers are not allowed at start) and `:(*)` (not a valid operator).
 
@@ -80,13 +80,13 @@ Structs built on the map syntax by passing the struct name between `%` and `{`. 
 
 ### Variables
 
-Variables in Elixir must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode characters, including numbers and underscore. Variables may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require OTP 20.
+Variables in Elixir must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode characters, including numbers and underscore. Variables may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
 
 [Elixir's naming conventions](naming-conventions.html) recommend variables to be in `snake_case` format.
 
 ### Non-qualified calls (local calls)
 
-Non-qualified calls, such as `add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require OTP 20.
+Non-qualified calls, such as `add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
 
 Parentheses for non-qualified calls are optional, except for zero-arity calls, which would then be ambiguous with variables. If parentheses are used, they must immediately follow the function name *without spaces*. For example, `add (1, 2)` is a syntax error, since `(1, 2)` is treated as an invalid block which is attempted to be given as a single argument to `add`.
 
@@ -98,7 +98,7 @@ As many programming languages, Elixir also support operators as non-qualified ca
 
 ### Qualified calls (remote calls)
 
-Qualified calls, such as `Math.add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require OTP 20.
+Qualified calls, such as `Math.add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
 
 [Elixir's naming conventions](naming-conventions.html) recommend calls to be in `snake_case` format.
 
@@ -118,7 +118,7 @@ Blocks are multiple Elixir expressions separated by newlines or semi-colons. A n
 
 ### Left to right arrow
 
-The left to right arrow (`->`) is used to establish a relationship between left and right. The left side may have zero, one or more arguments, the right side is zero, one or more expressions separted by new line. The `->` is always between one of the following terminators: `do`/`end`, `fn`/`end` or `(`/`)`.
+The left to right arrow (`->`) is used to establish a relationship between left and right. The left side may have zero, one or more arguments, the right side is zero, one or more expressions separated by new line. The `->` is always between one of the following terminators: `do`/`end`, `fn`/`end` or `(`/`)`.
 
 It is seen on `case` and `cond` constructs between `do`/`end`:
 

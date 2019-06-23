@@ -125,8 +125,8 @@ defmodule Kernel.Utils do
     RuntimeError.exception(msg)
   end
 
-  def raise(atom) when is_atom(atom) do
-    atom.exception([])
+  def raise(module) when is_atom(module) do
+    module.exception([])
   end
 
   def raise(%_{__exception__: true} = exception) do
@@ -188,7 +188,8 @@ defmodule Kernel.Utils do
   @spec defguard([Macro.t()], Macro.t(), Macro.Env.t()) :: Macro.t()
   def defguard(args, expr, env) do
     {^args, vars} = extract_refs_from_args(args)
-    {expr, _scope} = :elixir_expand.expand(expr, %{env | context: :guard, vars: vars})
+    env = :elixir_env.with_vars(%{env | context: :guard}, vars)
+    {expr, _scope} = :elixir_expand.expand(expr, env)
 
     quote do
       case Macro.Env.in_guard?(__CALLER__) do

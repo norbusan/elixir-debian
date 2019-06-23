@@ -20,6 +20,7 @@ defmodule ExUnit.CLIFormatter do
       test_timings: [],
       failure_counter: 0,
       skipped_counter: 0,
+      excluded_counter: 0,
       invalid_counter: 0
     }
 
@@ -54,8 +55,21 @@ defmodule ExUnit.CLIFormatter do
     {:noreply, config}
   end
 
-  def handle_cast({:test_finished, %ExUnit.Test{state: {:skip, _}} = test}, config) do
-    if config.trace, do: IO.puts(trace_test_skip(test))
+  def handle_cast({:test_finished, %ExUnit.Test{state: {:excluded, _}} = test}, config) do
+    if config.trace, do: IO.puts(trace_test_excluded(test))
+
+    test_counter = update_test_counter(config.test_counter, test)
+    config = %{config | test_counter: test_counter, excluded_counter: config.excluded_counter + 1}
+
+    {:noreply, config}
+  end
+
+  def handle_cast({:test_finished, %ExUnit.Test{state: {:skipped, _}} = test}, config) do
+    if config.trace do
+      IO.puts(skipped(trace_test_skipped(test), config))
+    else
+      IO.write(skipped("*", config))
+    end
 
     test_counter = update_test_counter(config.test_counter, test)
     config = %{config | test_counter: test_counter, skipped_counter: config.skipped_counter + 1}
@@ -159,7 +173,11 @@ defmodule ExUnit.CLIFormatter do
     "\r  * #{test.name} (#{trace_test_time(test)})"
   end
 
-  defp trace_test_skip(test) do
+  defp trace_test_excluded(test) do
+    "\r  * #{test.name} (excluded)"
+  end
+
+  defp trace_test_skipped(test) do
     "\r  * #{test.name} (skipped)"
   end
 
@@ -178,8 +196,8 @@ defmodule ExUnit.CLIFormatter do
     end
   end
 
-  defp update_test_counter(test_counter, %{tags: %{type: type}}) do
-    Map.update(test_counter, type, 1, &(&1 + 1))
+  defp update_test_counter(test_counter, %{tags: %{test_type: test_type}}) do
+    Map.update(test_counter, test_type, 1, &(&1 + 1))
   end
 
   ## Slowest
@@ -238,8 +256,12 @@ defmodule ExUnit.CLIFormatter do
 
     message =
       "#{test_type_counts}#{config.failure_counter} #{failure_pl}"
-      |> if_true(config.skipped_counter > 0, &(&1 <> ", #{config.skipped_counter} skipped"))
+      |> if_true(config.excluded_counter > 0, &(&1 <> ", #{config.excluded_counter} excluded"))
       |> if_true(config.invalid_counter > 0, &(&1 <> ", #{config.invalid_counter} invalid"))
+      |> if_true(
+        config.skipped_counter > 0,
+        &(&1 <> ", " <> skipped("#{config.skipped_counter} skipped", config))
+      )
 
     cond do
       config.failure_counter > 0 -> IO.puts(failure(message, config))
@@ -274,8 +296,8 @@ defmodule ExUnit.CLIFormatter do
   end
 
   defp format_test_type_counts(%{test_counter: test_counter} = _config) do
-    Enum.map(test_counter, fn {type, count} ->
-      type_pluralized = pluralize(count, type, ExUnit.plural_rule(type |> to_string()))
+    Enum.map(test_counter, fn {test_type, count} ->
+      type_pluralized = pluralize(count, test_type, ExUnit.plural_rule(test_type |> to_string()))
       "#{count} #{type_pluralized}, "
     end)
   end
@@ -297,6 +319,10 @@ defmodule ExUnit.CLIFormatter do
   end
 
   defp invalid(msg, config) do
+    colorize(:yellow, msg, config)
+  end
+
+  defp skipped(msg, config) do
     colorize(:yellow, msg, config)
   end
 

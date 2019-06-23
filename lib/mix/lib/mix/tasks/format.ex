@@ -14,13 +14,20 @@ defmodule Mix.Tasks.Format do
   ## Formatting options
 
   The formatter will read a `.formatter.exs` in the current directory for
-  formatter configuration. Evaluating this file should return a keyword list
-  with any of the options supported by `Code.format_string!/2`.
+  formatter configuration. Evaluating this file should return a keyword list.
 
-  The `.formatter.exs` also supports other options:
+  Here is an example `.formatter.exs` that works as a starting point:
+
+      [
+        inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
+      ]
+
+  Besides the options listed in `Code.format_string!/2`, the `.formatter.exs`
+  supports the following options:
 
     * `:inputs` (a list of paths and patterns) - specifies the default inputs
       to be used by this task. For example, `["mix.exs", "{config,lib,test}/**/*.{ex,exs}"]`.
+      Patterns are expanded with `Path.wildcard/2`.
 
     * `:subdirectories` (a list of paths and patterns) - specifies subdirectories
       that have their own formatting rules. Each subdirectory should have a
@@ -35,7 +42,7 @@ defmodule Mix.Tasks.Format do
     * `:import_deps` (a list of dependencies as atoms) - specifies a list
        of dependencies whose formatter configuration will be imported.
        When specified, the formatter should run in the same directory as
-       the `mix.exs` file that defines those depednencies. See the "Importing
+       the `mix.exs` file that defines those dependencies. See the "Importing
        dependencies configuration" section below for more information.
 
     * `:export` (a keyword list) - specifies formatter configuration to be exported.
@@ -43,18 +50,18 @@ defmodule Mix.Tasks.Format do
 
   ## Task-specific options
 
-    * `--check-formatted` - check that the file is already formatted.
+    * `--check-formatted` - checks that the file is already formatted.
       This is useful in pre-commit hooks and CI scripts if you want to
       reject contributions with unformatted code. However keep in mind
       that the formatted output may differ between Elixir versions as
       improvements and fixes are applied to the formatter.
 
-    * `--check-equivalent` - check if the files after formatting have the
+    * `--check-equivalent` - checks if the files after formatting have the
       same AST as before formatting. If the ASTs are not equivalent,
       it is a bug in the code formatter. This option is recommended if you
       are automatically formatting files.
 
-    * `--dry-run` - do not save files after formatting.
+    * `--dry-run` - does not save files after formatting.
 
     * `--dot-formatter` - path to the file with formatter configuration.
       Defaults to `.formatter.exs` if one is available. See the "`.formatter.exs`"
@@ -207,7 +214,7 @@ defmodule Mix.Tasks.Format do
     with {:ok, binary} <- File.read(manifest),
          {:ok, {@manifest_vsn, entry, sources}} <- safe_binary_to_term(binary),
          expanded_sources = Enum.flat_map(sources, &Path.wildcard(&1, match_dot: true)),
-         false <- Mix.Utils.stale?(Mix.Project.config_files() ++ expanded_sources, [manifest]) do
+         false <- Mix.Utils.stale?([Mix.Project.config_mtime() | expanded_sources], [manifest]) do
       {entry, sources}
     else
       _ -> nil
@@ -352,7 +359,7 @@ defmodule Mix.Tasks.Format do
 
     map =
       for input <- List.wrap(formatter_opts[:inputs]),
-          file <- Path.wildcard(Path.join(prefix ++ [input])),
+          file <- Path.wildcard(Path.join(prefix ++ [input]), match_dot: true),
           do: {file, formatter_opts},
           into: %{}
 
@@ -375,7 +382,7 @@ defmodule Mix.Tasks.Format do
   end
 
   defp stdin_or_wildcard("-"), do: [:stdin]
-  defp stdin_or_wildcard(path), do: Path.wildcard(path)
+  defp stdin_or_wildcard(path), do: path |> Path.expand() |> Path.wildcard(match_dot: true)
 
   defp read_file(:stdin) do
     {IO.stream(:stdio, :line) |> Enum.to_list() |> IO.iodata_to_binary(), file: "stdin"}
@@ -408,8 +415,7 @@ defmodule Mix.Tasks.Format do
     end
   rescue
     exception ->
-      stacktrace = System.stacktrace()
-      {:exit, file, exception, stacktrace}
+      {:exit, file, exception, __STACKTRACE__}
   end
 
   defp write_or_print(file, input, output) do
@@ -441,7 +447,7 @@ defmodule Mix.Tasks.Format do
   end
 
   defp check!({[{:exit, file, exception, stacktrace} | _], _not_equivalent, _not_formatted}) do
-    Mix.shell().error("mix format failed for file: #{file}")
+    Mix.shell().error("mix format failed for file: #{Path.relative_to_cwd(file)}")
     reraise exception, stacktrace
   end
 

@@ -9,19 +9,6 @@ expand_map(Meta, [{'|', UpdateMeta, [Left, Right]}], #{context := nil} = E) ->
   {{'%{}', Meta, [{'|', UpdateMeta, [ELeft, ERight]}]}, EE};
 expand_map(Meta, [{'|', _, [_, _]}] = Args, #{context := Context, file := File}) ->
   form_error(Meta, File, ?MODULE, {update_syntax_in_wrong_context, Context, {'%{}', Meta, Args}});
-expand_map(Meta, Args, #{context := match} = E) ->
-  {EArgs, EE} =
-    lists:mapfoldl(fun
-      ({Key, Value}, EA) ->
-        {EKey, EK} = elixir_expand:expand(Key, EA),
-        validate_match_key(Meta, EKey, EK),
-        {EValue, EV} = elixir_expand:expand(Value, EK),
-        {{EKey, EValue}, EV};
-      (Other, EA) ->
-        elixir_expand:expand(Other, EA)
-      end, E, Args),
-  validate_kv(Meta, EArgs, Args, E),
-  {{'%{}', Meta, EArgs}, EE};
 expand_map(Meta, Args, E) ->
   {EArgs, EE} = elixir_expand:expand_args(Args, E),
   validate_kv(Meta, EArgs, Args, E),
@@ -46,7 +33,8 @@ expand_struct(Meta, Left, {'%{}', MapMeta, MapArgs}, #{context := Context} = E) 
           Struct = load_struct(Meta, ELeft, [Assocs], InContext, EE),
           assert_struct_keys(Meta, ELeft, Struct, Assocs, EE),
           Keys = ['__struct__'] ++ [K || {K, _} <- Assocs],
-          {StructAssocs, _} = elixir_quote:escape(maps:to_list(maps:without(Keys, Struct)), false),
+          WithoutKeys = maps:to_list(maps:without(Keys, Struct)),
+          {StructAssocs, _} = elixir_quote:escape(WithoutKeys, default, false),
           {{'%', Meta, [ELeft, {'%{}', MapMeta, StructAssocs ++ Assocs}]}, EE};
 
         {_, _, Assocs} -> %% Update or match
@@ -81,10 +69,12 @@ clean_struct_key_from_map_assocs(Meta, Assocs, E) ->
       Assocs
   end.
 
-validate_match_key(_Meta, {'^', _, [_]}, _E) ->
-  ok;
+validate_match_key(Meta, {'^', _, [{Name, _, Context}]}, E) when is_atom(Name), is_atom(Context) ->
+  form_error(Meta, ?key(E, file), ?MODULE, {invalid_pin_in_map_key_match, Name});
 validate_match_key(Meta, {Name, _, Context}, E) when is_atom(Name), is_atom(Context) ->
   form_error(Meta, ?key(E, file), ?MODULE, {invalid_variable_in_map_key_match, Name});
+validate_match_key(_, {'%{}', _, [_ | _]}, _) ->
+  ok;
 validate_match_key(Meta, {Left, _, Right}, E) ->
   validate_match_key(Meta, Left, E),
   validate_match_key(Meta, Right, E);
@@ -96,9 +86,12 @@ validate_match_key(Meta, List, E) when is_list(List) ->
 validate_match_key(_, _, _) ->
   ok.
 
-validate_kv(Meta, KV, Original, E) ->
+validate_kv(Meta, KV, Original, #{context := Context} = E) ->
   lists:foldl(fun
-    ({_K, _V}, Acc) ->
+    ({{'^', _, [_]}, _}, Acc) ->
+      Acc + 1;
+    ({K, _V}, Acc) ->
+      (Context == match) andalso validate_match_key(Meta, K, E),
       Acc + 1;
     (_, Acc) ->
       form_error(Meta, ?key(E, file), ?MODULE, {not_kv_pair, lists:nth(Acc, Original)})
@@ -157,10 +150,9 @@ load_struct(Meta, Name, Args, InContext, E) ->
       end;
 
     Kind:Reason ->
-      Stacktrace = erlang:get_stacktrace(),
       Info = [{Name, '__struct__', Arity, [{file, "expanding struct"}]},
               elixir_utils:caller(?line(Meta), ?key(E, file), ?key(E, module), ?key(E, function))],
-      erlang:raise(Kind, Reason, prune_stacktrace(Stacktrace, Name, Arity) ++ Info)
+      erlang:raise(Kind, Reason, Info)
   end.
 
 prune_stacktrace([{Module, '__struct__', Arity, _} | _], Module, Arity) ->
@@ -193,11 +185,17 @@ format_error({invalid_struct_name_in_match, Expr}) ->
 format_error({invalid_struct_name, Expr}) ->
   Message = "expected struct name to be a compile time atom or alias, got: ~ts",
   io_lib:format(Message, ['Elixir.Macro':to_string(Expr)]);
+format_error({invalid_pin_in_map_key_match, Name}) ->
+  Message =
+    "cannot use pin operator ^~ts inside a data structure as a map key in a pattern. "
+    "The pin operator can only be used as the whole key",
+  io_lib:format(Message, [Name]);
 format_error({invalid_variable_in_map_key_match, Name}) ->
   Message =
-    "illegal use of variable ~ts inside map key match, maps can only match on "
-    "existing variables by using ^~ts",
-  io_lib:format(Message, [Name, Name]);
+    "cannot use variable ~ts as map key inside a pattern. Map keys in patterns can only be literals "
+    "(such as atoms, strings, tuples, etc) or an existing variable matched with the pin operator "
+    "(such as ^some_var)",
+  io_lib:format(Message, [Name]);
 format_error({not_kv_pair, Expr}) ->
   io_lib:format("expected key-value pairs in a map, got: ~ts",
                 ['Elixir.Macro':to_string(Expr)]);

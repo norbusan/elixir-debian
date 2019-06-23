@@ -45,10 +45,9 @@ defimpl IEx.Info, for: Atom do
 
   defp info_module(mod) do
     extra =
-      if Code.get_docs(mod, :moduledoc) do
-        "Use h(#{inspect(mod)}) to access its documentation.\n"
-      else
-        ""
+      case Code.fetch_docs(mod) do
+        {:docs_v1, _, _, _, %{}, _, _} -> "Use h(#{inspect(mod)}) to access its documentation.\n"
+        _ -> ""
       end
 
     mod_info = mod.module_info()
@@ -249,7 +248,7 @@ end
 
 defimpl IEx.Info, for: Function do
   def info(fun) do
-    fun_info = :erlang.fun_info(fun)
+    fun_info = Function.info(fun)
 
     specific_info =
       if fun_info[:type] == :external and fun_info[:env] == [] do
@@ -339,7 +338,7 @@ defimpl IEx.Info, for: [Date, Time, NaiveDateTime] do
     case @for do
       Date -> {"D", "date"}
       Time -> {"T", "time"}
-      NaiveDateTime -> {"N", ~S{"naive" datetime (that is, a datetime without a timezone)}}
+      NaiveDateTime -> {"N", ~S{"naive" datetime (that is, a datetime without a time zone)}}
     end
 
   def info(value) do

@@ -13,7 +13,7 @@ defmodule ModuleTest.ToBeUsed do
   end
 
   defmacro __before_compile__(env) do
-    quote(do: def(before_compile, do: unquote(env.vars)))
+    quote(do: def(before_compile, do: unquote(Macro.Env.vars(env))))
   end
 
   defmacro __after_compile__(%Macro.Env{module: ModuleTest.ToUse, vars: []}, bin)
@@ -85,7 +85,23 @@ defmodule ModuleTest do
     assert eval_quoted_info() == {ModuleTest, "sample.ex", 13}
   end
 
-  test "retrieves line from macros" do
+  test "resets last definition information on eval" do
+    # This should not emit any warning
+    defmodule LastDefinition do
+      def foo(0), do: 0
+
+      Module.eval_quoted(
+        __ENV__,
+        quote do
+          def bar, do: :ok
+        end
+      )
+
+      def foo(1), do: 1
+    end
+  end
+
+  test "retrieves line from use callsite" do
     assert ModuleTest.ToUse.line() == 40
   end
 
@@ -209,8 +225,17 @@ defmodule ModuleTest do
   end
 
   @file "sample.ex"
-  test "__ENV__.file with module attribute" do
+  test "@file sets __ENV__.file" do
     assert __ENV__.file == "sample.ex"
+  end
+
+  test "@file raises when invalid" do
+    assert_raise ArgumentError, ~r"@file is a built-in module attribute", fn ->
+      defmodule BadFile do
+        @file :oops
+        def my_fun, do: :ok
+      end
+    end
   end
 
   ## Creation
@@ -285,7 +310,7 @@ defmodule ModuleTest do
       end
 
     atoms = :beam_lib.chunks(binary, [:atoms])
-    assert :erlang.phash2(atoms) == 98_328_115
+    assert :erlang.phash2(atoms) == 61_635_213
   end
 
   test "create with generated true does not emit warnings" do
@@ -363,6 +388,12 @@ defmodule ModuleTest do
 
       assert Module.definitions_in(__MODULE__) == [foo: 3]
       assert Module.definitions_in(__MODULE__, :def) == [foo: 3]
+      assert Module.definitions_in(__MODULE__, :defp) == []
+
+      defoverridable foo: 3
+
+      assert Module.definitions_in(__MODULE__) == []
+      assert Module.definitions_in(__MODULE__, :def) == []
       assert Module.definitions_in(__MODULE__, :defp) == []
     end
   end

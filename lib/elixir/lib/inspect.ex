@@ -5,15 +5,17 @@ alias Code.Identifier
 
 defprotocol Inspect do
   @moduledoc """
-  The `Inspect` protocol is responsible for converting any Elixir
-  data structure into an algebra document. This document is then
-  formatted, either in pretty printing format or a regular one.
+  The `Inspect` protocol converts an Elixir data structure into an
+  algebra document.
+
+  This documentation refers to implementing the `Inspect` protocol
+  for your own data structures. To learn more about using inspect,
+  see `Kernel.inspect/2` and `IO.inspect/2`.
 
   The `inspect/2` function receives the entity to be inspected
   followed by the inspecting options, represented by the struct
-  `Inspect.Opts`.
-
-  Inspection is done using the functions available in `Inspect.Algebra`.
+  `Inspect.Opts`. Building of the algebra document is done with
+  `Inspect.Algebra`.
 
   ## Examples
 
@@ -303,26 +305,25 @@ end
 
 defimpl Inspect, for: Function do
   def inspect(function, _opts) do
-    fun_info = :erlang.fun_info(function)
+    fun_info = Function.info(function)
     mod = fun_info[:module]
     name = fun_info[:name]
 
-    if fun_info[:type] == :external and fun_info[:env] == [] do
-      inspected_as_atom = Identifier.inspect_as_atom(mod)
-      inspected_as_function = Identifier.inspect_as_function(name)
-      "&#{inspected_as_atom}.#{inspected_as_function}/#{fun_info[:arity]}"
-    else
-      case Atom.to_charlist(mod) do
-        'elixir_compiler_' ++ _ ->
-          if function_exported?(mod, :__RELATIVE__, 0) do
-            "#Function<#{uniq(fun_info)} in file:#{mod.__RELATIVE__}>"
-          else
-            default_inspect(mod, fun_info)
-          end
+    cond do
+      fun_info[:type] == :external and fun_info[:env] == [] ->
+        inspected_as_atom = Identifier.inspect_as_atom(mod)
+        inspected_as_function = Identifier.inspect_as_function(name)
+        "&#{inspected_as_atom}.#{inspected_as_function}/#{fun_info[:arity]}"
 
-        _ ->
+      match?('elixir_compiler_' ++ _, Atom.to_charlist(mod)) ->
+        if function_exported?(mod, :__RELATIVE__, 0) do
+          "#Function<#{uniq(fun_info)} in file:#{mod.__RELATIVE__}>"
+        else
           default_inspect(mod, fun_info)
-      end
+        end
+
+      true ->
+        default_inspect(mod, fun_info)
     end
   end
 

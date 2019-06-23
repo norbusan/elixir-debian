@@ -74,8 +74,8 @@ defmodule Task.Supervised do
   end
 
   defp get_initial_call({:erlang, :apply, [fun, []]}) when is_function(fun, 0) do
-    {:module, module} = :erlang.fun_info(fun, :module)
-    {:name, name} = :erlang.fun_info(fun, :name)
+    {:module, module} = Function.info(fun, :module)
+    {:name, name} = Function.info(fun, :name)
     {module, name, 0}
   end
 
@@ -83,31 +83,44 @@ defmodule Task.Supervised do
     {mod, fun, length(args)}
   end
 
+  # TODO: Remove conditionals once we depend on Erlang/OTP 20+
   defp do_apply(info, {module, fun, args} = mfa) do
     try do
       apply(module, fun, args)
     catch
       :error, value ->
-        reason = {value, System.stacktrace()}
-        exit(info, mfa, reason, reason)
+        reason = {value, __STACKTRACE__}
+        log(info, mfa, reason)
+
+        if :erlang.system_info(:otp_release) >= '20' do
+          :erlang.raise(:error, value, __STACKTRACE__)
+        else
+          exit(reason)
+        end
 
       :throw, value ->
-        reason = {{:nocatch, value}, System.stacktrace()}
-        exit(info, mfa, reason, reason)
+        reason = {{:nocatch, value}, __STACKTRACE__}
+        log(info, mfa, reason)
+
+        if :erlang.system_info(:otp_release) >= '20' do
+          :erlang.raise(:throw, value, __STACKTRACE__)
+        else
+          exit(reason)
+        end
+
+      :exit, value
+      when value == :normal
+      when value == :shutdown
+      when tuple_size(value) == 2 and elem(value, 0) == :shutdown ->
+        :erlang.raise(:exit, value, __STACKTRACE__)
 
       :exit, value ->
-        exit(info, mfa, {value, System.stacktrace()}, value)
+        log(info, mfa, {value, __STACKTRACE__})
+        :erlang.raise(:exit, value, __STACKTRACE__)
     end
   end
 
-  defp exit(_info, _mfa, _log_reason, reason)
-       when reason == :normal
-       when reason == :shutdown
-       when tuple_size(reason) == 2 and elem(reason, 0) == :shutdown do
-    exit(reason)
-  end
-
-  defp exit(info, mfa, log_reason, reason) do
+  defp log(info, mfa, reason) do
     {fun, args} = get_running(mfa)
 
     message =
@@ -116,16 +129,14 @@ defmodule Task.Supervised do
         '** When function  == ~p~n' ++
         '**      arguments == ~p~n' ++ '** Reason for termination == ~n' ++ '** ~p~n'
 
-    :error_logger.format(message, [self(), get_from(info), fun, args, get_reason(log_reason)])
-
-    exit(reason)
+    :error_logger.format(message, [self(), get_from(info), fun, args, get_reason(reason)])
   end
 
   defp get_from({node, pid_or_name}) when node == node(), do: pid_or_name
   defp get_from(other), do: other
 
   defp get_running({:erlang, :apply, [fun, []]}) when is_function(fun, 0), do: {fun, []}
-  defp get_running({mod, fun, args}), do: {:erlang.make_fun(mod, fun, length(args)), args}
+  defp get_running({mod, fun, args}), do: {Function.capture(mod, fun, length(args)), args}
 
   defp get_reason({:undef, [{mod, fun, args, _info} | _] = stacktrace} = reason)
        when is_atom(mod) and is_atom(fun) do
@@ -295,9 +306,8 @@ defmodule Task.Supervised do
       next.({:cont, []})
     catch
       kind, reason ->
-        stacktrace = System.stacktrace()
         stream_close(monitor_pid, monitor_ref, timeout)
-        :erlang.raise(kind, reason, stacktrace)
+        :erlang.raise(kind, reason, __STACKTRACE__)
     else
       {:suspended, [value], next} ->
         waiting = stream_spawn(value, spawned, waiting, monitor_pid, monitor_ref, timeout)
@@ -324,10 +334,9 @@ defmodule Task.Supervised do
       reducer.(reply, acc)
     catch
       kind, reason ->
-        stacktrace = System.stacktrace()
         is_function(next) && next.({:halt, []})
         stream_close(monitor_pid, monitor_ref, timeout)
-        :erlang.raise(kind, reason, stacktrace)
+        :erlang.raise(kind, reason, __STACKTRACE__)
     end
   end
 
@@ -354,10 +363,9 @@ defmodule Task.Supervised do
           reducer.(reply, acc)
         catch
           kind, reason ->
-            stacktrace = System.stacktrace()
             is_function(next) && next.({:halt, []})
             stream_close(monitor_pid, monitor_ref, timeout)
-            :erlang.raise(kind, reason, stacktrace)
+            :erlang.raise(kind, reason, __STACKTRACE__)
         else
           pair ->
             stream_deliver(

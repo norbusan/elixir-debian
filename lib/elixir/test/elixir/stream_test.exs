@@ -21,6 +21,22 @@ defmodule StreamTest do
     end
   end
 
+  defmodule HaltAcc do
+    defstruct [:acc]
+
+    defimpl Enumerable do
+      def count(_lazy), do: {:error, __MODULE__}
+
+      def member?(_lazy, _value), do: {:error, __MODULE__}
+
+      def slice(_lazy), do: {:error, __MODULE__}
+
+      def reduce(lazy, _acc, _fun) do
+        {:halted, Enum.to_list(lazy.acc)}
+      end
+    end
+  end
+
   test "streams as enumerables" do
     stream = Stream.map([1, 2, 3], &(&1 * 2))
 
@@ -41,21 +57,6 @@ defmodule StreamTest do
     assert lazy?(stream)
 
     assert Enum.to_list(stream) == [3, 5, 7]
-  end
-
-  test "chunk/2, chunk/3 and chunk/4" do
-    assert Stream.chunk([1, 2, 3, 4, 5], 2) |> Enum.to_list() == [[1, 2], [3, 4]]
-    assert Stream.chunk([1, 2, 3, 4, 5], 2, 2, [6]) |> Enum.to_list() == [[1, 2], [3, 4], [5, 6]]
-    assert Stream.chunk([1, 2, 3, 4, 5, 6], 3, 2) |> Enum.to_list() == [[1, 2, 3], [3, 4, 5]]
-    assert Stream.chunk([1, 2, 3, 4, 5, 6], 2, 3) |> Enum.to_list() == [[1, 2], [4, 5]]
-
-    assert Stream.chunk([1, 2, 3, 4, 5, 6], 3, 2, []) |> Enum.to_list() ==
-             [[1, 2, 3], [3, 4, 5], [5, 6]]
-
-    assert Stream.chunk([1, 2, 3, 4, 5, 6], 3, 3, []) |> Enum.to_list() == [[1, 2, 3], [4, 5, 6]]
-
-    assert Stream.chunk([1, 2, 3, 4, 5], 4, 4, 6..10) |> Enum.to_list() ==
-             [[1, 2, 3, 4], [5, 6, 7, 8]]
   end
 
   test "chunk_every/2, chunk_every/3 and chunk_every/4" do
@@ -209,6 +210,11 @@ defmodule StreamTest do
     stream = Stream.concat(Stream.cycle(1..3), Stream.cycle(4..6))
     assert is_function(stream)
     assert Enum.take(stream, 13) == [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1]
+  end
+
+  test "concat/2 is zippable" do
+    stream = 1..2 |> Stream.take(2) |> Stream.concat(3..4)
+    assert Enum.zip(1..4, [1, 2, 3, 4]) == Enum.zip(1..4, stream)
   end
 
   test "concat/2 does not intercept wrapped lazy enumeration" do
@@ -490,7 +496,7 @@ defmodule StreamTest do
     stream = Stream.interval(10)
     now = :os.timestamp()
     assert Enum.take(stream, 5) == [0, 1, 2, 3, 4]
-    assert :timer.now_diff(:os.timestamp(), now) > 50000
+    assert :timer.now_diff(:os.timestamp(), now) >= 50000
   end
 
   test "into/2 and run/1" do
@@ -1048,7 +1054,7 @@ defmodule StreamTest do
     stream = Stream.timer(10)
     now = :os.timestamp()
     assert Enum.to_list(stream) == [0]
-    assert :timer.now_diff(:os.timestamp(), now) > 10000
+    assert :timer.now_diff(:os.timestamp(), now) >= 10000
   end
 
   test "unfold/2" do
@@ -1101,6 +1107,9 @@ defmodule StreamTest do
 
     assert Stream.chunk_every([0, 1, 2, 3], 2) |> Stream.zip() |> Enum.to_list() ==
              [{0, 2}, {1, 3}]
+
+    stream = %HaltAcc{acc: 1..3}
+    assert Stream.zip([1..3, stream]) |> Enum.to_list() == [{1, 1}, {2, 2}, {3, 3}]
   end
 
   test "zip/1 does not leave streams suspended" do

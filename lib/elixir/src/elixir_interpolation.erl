@@ -19,8 +19,8 @@ extract(Line, Column, Raw, Interpol, String, Last) ->
 extract(Line, Column, _Scope, _Interpol, [], Buffer, Output, []) ->
   finish_extraction(Line, Column, Buffer, Output, []);
 
-extract(Line, _Column, _Scope, _Interpol, [], _Buffer, _Output, Last) ->
-  {error, {string, Line, io_lib:format("missing terminator: ~ts", [[Last]]), []}};
+extract(Line, Column, _Scope, _Interpol, [], _Buffer, _Output, Last) ->
+  {error, {string, Line, Column, io_lib:format("missing terminator: ~ts", [[Last]]), []}};
 
 extract(Line, Column, _Scope, _Interpol, [Last | Remaining], Buffer, Output, Last) ->
   finish_extraction(Line, Column + 1, Buffer, Output, Remaining);
@@ -55,13 +55,13 @@ extract(Line, Column, Scope, true, [$\\, $#, ${ | Rest], Buffer, Output, Last) -
 extract(Line, Column, Scope, true, [$#, ${ | Rest], Buffer, Output, Last) ->
   Output1 = build_string(Line, Buffer, Output),
   case elixir_tokenizer:tokenize(Rest, Line, Column + 2, Scope) of
-    {error, {{EndLine, EndColumn, _}, _, "}"}, [$} | NewRest], Tokens} ->
+    {error, {EndLine, EndColumn, _, "}"}, [$} | NewRest], Tokens} ->
       Output2 = build_interpol(Line, Column, EndLine, Tokens, Output1),
       extract(EndLine, EndColumn + 1, Scope, true, NewRest, [], Output2, Last);
     {error, Reason, _, _} ->
       {error, Reason};
     {ok, _} ->
-      {error, {string, Line, "missing interpolation terminator:}", []}}
+      {error, {string, Line, Column, "missing interpolation terminator: \"}\"", []}}
   end;
 
 extract(Line, Column, Scope, Interpol, [$\\, Char | Rest], Buffer, Output, Last) ->
@@ -78,10 +78,20 @@ unescape_tokens(Tokens) ->
   unescape_tokens(Tokens, fun unescape_map/1).
 
 unescape_tokens(Tokens, Map) ->
-  [unescape_token(Token, Map) || Token <- Tokens].
+  try [unescape_token(Token, Map) || Token <- Tokens] of
+    Unescaped ->
+      {ok, Unescaped}
+  catch
+    {error, _Reason} = Error ->
+      Error
+  end.
 
-unescape_token(Token, Map) when is_binary(Token) -> unescape_chars(Token, Map);
-unescape_token(Other, _Map) -> Other.
+unescape_token(Token, Map) when is_list(Token) ->
+  unescape_chars(elixir_utils:characters_to_binary(Token), Map);
+unescape_token(Token, Map) when is_binary(Token) ->
+  unescape_chars(Token, Map);
+unescape_token(Other, _Map) ->
+  Other.
 
 % Unescape chars. For instance, "\" "n" (two chars) needs to be converted to "\n" (one char).
 
@@ -151,8 +161,7 @@ unescape_hex(<<${, A, B, C, D, E, F, $}, Rest/binary>>, Map, Acc) when ?is_hex(A
   append_codepoint(Rest, Map, [A, B, C, D, E, F], Acc, 16);
 
 unescape_hex(<<_/binary>>, _Map, _Acc) ->
-  Msg = <<"missing hex sequence after \\x, expected \\xHH">>,
-  error('Elixir.ArgumentError':exception([{message, Msg}])).
+  throw({error, "missing hex sequence after \\x, expected \\xHH"}).
 
 %% Finish deprecated sequences
 
@@ -210,15 +219,14 @@ unescape_map(E)  -> E.
 
 finish_extraction(Line, Column, Buffer, Output, Remaining) ->
   Final = case build_string(Line, Buffer, Output) of
-    [] -> [<<>>];
+    [] -> [[]];
     F  -> F
   end,
 
   {Line, Column, lists:reverse(Final), Remaining}.
 
 build_string(_Line, [], Output) -> Output;
-build_string(_Line, Buffer, Output) ->
-  [elixir_utils:characters_to_binary(lists:reverse(Buffer)) | Output].
+build_string(_Line, Buffer, Output) -> [lists:reverse(Buffer) | Output].
 
 build_interpol(Line, Column, EndLine, Buffer, Output) ->
   [{{Line, Column, EndLine}, lists:reverse(Buffer)} | Output].

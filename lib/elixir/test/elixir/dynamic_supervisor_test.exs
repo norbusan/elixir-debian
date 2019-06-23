@@ -15,6 +15,30 @@ defmodule DynamicSupervisorTest do
     assert DynamicSupervisor.which_children(:dyn_sup_spec_test) == []
   end
 
+  test "multiple supervisors can be supervised and identified with simple child spec" do
+    {:ok, _} = Registry.start_link(keys: :unique, name: DynSup.Registry)
+
+    children = [
+      {DynamicSupervisor, strategy: :one_for_one, name: :simple_name},
+      {DynamicSupervisor, strategy: :one_for_one, name: {:global, :global_name}},
+      {DynamicSupervisor,
+       strategy: :one_for_one, name: {:via, Registry, {DynSup.Registry, "via_name"}}}
+    ]
+
+    assert {:ok, supsup} = Supervisor.start_link(children, strategy: :one_for_one)
+
+    assert {:ok, no_name_dynsup} =
+             Supervisor.start_child(supsup, {DynamicSupervisor, strategy: :one_for_one})
+
+    assert DynamicSupervisor.which_children(:simple_name) == []
+    assert DynamicSupervisor.which_children({:global, :global_name}) == []
+    assert DynamicSupervisor.which_children({:via, Registry, {DynSup.Registry, "via_name"}}) == []
+    assert DynamicSupervisor.which_children(no_name_dynsup) == []
+
+    assert Supervisor.start_child(supsup, {DynamicSupervisor, strategy: :one_for_one}) ==
+             {:error, {:already_started, no_name_dynsup}}
+  end
+
   describe "use/2" do
     test "generates child_spec/1" do
       assert Simple.child_spec([:hello]) == %{
@@ -95,6 +119,9 @@ defmodule DynamicSupervisorTest do
       # And the initial call
       assert {:supervisor, DynamicSupervisorTest.Simple, 1} =
                :proc_lib.translate_initial_call(pid)
+
+      # And shuts down
+      assert DynamicSupervisor.stop(__MODULE__) == :ok
     end
 
     test "sets initial call to the same as a regular supervisor" do
@@ -340,7 +367,7 @@ defmodule DynamicSupervisorTest do
       assert %{workers: 4, active: 2} = DynamicSupervisor.count_children(pid)
     end
 
-    test "restarting children counted in max_children" do
+    test "restarting on init children counted in max_children" do
       child = current_module_worker([:restart, :error], restart: :permanent)
       opts = [strategy: :one_for_one, max_children: 1, max_restarts: 100_000]
       {:ok, pid} = DynamicSupervisor.start_link(opts)
@@ -353,7 +380,20 @@ defmodule DynamicSupervisorTest do
       assert {:error, :max_children} = DynamicSupervisor.start_child(pid, child)
     end
 
-    test "restarting a child with extra_args successfully restarts child" do
+    test "restarting on exit children counted in max_children" do
+      child = current_module_worker([:ok2], restart: :permanent)
+      opts = [strategy: :one_for_one, max_children: 1, max_restarts: 100_000]
+      {:ok, pid} = DynamicSupervisor.start_link(opts)
+
+      assert {:ok, child_pid} = DynamicSupervisor.start_child(pid, child)
+      assert_kill(child_pid, :shutdown)
+      assert %{workers: 1, active: 1} = DynamicSupervisor.count_children(pid)
+
+      child = current_module_worker([:ok2], restart: :permanent)
+      assert {:error, :max_children} = DynamicSupervisor.start_child(pid, child)
+    end
+
+    test "restarting a child with extra_arguments successfully restarts child" do
       parent = self()
 
       fun = fn ->

@@ -4,42 +4,39 @@ defmodule LoggerTest do
 
   setup_all do
     Logger.configure_backend(:console, metadata: [:application, :module])
+    on_exit(fn -> Logger.configure_backend(:console, metadata: []) end)
+  end
 
-    on_exit(fn ->
-      Logger.configure_backend(:console, metadata: [])
-    end)
+  defmodule MyBackend do
+    @behaviour :gen_event
+
+    def init({MyBackend, :hello}) do
+      {:ok, :hello}
+    end
+
+    def handle_event(_event, state) do
+      {:ok, state}
+    end
+
+    def handle_call(:error, _) do
+      raise "oops"
+    end
+
+    def handle_info(_msg, state) do
+      {:ok, state}
+    end
+
+    def code_change(_old_vsn, state, _extra) do
+      {:ok, state}
+    end
+
+    def terminate(_reason, _state) do
+      :ok
+    end
   end
 
   defp msg_with_meta(text) do
     msg("module=LoggerTest #{text}")
-  end
-
-  test "add_translator/1 and remove_translator/1" do
-    defmodule CustomTranslator do
-      def t(:debug, :info, :format, {'hello: ~p', [:ok]}) do
-        :skip
-      end
-
-      def t(:debug, :info, :format, {'world: ~p', [:ok]}) do
-        {:ok, "rewritten"}
-      end
-
-      def t(_, _, _, _) do
-        :none
-      end
-    end
-
-    assert Logger.add_translator({CustomTranslator, :t})
-
-    assert capture_log(fn ->
-             :error_logger.info_msg('hello: ~p', [:ok])
-           end) == ""
-
-    assert capture_log(fn ->
-             :error_logger.info_msg('world: ~p', [:ok])
-           end) =~ "\[info\]  rewritten"
-  after
-    assert Logger.remove_translator({CustomTranslator, :t})
   end
 
   test "add_backend/1 and remove_backend/1" do
@@ -58,37 +55,30 @@ defmodule LoggerTest do
   end
 
   test "add_backend/1 with {module, id}" do
-    defmodule MyBackend do
-      @behaviour :gen_event
-
-      def init({MyBackend, :hello}) do
-        {:ok, :hello}
-      end
-
-      def handle_event(_event, state) do
-        {:ok, state}
-      end
-
-      def handle_call(:error, _) do
-        raise "oops"
-      end
-
-      def handle_info(_msg, state) do
-        {:ok, state}
-      end
-
-      def code_change(_old_vsn, state, _extra) do
-        {:ok, state}
-      end
-
-      def terminate(_reason, _state) do
-        :ok
-      end
-    end
-
     assert {:ok, _} = Logger.add_backend({MyBackend, :hello})
     assert {:error, :already_present} = Logger.add_backend({MyBackend, :hello})
     assert :ok = Logger.remove_backend({MyBackend, :hello})
+  end
+
+  test "logs or writes to stderr on failed backends" do
+    assert {:ok, _} = Logger.add_backend({MyBackend, :hello})
+
+    assert capture_log(fn ->
+             :gen_event.call(Logger, {MyBackend, :hello}, :error)
+             wait_for_handler(Logger, {MyBackend, :hello})
+           end) =~
+             ":gen_event handler {LoggerTest.MyBackend, :hello} installed in Logger terminating"
+
+    assert :ok = Logger.remove_backend(:console)
+
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             :gen_event.call(Logger, {MyBackend, :hello}, :error)
+             wait_for_handler(Logger, {MyBackend, :hello})
+           end) =~
+             ":gen_event handler {LoggerTest.MyBackend, :hello} installed in Logger terminating"
+  after
+    Logger.remove_backend({MyBackend, :hello})
+    Logger.add_backend(:console)
   end
 
   test "level/0" do
@@ -119,7 +109,7 @@ defmodule LoggerTest do
 
     assert capture_log(fn ->
              assert Logger.bare_log(:info, "ok", application: nil, module: LoggerTest) == :ok
-           end) =~ msg("application= module=LoggerTest [info]  ok")
+           end) =~ msg("module=LoggerTest [info]  ok")
   end
 
   test "metadata compile-time merge" do
@@ -127,7 +117,7 @@ defmodule LoggerTest do
 
     assert capture_log(fn ->
              assert Logger.log(:info, "ok", application: nil, module: CustomTest) == :ok
-           end) =~ msg("application= module=CustomTest [info]  ok")
+           end) =~ msg("module=CustomTest [info]  ok")
   end
 
   test "metadata merge when the argument function returns metadata" do
@@ -137,7 +127,7 @@ defmodule LoggerTest do
 
     assert capture_log(fn ->
              assert Logger.bare_log(:info, fun, application: nil, module: LoggerTest) == :ok
-           end) =~ msg("application= module=Function [info]  ok")
+           end) =~ msg("module=Function [info]  ok")
   end
 
   test "enable/1 and disable/1" do
@@ -196,6 +186,10 @@ defmodule LoggerTest do
     assert capture_log(:info, fn ->
              assert Logger.debug("hello", []) == :ok
            end) == ""
+
+    assert capture_log(:info, fn ->
+             assert Logger.debug(raise("not invoked"), []) == :ok
+           end) == ""
   end
 
   test "info/2" do
@@ -205,6 +199,10 @@ defmodule LoggerTest do
 
     assert capture_log(:warn, fn ->
              assert Logger.info("hello", []) == :ok
+           end) == ""
+
+    assert capture_log(:warn, fn ->
+             assert Logger.info(raise("not invoked"), []) == :ok
            end) == ""
   end
 
@@ -216,6 +214,10 @@ defmodule LoggerTest do
     assert capture_log(:error, fn ->
              assert Logger.warn("hello", []) == :ok
            end) == ""
+
+    assert capture_log(:error, fn ->
+             assert Logger.warn(raise("not invoked"), []) == :ok
+           end) == ""
   end
 
   test "error/2" do
@@ -224,10 +226,10 @@ defmodule LoggerTest do
            end) =~ msg_with_meta("[error] hello")
   end
 
-  test "remove unused calls at compile time" do
+  test "remove unused calls at compile time based on the level" do
     Logger.configure(compile_time_purge_level: :info)
 
-    defmodule Sample do
+    defmodule PurgeLevel do
       def debug do
         Logger.debug("hello")
       end
@@ -238,14 +240,57 @@ defmodule LoggerTest do
     end
 
     assert capture_log(fn ->
-             assert Sample.debug() == :ok
+             assert PurgeLevel.debug() == :ok
            end) == ""
 
     assert capture_log(fn ->
-             assert Sample.info() == :ok
-           end) =~ msg("module=LoggerTest.Sample [info]  hello")
+             assert PurgeLevel.info() == :ok
+           end) =~ msg("module=LoggerTest.PurgeLevel [info]  hello")
   after
     Logger.configure(compile_time_purge_level: :debug)
+  end
+
+  test "remove unused calls at compile time based on matching metadata" do
+    Logger.configure(
+      compile_time_purge_matching: [
+        [module: LoggerTest.PurgeMatching, function: "two_filters/0"],
+        [function: "one_filter/0"],
+        [custom: true],
+        [function: "level_filter/0", level_lower_than: :info]
+      ]
+    )
+
+    defmodule PurgeMatching do
+      def two_filters do
+        Logger.debug("two_filters")
+      end
+
+      def one_filter do
+        Logger.debug("one_filter")
+      end
+
+      def custom_filters do
+        Logger.debug("custom_filters", custom: true)
+      end
+
+      def level_filter do
+        Logger.debug("debug_filter")
+        Logger.info("info_filter")
+      end
+
+      def works do
+        Logger.debug("works")
+      end
+    end
+
+    assert capture_log(fn -> assert PurgeMatching.works() == :ok end) =~ "works"
+    assert capture_log(fn -> assert PurgeMatching.one_filter() == :ok end) == ""
+    assert capture_log(fn -> assert PurgeMatching.two_filters() == :ok end) == ""
+    assert capture_log(fn -> assert PurgeMatching.custom_filters() == :ok end) == ""
+    assert capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "info_filter"
+    refute capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "debug_filter"
+  after
+    Logger.configure(compile_time_purge_matching: [])
   end
 
   test "unused variable warnings suppressed when we remove macros from the AST" do
@@ -256,13 +301,13 @@ defmodule LoggerTest do
              defmodule Unused do
                require Logger
 
-               def hello(a, b) do
-                 Logger.debug(["a: ", inspect(a), ", b: ", inspect(b)])
+               def hello(a, b, c) do
+                 Logger.debug(["a: ", inspect(a), ", b: ", inspect(b)], c: c)
                end
              end
            end) == ""
 
-    assert LoggerTest.Unused.hello(1, 2) == :ok
+    assert LoggerTest.Unused.hello(1, 2, 3) == :ok
   after
     Logger.configure(compile_time_purge_level: :debug)
   end
@@ -297,20 +342,14 @@ defmodule LoggerTest do
 
   test "log/2 truncates messages" do
     Logger.configure(truncate: 4)
-
-    assert capture_log(fn ->
-             Logger.log(:debug, "hello")
-           end) =~ "hell (truncated)"
+    assert capture_log(fn -> Logger.log(:debug, "hello") end) =~ "hell (truncated)"
   after
     Logger.configure(truncate: 8096)
   end
 
   test "log/2 with to_string/1 conversion" do
     Logger.configure(truncate: 4)
-
-    assert capture_log(fn ->
-             Logger.log(:debug, :hello)
-           end) =~ "hell (truncated)"
+    assert capture_log(fn -> Logger.log(:debug, :hello) end) =~ "hell (truncated)"
   after
     Logger.configure(truncate: 8096)
   end
@@ -330,6 +369,21 @@ defmodule LoggerTest do
     assert capture_log(fn ->
              assert Logger.log(:debug, "he" <> <<185>> <> "lo") == :ok
            end) =~ "he�lo"
+  end
+
+  test "logging something that is not a binary or chardata fails right away" do
+    assert_raise Protocol.UndefinedError, "protocol String.Chars not implemented for %{}", fn ->
+      Logger.log(:debug, %{})
+    end
+
+    message =
+      "cannot truncate chardata because it contains something that is not valid chardata: %{}"
+
+    # Something that looks like chardata but then inside isn't still raises an error, but a
+    # different one.
+    assert_raise ArgumentError, message, fn ->
+      Logger.log(:debug, [%{}])
+    end
   end
 
   test "stops the application silently" do
@@ -354,15 +408,22 @@ defmodule LoggerTest do
     Logger.configure(truncate: 4048)
     Logger.configure(utc_log: true)
     Logger.configure(discard_threshold: 10_000)
+    Logger.configure(translator_inspect_opts: [limit: 3])
+
+    assert Application.get_env(:logger, :sync_threshold) == 10
+    assert Application.get_env(:logger, :utc_log) == true
+    assert Application.get_env(:logger, :truncate) == 4048
+    assert Application.get_env(:logger, :discard_threshold) == 10_000
+    assert Application.get_env(:logger, :translator_inspect_opts) == [limit: 3]
+
     logger_data = Logger.Config.__data__()
-    assert Map.get(logger_data, :sync_threshold) == 10
-    assert Map.get(logger_data, :truncate) == 4048
-    assert Map.get(logger_data, :utc_log) == true
-    assert Map.get(logger_data, :discard_threshold) == 10_000
+    assert logger_data.truncate == 4048
+    assert logger_data.utc_log == true
   after
     Logger.configure(sync_threshold: 20)
-    Logger.configure(sync_threshold: 8096)
+    Logger.configure(truncate: 8096)
     Logger.configure(utc_log: false)
     Logger.configure(discard_threshold: 500)
+    Logger.configure(translator_inspect_opts: [])
   end
 end

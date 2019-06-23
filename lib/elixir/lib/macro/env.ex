@@ -38,17 +38,18 @@ defmodule Macro.Env do
     * `context_modules` - a list of modules defined in the current context
     * `lexical_tracker` - PID of the lexical tracker which is responsible for
       keeping user info
+
+  The following fields pertain to variable handling and must not be accessed or
+  relied on. To get a list of all variables, see `vars/1`:
+
+    * `current_vars`
+    * `unused_vars`
+    * `prematch_vars`
+    * `contextual_vars`
+
+  The following fields are deprecated and must not be accessed or relied on:
+
     * `vars` - a list keeping all defined variables as `{var, context}`
-
-  The following fields are private and must not be accessed or relied on:
-
-    * `export_vars` - a list keeping all variables to be exported in a
-      construct (may be `nil`)
-    * `match_vars` - controls how "new" variables are handled. Inside a
-      match it is a list with all variables in a match. Outside of a match
-      is either `:warn` or `:apply`
-    * `prematch_vars` - a list of variables defined before a match (is
-      `nil` when not inside a match)
 
   """
 
@@ -62,13 +63,16 @@ defmodule Macro.Env do
   @type functions :: [{module, [name_arity]}]
   @type macros :: [{module, [name_arity]}]
   @type context_modules :: [module]
-  @type vars :: [{atom, atom | non_neg_integer}]
   @type lexical_tracker :: pid | nil
-  @type local :: atom | nil
+  @type var :: {atom, atom | non_neg_integer}
 
-  @opaque export_vars :: vars | nil
-  @opaque match_vars :: vars | :warn | :apply
-  @opaque prematch_vars :: vars | nil
+  @typep vars :: [var]
+  @typep var_type :: :term
+  @typep var_version :: non_neg_integer
+  @typep unused_vars :: %{{var, var_version} => non_neg_integer | false}
+  @typep current_vars :: %{var => {var_version, var_type}}
+  @typep prematch_vars :: current_vars | :warn | :raise | :pin | :apply
+  @typep contextual_vars :: [atom]
 
   @type t :: %{
           __struct__: __MODULE__,
@@ -84,12 +88,14 @@ defmodule Macro.Env do
           macro_aliases: aliases,
           context_modules: context_modules,
           vars: vars,
-          export_vars: export_vars,
-          match_vars: match_vars,
+          unused_vars: unused_vars,
+          current_vars: current_vars,
           prematch_vars: prematch_vars,
-          lexical_tracker: lexical_tracker
+          lexical_tracker: lexical_tracker,
+          contextual_vars: contextual_vars
         }
 
+  # TODO: Remove :vars field on v2.0
   def __struct__ do
     %{
       __struct__: __MODULE__,
@@ -105,15 +111,43 @@ defmodule Macro.Env do
       macro_aliases: [],
       context_modules: [],
       vars: [],
+      unused_vars: %{},
+      current_vars: %{},
+      prematch_vars: :warn,
       lexical_tracker: nil,
-      export_vars: nil,
-      match_vars: :warn,
-      prematch_vars: nil
+      contextual_vars: []
     }
   end
 
   def __struct__(kv) do
     Enum.reduce(kv, __struct__(), fn {k, v}, acc -> :maps.update(k, v, acc) end)
+  end
+
+  @doc """
+  Returns a list of variables in the current environment.
+
+  Each variable is identified by a tuple of two elements,
+  where the first element is the variable name as an atom
+  and the second element is its context, which may be an
+  atom or an integer.
+  """
+  @doc since: "1.7.0"
+  @spec vars(t) :: [var]
+  def vars(env)
+
+  def vars(%{__struct__: Macro.Env, current_vars: current_vars}) do
+    Map.keys(current_vars)
+  end
+
+  @doc """
+  Checks if a variable belongs to the environment.
+  """
+  @doc since: "1.7.0"
+  @spec has_var?(t, var) :: boolean()
+  def has_var?(env, var)
+
+  def has_var?(%{__struct__: Macro.Env, current_vars: current_vars}, var) do
+    Map.has_key?(current_vars, var)
   end
 
   @doc """
@@ -135,8 +169,8 @@ defmodule Macro.Env do
     env
   end
 
-  def to_match(%{__struct__: Macro.Env, prematch_vars: nil, vars: vars} = env) do
-    %{env | context: :match, match_vars: [], prematch_vars: vars}
+  def to_match(%{__struct__: Macro.Env, current_vars: vars} = env) do
+    %{env | context: :match, prematch_vars: vars}
   end
 
   @doc """

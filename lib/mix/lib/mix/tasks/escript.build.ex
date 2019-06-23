@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Escript.Build do
 
   An escript is an executable that can be invoked from the
   command line. An escript can run on any machine that has
-  Erlang installed and by default does not require Elixir to
+  Erlang/OTP installed and by default does not require Elixir to
   be installed, as Elixir is embedded as part of the escript.
 
   This task guarantees the project and its dependencies are
@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Escript.Build do
     * `:path` - the path to write the escript to.
       Defaults to app name.
 
-    * `:app` - the app to start with the escript.
+    * `:app` - the app that starts with the escript.
       Defaults to app name. Set it to `nil` if no application should
       be started.
 
@@ -280,7 +280,7 @@ defmodule Mix.Tasks.Escript.Build do
 
   defp strip_beam(beam) when is_binary(beam) do
     {:ok, _, all_chunks} = :beam_lib.all_chunks(beam)
-    strip_chunks = ['Abst', 'CInf', 'Dbgi', 'ExDc']
+    strip_chunks = ['Abst', 'CInf', 'Dbgi', 'Docs']
     preserved_chunks = for {name, _} = chunk <- all_chunks, name not in strip_chunks, do: chunk
     {:ok, content} = :beam_lib.build_module(preserved_chunks)
     compress(content)
@@ -316,7 +316,8 @@ defmodule Mix.Tasks.Escript.Build do
   defp gen_main(project, name, module, app, language) do
     config =
       if File.regular?(project[:config_path]) do
-        Macro.escape(Mix.Config.read!(project[:config_path]))
+        {config, _} = Mix.Config.eval!(project[:config_path])
+        Macro.escape(config)
       else
         []
       end

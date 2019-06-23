@@ -4,14 +4,24 @@ defmodule Mix.Local.InstallerTest do
   use MixTest.Case
 
   test "fetch" do
-    dep_spec = {:"git repo", git: fixture_path("git_repo")}
+    dep_spec = {:git_repo, git: fixture_path("git_repo")}
+
+    fetcher = fn mix_exs ->
+      send(self(), mix_exs)
+      Mix.Task.run("deps.get", [])
+    end
 
     config =
-      Mix.Local.Installer.fetch(dep_spec, fn _mix_exs ->
+      Mix.Local.Installer.fetch(dep_spec, fetcher, fn _mix_exs ->
         assert Mix.env() == :prod
         Mix.Project.config()
       end)
 
+    # Fetcher should run twice
+    assert_receive Mix.Local.Installer.MixProject
+    assert_receive GitRepo.MixProject
+
+    # In package runs once
     assert Mix.env() == :dev
     assert config[:app] == :git_repo
     assert config[:deps_path] =~ ~r/mix-local-installer-fetcher-.*\/deps/
@@ -81,5 +91,10 @@ defmodule Mix.Local.InstallerTest do
   test "parse_args Hex version spec" do
     assert Mix.Local.Installer.parse_args(["hex", "a_package", "1.0.0"], []) ==
              {:fetcher, {:a_package, "1.0.0", [hex: :a_package]}}
+  end
+
+  test "parse_args Hex with organization" do
+    assert Mix.Local.Installer.parse_args(["hex", "a_package"], organization: "my_org") ==
+             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, organization: "my_org"]}}
   end
 end

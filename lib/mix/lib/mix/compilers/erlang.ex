@@ -22,7 +22,7 @@ defmodule Mix.Compilers.Erlang do
 
       compile manifest, [{"src", dest}], :lfe, :beam, opts, fn input, output ->
         :lfe_comp.file(to_erl_file(input),
-                       [{output_dir, Path.dirname(output)}, :return])
+                       [{:outdir, Path.dirname(output)}, :return, :report])
       end
 
   The command above will:
@@ -141,7 +141,7 @@ defmodule Mix.Compilers.Erlang do
   end
 
   @doc """
-  Ensures the native Erlang application is available.
+  Ensures the native OTP application is available.
   """
   def ensure_application!(app, input) do
     case Application.ensure_all_started(app) do
