@@ -1,3 +1,13 @@
+elixir-lang (1.7.4-0.1) unstable; urgency=medium
+
+  * Non-maintainer upload with authorization from current maintainer.
+  * New upstream release:
+    - Fixes FTBFS (Closes: #910307).
+  * Removed all patches.
+  * Add patch to remove the UTF-8 warning (Closes: #912207).
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 30 Oct 2018 07:56:01 +0000
+
 elixir-lang (1.6.5-1) unstable; urgency=medium
 
   [ Antonio Terceiro ]
