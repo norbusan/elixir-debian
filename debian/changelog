@@ -3,6 +3,7 @@ elixir-lang (1.7.4-1) unstable; urgency=medium
   * Apply patch provided by Tomas Janousek (Closes: #930497)
     - The patch makes Elixir explicitly depend on
       erlang-base:any | erlang-base-hipe:any
+  * Exclude relevant rebar.
 
  -- Evgeny Golyshev <eugulixes@gmail.com>  Sun, 23 Jun 2019 22:59:07 +0300
 
