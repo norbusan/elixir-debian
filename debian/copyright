@@ -1,7 +1,9 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: elixir
 Source: https://github.com/elixir-lang/elixir
-Files-Excluded: lib/mix/test/fixtures/rebar
+Files-Excluded:
+ lib/mix/test/fixtures/rebar
+ lib/mix/test/fixtures/rebar3
 
 Files: *
 Copyright: 2012 Plataformatec

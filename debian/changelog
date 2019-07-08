@@ -3,7 +3,7 @@ elixir-lang (1.7.4-1) unstable; urgency=medium
   * Apply patch provided by Tomas Janousek (Closes: #930497)
     - The patch makes Elixir explicitly depend on
       erlang-base:any | erlang-base-hipe:any
-  * Exclude relevant rebar.
+  * Exclude lib/mix/test/fixtures/rebar and lib/mix/test/fixtures/rebar3.
   * Specify license for lib/elixir/unicode/*.txt in debian/copyright.
   * Put disable_rebar3_tests.patch back.
 
