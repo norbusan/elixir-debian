@@ -5,7 +5,8 @@ elixir-lang (1.7.4-1) unstable; urgency=medium
       erlang-base:any | erlang-base-hipe:any
   * Exclude lib/mix/test/fixtures/rebar and lib/mix/test/fixtures/rebar3.
   * Specify license for lib/elixir/unicode/*.txt in debian/copyright.
-  * Put disable_rebar3_tests.patch back.
+  * Add remove_rebar3_related_tests.patch not to run the rebar3 related
+    tests because we don't have rebar3.
 
  -- Evgeny Golyshev <eugulixes@gmail.com>  Sun, 23 Jun 2019 22:59:07 +0300
 
