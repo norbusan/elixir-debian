@@ -7,6 +7,8 @@ elixir-lang (1.7.4-1) unstable; urgency=medium
   * Specify license for lib/elixir/unicode/*.txt in debian/copyright.
   * Add remove_rebar3_related_tests.patch not to run the rebar3 related
     tests because we don't have rebar3.
+  * Add use_rebar_instead_of_rebar3_in_tests.patch to fix the bug which
+    made the Mix tests use only rebar3.
 
  -- Evgeny Golyshev <eugulixes@gmail.com>  Sun, 23 Jun 2019 22:59:07 +0300
 

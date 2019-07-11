@@ -1,2 +1,3 @@
 remove-utf8-warning.patch
 remove_rebar3_related_tests.patch
+use_rebar_instead_of_rebar3_in_tests.patch
