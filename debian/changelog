@@ -1,4 +1,4 @@
-elixir-lang (1.7.4-1+dfsg) unstable; urgency=medium
+elixir-lang (1.7.4+dfsg-1) unstable; urgency=medium
 
   * Apply patch provided by Tomas Janousek (Closes: #930497)
     - The patch makes Elixir explicitly depend on
