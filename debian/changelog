@@ -12,6 +12,8 @@ elixir-lang (1.7.4.dfsg-1) unstable; urgency=medium
   * Add .dfsg suffix to the package version number to make it clear that
     the upstream archive must be repacked with the purpose of removing
     such binaries as rebar and rebar3.
+  * Add disable_tests_to_prevent_failing_with_erlang_22.patch to disable the
+    tests which fail under Erlang/OTP 22.
 
  -- Evgeny Golyshev <eugulixes@gmail.com>  Sun, 23 Jun 2019 22:59:07 +0300
 
