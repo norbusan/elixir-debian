@@ -1,3 +1,9 @@
+elixir-lang (1.7.4.dfsg-2) unstable; urgency=medium
+
+  * Fix debian/tests/run-all to make it run tests properly.
+
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Mon, 15 Jul 2019 23:44:43 +0300
+
 elixir-lang (1.7.4.dfsg-1) unstable; urgency=medium
 
   * Apply patch provided by Tomas Janousek (Closes: #930497)
