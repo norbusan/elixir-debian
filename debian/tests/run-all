@@ -35,5 +35,7 @@ for lib in $(ls -1 lib | grep -v elixir); do
   ) || failed=1
 done
 
+epmd -kill
+
 exit $failed
 
