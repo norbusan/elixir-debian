@@ -18,7 +18,13 @@ failed=0
 
 cp VERSION /usr/lib/elixir
 
-for src in $(ls lib); do cp -r "lib/${src}" /usr/lib/elixir/lib; done
+cp lib/iex/mix.exs /usr/lib/elixir/lib/iex
+
+cp -r lib/elixir/src /usr/lib/elixir/lib/elixir
+
+for lib in $(ls lib); do
+  cp -r "lib/${lib}/lib" "lib/${lib}/test" "/usr/lib/elixir/lib/${lib}"
+done
 
 (
   banner stdlib
