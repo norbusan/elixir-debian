@@ -41,6 +41,16 @@ for lib in $(ls -1 lib | grep -v elixir); do
   ) || failed=1
 done
 
+# cleanup
+
+rm    /usr/lib/elixir/VERSION
+rm    /usr/lib/elixir/lib/iex/mix.exs
+rm -r /usr/lib/elixir/lib/elixir/src
+
+for lib in $(ls lib); do
+  rm -r "/usr/lib/elixir/lib/${lib}/lib" "/usr/lib/elixir/lib/${lib}/test"
+done
+
 epmd -kill
 
 exit $failed
