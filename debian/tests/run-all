@@ -10,6 +10,8 @@ banner() {
   echo
 }
 
+export HOME="${AUTOPKGTEST_TMP}"
+
 export REBAR=/usr/bin/rebar
 
 epmd -daemon
