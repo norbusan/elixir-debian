@@ -17,8 +17,8 @@ epmd -daemon
 failed=0
 
 # The Elixir tests are very sensitive to the place they are located relatively
-# the elixir executable via which they are invoked. Moreover, the tests
-# depend on some files which are parts of source tree.
+# to the elixir executable via which they are invoked. Moreover, the tests
+# depend on some files which are parts of the source tree.
 
 cp VERSION /usr/lib/elixir
 
