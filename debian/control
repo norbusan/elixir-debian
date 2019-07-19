@@ -17,7 +17,7 @@ Vcs-Browser: https://salsa.debian.org/eugulixes-guest/elixir-lang
 Homepage: http://elixir-lang.org/
 
 Package: elixir
-Architecture: all
+Architecture: any
 Depends: erlang-base:any (>= 1:19) | erlang-base-hipe:any (>= 1:19),
          ${misc:Depends}
 Description: functional meta-programming aware language
