@@ -1,10 +1,11 @@
-Author: Evgeny Golyshev <eugulixes@gmail.com>
 Description: remove rebar3 related tests
  We have to remove all the tests related to rebar3 because Buster and Sid
  don't have it so far.
+Author: Evgeny Golyshev <eugulixes@gmail.com>
+Last-Update: 2019-07-19
 
---- elixir-lang-1.7.4.orig/lib/mix/test/mix/rebar_test.exs
-+++ elixir-lang-1.7.4/lib/mix/test/mix/rebar_test.exs
+--- elixir-lang-1.9.1.dfsg.orig/lib/mix/test/mix/rebar_test.exs
++++ elixir-lang-1.9.1.dfsg/lib/mix/test/mix/rebar_test.exs
 @@ -33,39 +33,6 @@ defmodule Mix.RebarTest do
      end
    end
@@ -45,7 +46,7 @@ Description: remove rebar3 related tests
    describe "load_config/1" do
      test "loads rebar.config" do
        path = MixTest.Case.fixture_path("rebar_dep")
-@@ -179,12 +146,6 @@ defmodule Mix.RebarTest do
+@@ -181,12 +148,6 @@ defmodule Mix.RebarTest do
    end
  
    describe "integration with Mix" do
@@ -58,7 +59,7 @@ Description: remove rebar3 related tests
      test "parses Rebar dependencies from rebar.config" do
        Mix.Project.push(RebarAsDep)
  
-@@ -200,19 +161,6 @@ defmodule Mix.RebarTest do
+@@ -202,19 +163,6 @@ defmodule Mix.RebarTest do
               end)
      end
  
@@ -78,14 +79,14 @@ Description: remove rebar3 related tests
      test "gets and compiles dependencies for Rebar" do
        Mix.Project.push(RebarAsDep)
  
-@@ -261,54 +209,6 @@ defmodule Mix.RebarTest do
+@@ -263,54 +211,6 @@ defmodule Mix.RebarTest do
        end)
      end
  
--    test "gets and compiles dependencies for rebar3" do
+-    test "gets and compiles dependencies for Rebar3" do
 -      Mix.Project.push(Rebar3AsDep)
 -
--      in_tmp("get and compile dependencies for rebar3", fn ->
+-      in_tmp("get and compile dependencies for Rebar3", fn ->
 -        Mix.Tasks.Deps.Get.run([])
 -        assert_received {:mix_shell, :info, ["* Getting git_rebar " <> _]}
 -
@@ -114,12 +115,12 @@ Description: remove rebar3 related tests
 -    end
 -
 -    # We run only on Unix because Windows has a hard time
--    # removing the rebar executable after executed.
+-    # removing the Rebar executable after executed.
 -    @tag [unix: true]
--    test "applies variables from :system_env option when compiling dependencies for rebar3" do
+-    test "applies variables from :system_env option when compiling dependencies for Rebar3" do
 -      Mix.Project.push(Rebar3AsDep)
 -
--      in_tmp("applies variables from system_env for rebar3", fn ->
+-      in_tmp("applies variables from system_env for Rebar3", fn ->
 -        expected_file = Path.join(tmp_path("rebar_dep"), "rebar-test-rebar3")
 -        File.rm(expected_file)
 -
@@ -133,9 +134,9 @@ Description: remove rebar3 related tests
      test "gets and compiles dependencies for Rebar with Mix" do
        Mix.Project.push(RebarAsDep)
  
---- elixir-lang-1.7.4.orig/lib/mix/test/test_helper.exs
-+++ elixir-lang-1.7.4/lib/mix/test/test_helper.exs
-@@ -178,8 +178,6 @@ System.put_env("MIX_HOME", home)
+--- elixir-lang-1.9.1.dfsg.orig/lib/mix/test/test_helper.exs
++++ elixir-lang-1.9.1.dfsg/lib/mix/test/test_helper.exs
+@@ -186,8 +186,6 @@ System.delete_env("XDG_CONFIG_HOME")
  
  rebar = System.get_env("REBAR") || Path.expand("fixtures/rebar", __DIR__)
  File.cp!(rebar, Path.join(home, "rebar"))
