@@ -1,3 +1,14 @@
+elixir-lang (1.9.1.dfsg-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Elixir is endianness-dependent, so substitute 'Architecture: all' for
+    'Architecture: any' in debian/control.
+  * Increase version number of Erlang in debian/control.
+  * Remove disable_tests_to_prevent_failing_with_erlang_22.patch.
+  * Adapt remove_rebar3_related_tests.patch to the current Elixir release.
+
+ -- Evgeny Golyshev <eugulixes@gmail.com>  Fri, 19 Jul 2019 13:29:07 +0300
+
 elixir-lang (1.7.4.dfsg-2) unstable; urgency=medium
 
   * Fix debian/tests/run-all to make it run tests properly.
