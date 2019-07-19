@@ -1,7 +1,7 @@
 defmodule Mix.Compilers.Elixir do
   @moduledoc false
 
-  @manifest_vsn 1
+  @manifest_vsn 2
 
   import Record
 
@@ -16,13 +16,14 @@ defmodule Mix.Compilers.Elixir do
     compile_dispatches: [],
     runtime_dispatches: [],
     external: [],
-    warnings: []
+    warnings: [],
+    modules: []
 
   @doc """
   Compiles stale Elixir files.
 
   It expects a `manifest` file, the source directories, the destination
-  directory, a flag to know if compilation is being forced or not, and a
+  directory, an option to know if compilation is being forced or not, and a
   list of any additional compiler options.
 
   The `manifest` is written down with information including dependencies
@@ -33,11 +34,12 @@ defmodule Mix.Compilers.Elixir do
     # We fetch the time from before we read files so any future
     # change to files are still picked up by the compiler. This
     # timestamp is used when writing BEAM files and the manifest.
-    timestamp = :calendar.universal_time()
+    timestamp = System.os_time(:second)
     all_paths = MapSet.new(Mix.Utils.extract_files(srcs, exts))
 
     {all_modules, all_sources} = parse_manifest(manifest, dest)
     modified = Mix.Utils.last_modified(manifest)
+    stale_local_deps = stale_local_deps(manifest, modified)
     prev_paths = for source(source: source) <- all_sources, into: MapSet.new(), do: source
 
     removed =
@@ -82,10 +84,9 @@ defmodule Mix.Compilers.Elixir do
               {last_mtime, last_size} = Map.fetch!(sources_stats, source),
               times = Enum.map(external, &(sources_stats |> Map.fetch!(&1) |> elem(0))),
               size != last_size or Mix.Utils.stale?([last_mtime | times], [modified]),
-              into: new_paths,
               do: source
 
-        stale_local_deps = stale_local_deps(manifest, modified)
+        changed = new_paths ++ changed
 
         {modules, structs, changed} =
           update_stale_entries(
@@ -112,7 +113,9 @@ defmodule Mix.Compilers.Elixir do
       stale != [] ->
         compile_manifest(manifest, exts, modules, structs, sources, stale, dest, timestamp, opts)
 
-      removed != [] ->
+      # We need to return ok if stale_local_deps changed
+      # because we want that to propagate to compile.protocols
+      removed != [] or stale_local_deps != %{} ->
         write_manifest(manifest, modules, sources, dest, timestamp)
         {:ok, warning_diagnostics(sources)}
 
@@ -169,28 +172,23 @@ defmodule Mix.Compilers.Elixir do
     set_compiler_opts(opts)
     cwd = File.cwd!()
 
-    extra =
-      if opts[:verbose] do
-        [each_file: &each_file/1]
-      else
-        []
-      end
-
     # Stores state for keeping track which files were compiled
     # and the dependencies between them.
     put_compiler_info({modules, structs, sources, modules, %{}})
     long_compilation_threshold = opts[:long_compilation_threshold] || 15
+    verbose = opts[:verbose] || false
 
     compile_opts = [
       each_cycle: &each_cycle/0,
-      each_module: &each_module(cwd, &1, &2, &3),
-      each_long_compilation: &each_long_compilation(&1, long_compilation_threshold),
+      each_file: &each_file(&1, &2, cwd, verbose),
+      each_module: &each_module(&1, &2, &3, cwd),
+      each_long_compilation: &each_long_compilation(&1, cwd, long_compilation_threshold),
       long_compilation_threshold: long_compilation_threshold,
       dest: dest
     ]
 
     try do
-      Kernel.ParallelCompiler.compile(stale, compile_opts ++ extra)
+      Kernel.ParallelCompiler.compile(stale, compile_opts)
     else
       {:ok, _, warnings} ->
         {modules, _structs, sources, _pending_modules, _pending_structs} = get_compiler_info()
@@ -239,76 +237,17 @@ defmodule Mix.Compilers.Elixir do
     end
   end
 
-  defp each_module(cwd, source, module, binary) do
-    {compile_references, struct_references, runtime_references} =
-      Kernel.LexicalTracker.remote_references(module)
-
-    {elixir_references, compile_references} =
-      Enum.split_with(compile_references, &match?("elixir_" <> _, Atom.to_string(&1)))
-
-    compile_references = List.delete(compile_references, module)
-    struct_references = List.delete(struct_references, module)
-    runtime_references = List.delete(runtime_references, module)
-    {compile_dispatches, runtime_dispatches} = Kernel.LexicalTracker.remote_dispatches(module)
-
-    compile_dispatches =
-      compile_dispatches
-      |> Map.drop(elixir_references)
-      |> Enum.to_list()
-
-    runtime_dispatches =
-      runtime_dispatches
-      |> Enum.to_list()
+  defp each_module(file, module, binary, cwd) do
+    {modules, structs, sources, pending_modules, pending_structs} = get_compiler_info()
+    kind = detect_kind(module)
+    file = Path.relative_to(file, cwd)
+    external = get_external_resources(module, cwd)
 
     struct =
       case Module.get_attribute(module, :struct) do
         %{} = struct -> {struct, List.wrap(Module.get_attribute(module, :enforce_keys))}
         _ -> nil
       end
-
-    kind = detect_kind(module)
-    source = Path.relative_to(source, cwd)
-    external = get_external_resources(module, cwd)
-
-    {modules, structs, sources, pending_modules, pending_structs} = get_compiler_info()
-
-    {source_external, existing_source?} =
-      case List.keyfind(sources, source, source(:source)) do
-        source(external: old_external) -> {external ++ old_external, true}
-        nil -> {external, false}
-      end
-
-    {module_sources, existing_module?} =
-      case List.keyfind(modules, module, module(:module)) do
-        module(sources: old_sources) -> {[source | List.delete(old_sources, source)], true}
-        nil -> {[source], false}
-      end
-
-    # They are calculated when writing the manifest
-    new_module =
-      module(
-        module: module,
-        kind: kind,
-        sources: module_sources,
-        beam: nil,
-        struct: struct,
-        binary: binary
-      )
-
-    source(size: size) = List.keyfind(sources, source, source(:source))
-
-    new_source =
-      source(
-        source: source,
-        size: size,
-        compile_references: compile_references,
-        struct_references: struct_references,
-        runtime_references: runtime_references,
-        compile_dispatches: compile_dispatches,
-        runtime_dispatches: runtime_dispatches,
-        external: source_external,
-        warnings: []
-      )
 
     old_struct = Map.get(structs, module)
 
@@ -319,9 +258,38 @@ defmodule Mix.Compilers.Elixir do
         pending_structs
       end
 
-    modules = prepend_or_merge(modules, module, module(:module), new_module, existing_module?)
-    sources = prepend_or_merge(sources, source, source(:source), new_source, existing_source?)
-    put_compiler_info({modules, structs, sources, pending_modules, pending_structs})
+    {module_sources, existing_module?} =
+      case List.keyfind(modules, module, module(:module)) do
+        module(sources: old_sources) -> {[file | List.delete(old_sources, file)], true}
+        nil -> {[file], false}
+      end
+
+    {source, sources} =
+      List.keytake(sources, file, source(:source)) ||
+        Mix.raise(
+          "Could not find source for #{inspect(file)}. Make sure the :elixirc_paths configuration " <>
+            "is a list of relative paths to the current project or absolute paths to external directories"
+        )
+
+    source =
+      source(
+        source,
+        external: external ++ source(source, :external),
+        modules: [module | source(source, :modules)]
+      )
+
+    module =
+      module(
+        module: module,
+        kind: kind,
+        sources: module_sources,
+        beam: nil,
+        struct: struct,
+        binary: binary
+      )
+
+    modules = prepend_or_merge(modules, module, module(:module), module, existing_module?)
+    put_compiler_info({modules, structs, [source | sources], pending_modules, pending_structs})
     :ok
   end
 
@@ -352,12 +320,55 @@ defmodule Mix.Compilers.Elixir do
     for file <- Module.get_attribute(module, :external_resource), do: Path.relative_to(file, cwd)
   end
 
-  defp each_file(source) do
-    Mix.shell().info("Compiled #{source}")
+  defp each_file(file, lexical, cwd, verbose) do
+    file = Path.relative_to(file, cwd)
+
+    if verbose do
+      Mix.shell().info("Compiled #{file}")
+    end
+
+    {modules, structs, sources, pending_modules, pending_structs} = get_compiler_info()
+    {source, sources} = List.keytake(sources, file, source(:source))
+
+    {compile_references, struct_references, runtime_references} =
+      Kernel.LexicalTracker.remote_references(lexical)
+
+    {elixir_references, compile_references} =
+      Enum.split_with(compile_references, &match?("elixir_" <> _, Atom.to_string(&1)))
+
+    source(modules: source_modules) = source
+    compile_references = compile_references -- source_modules
+    struct_references = struct_references -- source_modules
+    runtime_references = runtime_references -- source_modules
+    {compile_dispatches, runtime_dispatches} = Kernel.LexicalTracker.remote_dispatches(lexical)
+
+    compile_dispatches =
+      compile_dispatches
+      |> Map.drop(elixir_references)
+      |> Enum.to_list()
+
+    runtime_dispatches =
+      runtime_dispatches
+      |> Enum.to_list()
+
+    source =
+      source(
+        source,
+        compile_references: compile_references,
+        struct_references: struct_references,
+        runtime_references: runtime_references,
+        compile_dispatches: compile_dispatches,
+        runtime_dispatches: runtime_dispatches
+      )
+
+    put_compiler_info({modules, structs, [source | sources], pending_modules, pending_structs})
+    :ok
   end
 
-  defp each_long_compilation(source, threshold) do
-    Mix.shell().info("Compiling #{source} (it's taking more than #{threshold}s)")
+  defp each_long_compilation(file, cwd, threshold) do
+    Mix.shell().info(
+      "Compiling #{Path.relative_to(file, cwd)} (it's taking more than #{threshold}s)"
+    )
   end
 
   ## Resolution
@@ -466,7 +477,7 @@ defmodule Mix.Compilers.Elixir do
       file = Path.absname(source)
 
       for {line, message} <- warnings do
-        :elixir_errors.warn(line, file, message)
+        :elixir_errors.erl_warn(line, file, message)
       end
     end
   end
@@ -509,9 +520,11 @@ defmodule Mix.Compilers.Elixir do
         split_manifest(data, compile_path)
 
       [v | data] when is_integer(v) ->
-        for module <- data,
-            is_record(module, :module),
-            do: File.rm(Path.join(compile_path, module(module, :beam)))
+        for module <- data, is_record(module, :module) do
+          File.rm(Path.join(compile_path, module(module, :beam)))
+          :code.purge(module(module, :module))
+          :code.delete(module(module, :module))
+        end
 
         {[], []}
 

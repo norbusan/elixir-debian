@@ -43,7 +43,8 @@ defmodule EEx do
     * `:file` - the file to be used in the template. Defaults to the given
       file the template is read from or to "nofile" when compiling from a string.
     * `:engine` - the EEx engine to be used for compilation.
-    * `:trim` - trims whitespace left/right of quotation tags
+    * `:trim` - trims whitespace left/right of quotation tags. If a quotation
+      tag appears on its own in a given line, line endings are also removed.
 
   ## Engine
 
@@ -105,7 +106,7 @@ defmodule EEx do
 
       iex> defmodule Sample do
       ...>   require EEx
-      ...>   EEx.function_from_string :def, :sample, "<%= a + b %>", [:a, :b]
+      ...>   EEx.function_from_string(:def, :sample, "<%= a + b %>", [:a, :b])
       ...> end
       iex> Sample.sample(1, 2)
       "3"
@@ -141,11 +142,12 @@ defmodule EEx do
       # sample.ex
       defmodule Sample do
         require EEx
-        EEx.function_from_file :def, :sample, "sample.eex", [:a, :b]
+        EEx.function_from_file(:def, :sample, "sample.eex", [:a, :b])
       end
 
       # iex
-      Sample.sample(1, 2) #=> "3"
+      Sample.sample(1, 2)
+      #=> "3"
 
   """
   defmacro function_from_file(kind, name, file, args \\ [], options \\ []) do
@@ -167,7 +169,7 @@ defmodule EEx do
   Gets a string `source` and generate a quoted expression
   that can be evaluated by Elixir or compiled to a function.
   """
-  @spec compile_string(String.t(), keyword) :: Macro.t() | no_return
+  @spec compile_string(String.t(), keyword) :: Macro.t()
   def compile_string(source, options \\ []) when is_binary(source) and is_list(options) do
     EEx.Compiler.compile(source, options)
   end
@@ -176,7 +178,7 @@ defmodule EEx do
   Gets a `filename` and generate a quoted expression
   that can be evaluated by Elixir or compiled to a function.
   """
-  @spec compile_file(String.t(), keyword) :: Macro.t() | no_return
+  @spec compile_file(String.t(), keyword) :: Macro.t()
   def compile_file(filename, options \\ []) when is_binary(filename) and is_list(options) do
     options = Keyword.merge(options, file: filename, line: 1)
     compile_string(File.read!(filename), options)
@@ -207,7 +209,8 @@ defmodule EEx do
       foo <%= bar %>
 
       # iex
-      EEx.eval_file "sample.eex", [bar: "baz"] #=> "foo baz"
+      EEx.eval_file("sample.eex", bar: "baz")
+      #=> "foo baz"
 
   """
   @spec eval_file(String.t(), keyword, keyword) :: any

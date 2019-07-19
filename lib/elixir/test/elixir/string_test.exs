@@ -11,7 +11,7 @@ defmodule StringTest do
     assert String.next_codepoint("") == nil
   end
 
-  # test cases described in http://mortoray.com/2013/11/27/the-string-type-is-broken/
+  # test cases described in https://mortoray.com/2013/11/27/the-string-type-is-broken/
   test "Unicode" do
     assert String.reverse("noël") == "lëon"
     assert String.slice("noël", 0..2) == "noë"
@@ -394,25 +394,56 @@ defmodule StringTest do
     assert String.reverse(String.reverse("Hello \r\n World")) == "Hello \r\n World"
   end
 
-  test "replace/3" do
-    assert String.replace("a,b,c", ",", "-") == "a-b-c"
-    assert String.replace("a,b,c", [",", "b"], "-") == "a---c"
+  describe "replace/3" do
+    test "with empty string and string replacement" do
+      assert String.replace("elixir", "", "") == "elixir"
+      assert String.replace("ELIXIR", "", ".") == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", ".", global: true) == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", ".", global: false) == ".ELIXIR"
+    end
 
-    assert String.replace("a,b,c", ",", "-", global: false) == "a-b,c"
-    assert String.replace("a,b,c", [",", "b"], "-", global: false) == "a-b,c"
-    assert String.replace("ãéã", "é", "e", global: false) == "ãeã"
+    test "with match pattern and string replacement" do
+      assert String.replace("a,b,c", ",", "-") == "a-b-c"
+      assert String.replace("a,b,c", [",", "b"], "-") == "a---c"
 
-    assert String.replace("a,b,c", ",", "[]", insert_replaced: 2) == "a[],b[],c"
-    assert String.replace("a,b,c", ",", "[]", insert_replaced: [1, 1]) == "a[,,]b[,,]c"
-    assert String.replace("a,b,c", "b", "[]", insert_replaced: 1, global: false) == "a,[b],c"
+      assert String.replace("a,b,c", ",", "-", global: false) == "a-b,c"
+      assert String.replace("a,b,c", [",", "b"], "-", global: false) == "a-b,c"
+      assert String.replace("ãéã", "é", "e", global: false) == "ãeã"
+    end
 
-    assert String.replace("a,b,c", ~r/,(.)/, ",\\1\\1") == "a,bb,cc"
-    assert String.replace("a,b,c", ~r/,(.)/, ",\\1\\1", global: false) == "a,bb,c"
+    test "with regex and string replacement" do
+      assert String.replace("a,b,c", ~r/,(.)/, ",\\1\\1") == "a,bb,cc"
+      assert String.replace("a,b,c", ~r/,(.)/, ",\\1\\1", global: false) == "a,bb,c"
+    end
 
-    assert String.replace("elixir", "", "") == "elixir"
-    assert String.replace("ELIXIR", "", ".") == ".E.L.I.X.I.R."
-    assert String.replace("ELIXIR", "", ".", global: true) == ".E.L.I.X.I.R."
-    assert String.replace("ELIXIR", "", ".", global: false) == ".ELIXIR"
+    test "with empty string and function replacement" do
+      assert String.replace("elixir", "", fn "" -> "" end) == "elixir"
+      assert String.replace("ELIXIR", "", fn "" -> "." end) == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", fn "" -> "." end, global: true) == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", fn "" -> "." end, global: false) == ".ELIXIR"
+
+      assert String.replace("elixir", "", fn "" -> [""] end) == "elixir"
+      assert String.replace("ELIXIR", "", fn "" -> ["."] end) == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", fn "" -> ["."] end, global: true) == ".E.L.I.X.I.R."
+      assert String.replace("ELIXIR", "", fn "" -> ["."] end, global: false) == ".ELIXIR"
+    end
+
+    test "with match pattern and function replacement" do
+      assert String.replace("a,b,c", ",", fn "," -> "-" end) == "a-b-c"
+      assert String.replace("a,b,c", [",", "b"], fn x -> "[#{x}]" end) == "a[,][b][,]c"
+      assert String.replace("a,b,c", [",", "b"], fn x -> [?[, x, ?]] end) == "a[,][b][,]c"
+
+      assert String.replace("a,b,c", ",", fn "," -> "-" end, global: false) == "a-b,c"
+      assert String.replace("a,b,c", [",", "b"], fn x -> "[#{x}]" end, global: false) == "a[,]b,c"
+      assert String.replace("ãéã", "é", fn "é" -> "e" end, global: false) == "ãeã"
+    end
+
+    test "with regex and function replacement" do
+      assert String.replace("a,b,c", ~r/,(.)/, fn x -> "#{x}#{x}" end) == "a,b,b,c,c"
+      assert String.replace("a,b,c", ~r/,(.)/, fn x -> [x, x] end) == "a,b,b,c,c"
+      assert String.replace("a,b,c", ~r/,(.)/, fn x -> "#{x}#{x}" end, global: false) == "a,b,b,c"
+      assert String.replace("a,b,c", ~r/,(.)/, fn x -> [x, x] end, global: false) == "a,b,b,c"
+    end
   end
 
   test "duplicate/2" do
@@ -562,6 +593,7 @@ defmodule StringTest do
     assert String.length("סם ייםח") == 7
     assert String.length("がガちゃ") == 4
     assert String.length("Ā̀stute") == 6
+    assert String.length("👨‍👩‍👧‍👦") == 1
     assert String.length("") == 0
   end
 

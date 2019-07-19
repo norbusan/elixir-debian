@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Compile.Xref do
   Performs remote dispatch checking.
 
   It uses `mix xref` to check if any remote call does not exist or is
-  deprecated, and emits a warnings in such cases. This tasks does not show
+  deprecated, and emits warnings in such cases. This task does not show
   deprecated local calls (a call to a deprecated function or macro in the
   same module) nor calls to deprecated functionality in Elixir itself.
 
@@ -26,9 +26,7 @@ defmodule Mix.Tasks.Compile.Xref do
 
   """
 
-  @doc """
-  Runs this task.
-  """
+  @impl true
   def run(args) do
     {opts, _, _} =
       OptionParser.parse(args, switches: [force: :boolean, warnings_as_errors: :boolean])
@@ -54,7 +52,7 @@ defmodule Mix.Tasks.Compile.Xref do
   end
 
   defp run_xref do
-    timestamp = :calendar.universal_time()
+    timestamp = System.os_time(:second)
     warnings = Mix.Tasks.Xref.warnings([])
     write_manifest(warnings, timestamp)
     warnings
@@ -66,10 +64,9 @@ defmodule Mix.Tasks.Compile.Xref do
     end)
   end
 
-  @doc """
-  Returns xref manifests.
-  """
+  @impl true
   def manifests, do: [manifest()]
+
   defp manifest, do: Path.join(Mix.Project.manifest_path(), @manifest)
 
   defp write_manifest(warnings, timestamp) do
@@ -90,9 +87,7 @@ defmodule Mix.Tasks.Compile.Xref do
     end
   end
 
-  @doc """
-  Cleans up xref manifest.
-  """
+  @impl true
   def clean do
     File.rm(manifest())
   end

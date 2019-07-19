@@ -12,10 +12,11 @@ defmodule Mix.Tasks.Deps.Compile do
   This task attempts to detect if the project contains one of
   the following files and act accordingly:
 
-    * `mix.exs`      - invokes `mix compile`
+    * `mix.exs` - invokes `mix compile`
     * `rebar.config` - invokes `rebar compile`
-    * `Makefile.win` - invokes `nmake /F Makefile.win` (only on Windows)
-    * `Makefile`     - invokes `gmake` on FreeBSD and OpenBSD, invokes `make` on any other OS (except on Windows)
+    * `Makefile.win`- invokes `nmake /F Makefile.win` (only on Windows)
+    * `Makefile` - invokes `gmake` on FreeBSD and OpenBSD, invokes `make`
+      on any other operating system (except on Windows)
 
   The compilation can be customized by passing a `compile` option
   in the dependency:
@@ -32,7 +33,7 @@ defmodule Mix.Tasks.Deps.Compile do
 
   @switches [include_children: :boolean, force: :boolean]
 
-  @spec run(OptionParser.argv()) :: :ok
+  @impl true
   def run(args) do
     unless "--no-archives-check" in args do
       Mix.Task.run("archive.check", args)
@@ -101,7 +102,7 @@ defmodule Mix.Tasks.Deps.Compile do
         compiled? and fetchable?
       end)
 
-    if true in compiled, do: Mix.Dep.Lock.touch_manifest(), else: :ok
+    if true in compiled, do: Mix.Task.run("will_recompile"), else: :ok
   end
 
   defp maybe_clean(dep, opts) do
@@ -182,7 +183,7 @@ defmodule Mix.Tasks.Deps.Compile do
     lib_path = Path.join(config[:env_path], "lib/*/ebin")
 
     env = [{"REBAR_CONFIG", config_path}, {"TERM", "dumb"}]
-    cmd = "#{rebar_cmd(dep)} bare compile --paths #{inspect(lib_path)}"
+    cmd = "#{rebar_cmd(dep)} bare compile --paths=#{inspect(lib_path)}"
 
     File.mkdir_p!(dep_path)
     File.write!(config_path, rebar_config(dep))

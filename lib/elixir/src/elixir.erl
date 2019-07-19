@@ -4,13 +4,13 @@
 -behaviour(application).
 -export([start_cli/0,
   string_to_tokens/4, tokens_to_quoted/3, 'string_to_quoted!'/4,
-  env_for_eval/1, env_for_eval/2, quoted_to_erl/2, quoted_to_erl/3,
+  env_for_eval/1, env_for_eval/2, quoted_to_erl/2,
   eval/2, eval/3, eval_forms/3, eval_forms/4, eval_quoted/3]).
 -include("elixir.hrl").
 -define(system, 'Elixir.System').
 
 %% Top level types
-%% TODO: Remove char_list type by 2.0
+%% TODO: Remove char_list type on v2.0
 -export_type([charlist/0, char_list/0, nonempty_charlist/0, struct/0, as_boolean/1, keyword/0, keyword/1]).
 -type charlist() :: string().
 -type char_list() :: string().
@@ -25,17 +25,20 @@
 -export([start/2, stop/1, config_change/3]).
 
 start(_Type, _Args) ->
-  OTPRelease = parse_otp_release(),
+  _ = parse_otp_release(),
   Encoding = file:native_name_encoding(),
 
   preload_common_modules(),
   set_stdio_and_stderr_to_binary_and_maybe_utf8(),
   check_file_encoding(Encoding),
-  check_endianness(),
 
-  %% TODO: Remove OTPRelease check once we support OTP 20+.
+  case application:get_env(elixir, check_endianness, true) of
+    true  -> check_endianness();
+    false -> ok
+  end,
+
   Tokenizer = case code:ensure_loaded('Elixir.String.Tokenizer') of
-    {module, Mod} when OTPRelease >= 20 -> Mod;
+    {module, Mod} -> Mod;
     _ -> elixir_tokenizer
   end,
 
@@ -64,7 +67,8 @@ start(_Type, _Args) ->
     {bootstrap, false},
     {compiler_options, CompilerOpts},
     {home, unicode:characters_to_binary(Home, Encoding, Encoding)},
-    {identifier_tokenizer, Tokenizer}
+    {identifier_tokenizer, Tokenizer},
+    {no_halt, false}
     | URIConfig
   ],
 
@@ -103,21 +107,15 @@ preload_common_modules() ->
   %% the codebase we can avoid code:ensure_loaded/1 checks.
   _ = code:ensure_loaded('Elixir.Kernel'),
   _ = code:ensure_loaded('Elixir.Macro.Env'),
-
-  %% We need to make sure the re module is preloaded to make
-  %% function_exported checks inside Regex.version is fast.
-  %% TODO: Remove this once we support OTP 20+.
-  _ = code:ensure_loaded(re),
-
   ok.
 
 parse_otp_release() ->
-  %% Whenever we change this check, we should also change escript.build and Makefile.
+  %% Whenever we change this check, we should also change Makefile.
   case string:to_integer(erlang:system_info(otp_release)) of
-    {Num, _} when Num >= 19 ->
+    {Num, _} when Num >= 20 ->
       Num;
     _ ->
-      io:format(standard_error, "unsupported Erlang/OTP version, expected Erlang/OTP 19+~n", []),
+      io:format(standard_error, "ERROR! Unsupported Erlang/OTP version, expected Erlang/OTP 20+~n", []),
       erlang:halt(1)
   end.
 
@@ -211,6 +209,18 @@ env_for_eval(Env, Opts) ->
     false -> nil
   end,
 
+  LexicalTracker = case lists:keyfind(lexical_tracker, 1, Opts) of
+    {lexical_tracker, Pid} when is_pid(Pid) ->
+      case is_process_alive(Pid) of
+        true -> Pid;
+        false -> nil
+      end;
+    {lexical_tracker, nil} ->
+      nil;
+    false ->
+      nil
+  end,
+
   FA = case lists:keyfind(function, 1, Opts) of
     {function, {Function, Arity}} when is_atom(Function), is_integer(Arity) -> {Function, Arity};
     {function, nil} -> nil;
@@ -219,7 +229,7 @@ env_for_eval(Env, Opts) ->
 
   Env#{
     file := File, module := Module, function := FA,
-    macros := Macros, functions := Functions,
+    macros := Macros, functions := Functions, lexical_tracker := LexicalTracker,
     requires := Requires, aliases := Aliases, line := Line
   }.
 
@@ -240,7 +250,7 @@ eval(String, Binding, #{line := Line, file := File} = E) when
 eval_quoted(Tree, Binding, Opts) when is_list(Opts) ->
   eval_quoted(Tree, Binding, env_for_eval(Opts));
 eval_quoted(Tree, Binding, #{line := Line} = E) ->
-  eval_forms(elixir_quote:linify(Line, Tree), Binding, E).
+  eval_forms(elixir_quote:linify(Line, line, Tree), Binding, E).
 
 %% Handle forms evaluation. The main difference to
 %% eval_quoted is that it does not linify the given
@@ -262,7 +272,7 @@ eval_forms(Tree, Binding, Env, Scope) ->
       % Below must be all one line for locations to be the same
       % when the stacktrace is extended to the full stacktrace.
       {value, Value, NewBinding} =
-        try erl_eval:expr(Erl, ParsedBinding, none, none, none) catch Class:Exception -> erlang:raise(Class, Exception, get_stacktrace(erlang:get_stacktrace())) end,
+        try erl_eval:expr(Erl, ParsedBinding, none, none, none) catch ?WITH_STACKTRACE(Class, Exception, Stacktrace) erlang:raise(Class, Exception, get_stacktrace(Stacktrace)) end,
       {Value, elixir_erl_var:dump_binding(NewBinding, NewScope), NewEnv, NewScope}
   end.
 
@@ -273,10 +283,9 @@ get_stacktrace(Stacktrace) ->
   try
     throw(stack)
   catch
-    throw:stack ->
+    ?WITH_STACKTRACE(throw, stack, CurrentStack)
       % Ignore stack item for current function.
-      [_ | CurrentStack] = erlang:get_stacktrace(),
-      merge_stacktrace(Stacktrace, CurrentStack)
+      merge_stacktrace(Stacktrace, tl(CurrentStack))
   end.
 
 % The stacktrace did not include the current stack, re-add it.

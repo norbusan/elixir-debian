@@ -74,6 +74,12 @@ defmodule Kernel.ExpansionTest do
       assert_raise CompileError, message, fn ->
         expand(quote(do: alias(:lists, as: :foobar)))
       end
+
+      message = ~r"invalid value for option :as, expected an alias, got: :\"Elixir.foobar\""
+
+      assert_raise CompileError, message, fn ->
+        expand(quote(do: alias(:lists, as: :"Elixir.foobar")))
+      end
     end
 
     test "invalid expansion" do
@@ -307,7 +313,7 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "in matches" do
-      message = ~r"cannot invoke local foo/1 inside match, called as: foo\(:bar\)"
+      message = ~r"cannot find or invoke local foo/1 inside match. .+ Called as: foo\(:bar\)"
 
       assert_raise CompileError, message, fn ->
         expand(quote(do: foo(:bar) = :bar))
@@ -319,7 +325,7 @@ defmodule Kernel.ExpansionTest do
       expanded_code = quote(do: fn pid when :erlang.==(pid, :erlang.self()) -> pid end)
       assert clean_meta(expand(code), [:import, :context]) == expanded_code
 
-      message = ~r"cannot invoke local foo/1 inside guard, called as: foo\(arg\)"
+      message = ~r"cannot find or invoke local foo/1"
 
       assert_raise CompileError, message, fn ->
         expand(quote(do: fn arg when foo(arg) -> arg end))
@@ -551,17 +557,16 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "in matches" do
-      message =
-        ~r"cannot invoke remote function Hello.something_that_does_not_exist/0 inside match"
+      message = ~r"cannot invoke remote function Hello.fun_that_does_not_exist/0 inside a match"
 
       assert_raise CompileError, message, fn ->
-        expand(quote(do: Hello.something_that_does_not_exist() = :foo))
+        expand(quote(do: Hello.fun_that_does_not_exist() = :foo))
       end
 
-      message = ~r"cannot invoke remote function :erlang.make_ref/0 inside match"
+      message = ~r"cannot invoke remote function :erlang.make_ref/0 inside a match"
       assert_raise CompileError, message, fn -> expand(quote(do: make_ref() = :foo)) end
 
-      message = ~r"invalid argument for \+\+ operator"
+      message = ~r"invalid argument for \+\+ operator inside a match"
 
       assert_raise CompileError, message, fn ->
         expand(quote(do: "a" ++ "b" = "ab"))
@@ -574,6 +579,12 @@ defmodule Kernel.ExpansionTest do
       assert_raise CompileError, message, fn ->
         expand(quote(do: [1] ++ 2 ++ [3] = [1, 2, 3]))
       end
+
+      assert {:=, _, [-1, {{:., [], [:erlang, :-]}, _, [1]}]} = expand(quote(do: -1 = -1))
+      assert {:=, _, [1, {{:., [], [:erlang, :+]}, _, [1]}]} = expand(quote(do: +1 = +1))
+
+      assert {:=, _, [[{:|, _, [1, [{:|, _, [2, 3]}]]}], [1, 2, 3]]} =
+               expand(quote(do: [1] ++ [2] ++ 3 = [1, 2, 3]))
     end
 
     test "in guards" do
@@ -588,6 +599,24 @@ defmodule Kernel.ExpansionTest do
 
       assert_raise CompileError, message, fn ->
         expand(quote(do: fn arg when make_ref() -> arg end))
+      end
+    end
+
+    test "in guards with bitstrings" do
+      message = ~r"cannot invoke remote function String.Chars.to_string/1 inside guards"
+
+      assert_raise CompileError, message, fn ->
+        expand(quote(do: fn arg when "#{arg}foo" == "argfoo" -> arg end))
+      end
+
+      assert_raise CompileError, message, fn ->
+        expand(
+          quote do
+            fn arg when <<:"Elixir.Kernel".to_string(arg)::binary, "foo">> == "argfoo" ->
+              arg
+            end
+          end
+        )
       end
     end
   end
@@ -690,6 +719,26 @@ defmodule Kernel.ExpansionTest do
       assert_raise CompileError, message, fn ->
         expand(quote(do: for(x <- 1..2, uniq: x, do: x)))
       end
+    end
+
+    test "raise error on invalid reduce" do
+      assert_raise CompileError,
+                   ~r"cannot use :reduce alongside :into/:uniq in comprehension",
+                   fn ->
+                     expand(quote(do: for(x <- 1..3, reduce: %{}, into: %{}, do: (acc -> acc))))
+                   end
+
+      assert_raise CompileError,
+                   ~r"the do block was written using acc -> expr clauses but the :reduce option was not given",
+                   fn -> expand(quote(do: for(x <- 1..3, do: (acc -> acc)))) end
+
+      assert_raise CompileError,
+                   ~r"when using :reduce with comprehensions, the do block must be written using acc -> expr clauses",
+                   fn -> expand(quote(do: for(x <- 1..3, reduce: %{}, do: x))) end
+
+      assert_raise CompileError,
+                   ~r"when using :reduce with comprehensions, the do block must be written using acc -> expr clauses",
+                   fn -> expand(quote(do: for(x <- 1..3, reduce: %{}, do: (acc, x -> x)))) end
     end
 
     test "raise error for unknown options" do
@@ -1578,6 +1627,8 @@ defmodule Kernel.ExpansionTest do
         quote do
           try do
             x
+          catch
+            _, _ -> :ok
           else
             z -> z
           end
@@ -1589,6 +1640,8 @@ defmodule Kernel.ExpansionTest do
         quote do
           try do
             x()
+          catch
+            _, _ -> :ok
           else
             z -> z
           end
@@ -1628,7 +1681,7 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "expects more than do" do
-      assert_raise CompileError, ~r"missing :catch/:rescue/:after/:else option in \"try\"", fn ->
+      assert_raise CompileError, ~r"missing :catch/:rescue/:after option in \"try\"", fn ->
         code =
           quote do
             try do
@@ -1831,6 +1884,8 @@ defmodule Kernel.ExpansionTest do
           quote do
             try do
               e
+            catch
+              _ -> :ok
             else
               x
             end
@@ -1844,6 +1899,8 @@ defmodule Kernel.ExpansionTest do
           quote do
             try do
               e
+            catch
+              _ -> :ok
             else
               [:not, :clauses]
             end
@@ -1881,7 +1938,7 @@ defmodule Kernel.ExpansionTest do
 
       assert expand(quote(do: {:foo, <<foo>>} = {<<baz>>, :baz} = bar()))
 
-      # 2-element tuples are special cased
+      # two-element tuples are special cased
       assert_raise CompileError, message, fn ->
         expand(quote(do: {:foo, <<foo>>} = {:foo, <<baz>>} = bar()))
       end
@@ -1964,8 +2021,18 @@ defmodule Kernel.ExpansionTest do
                quote(do: <<"foo"::binary(), "bar"::binary()>> = "foobar")
     end
 
+    test "inlines binaries inside interpolation is isomorphic after manual expansion" do
+      import Kernel.ExpansionTarget
+
+      quoted = Macro.prewalk(quote(do: "foo#{bar()}" = "foobar"), &Macro.expand(&1, __ENV__))
+
+      assert expand(quoted) |> clean_meta([:alignment]) ==
+               quote(do: <<"foo"::binary(), "bar"::binary()>> = "foobar")
+    end
+
     test "expands size * unit" do
       import Kernel, except: [-: 2]
+      import Kernel.ExpansionTarget
 
       assert expand(quote(do: <<x::13>>)) |> clean_meta([:alignment]) ==
                quote(do: <<x()::integer()-size(13)>>)
@@ -1981,6 +2048,18 @@ defmodule Kernel.ExpansionTest do
 
       assert expand(quote(do: <<x::binary-(13 * 6)-binary>>)) |> clean_meta([:alignment]) ==
                quote(do: <<x()::binary()-unit(6)-size(13)>>)
+
+      assert expand(quote(do: <<x::seventeen()>>)) |> clean_meta([:alignment]) ==
+               quote(do: <<x()::integer()-size(17)>>)
+
+      assert expand(quote(do: <<x::seventeen()*2>>)) |> clean_meta([:alignment]) ==
+               quote(do: <<x()::integer()-unit(2)-size(17)>>)
+
+      assert expand(quote(do: <<x::seventeen()*seventeen()>>)) |> clean_meta([:alignment]) ==
+               quote(do: <<x()::integer()-unit(17)-size(17)>>)
+
+      assert expand(quote(do: <<x::_*seventeen()-binary>>)) |> clean_meta([:alignment]) ==
+               quote(do: <<x()::binary()-unit(17)>>)
     end
 
     test "expands binary/bitstring specifiers" do
@@ -2105,6 +2184,17 @@ defmodule Kernel.ExpansionTest do
       assert expand(before_expansion) |> clean_meta([:alignment]) == after_expansion
     end
 
+    defmacro offset(size, binary) do
+      quote do
+        offset = unquote(size)
+        <<_::size(offset)>> = unquote(binary)
+      end
+    end
+
+    test "supports size from counters" do
+      assert offset(8, <<0>>)
+    end
+
     test "merges bitstrings" do
       import Kernel, except: [-: 2]
 
@@ -2177,6 +2267,44 @@ defmodule Kernel.ExpansionTest do
 
       assert_raise CompileError, message, fn ->
         expand(quote(do: <<"foo"::size(:oops)>>))
+      end
+
+      assert_raise CompileError, ~r/undefined variable "foo"/, fn ->
+        code =
+          quote do
+            fn <<_::size(foo)>> -> :ok end
+          end
+
+        expand(code)
+      end
+
+      assert_raise CompileError, ~r/undefined variable "foo"/, fn ->
+        code =
+          quote do
+            fn <<_::size(foo), foo::size(8)>> -> :ok end
+          end
+
+        expand(code)
+      end
+
+      assert_raise CompileError, ~r/undefined variable "foo" in bitstring segment/, fn ->
+        code =
+          quote do
+            fn foo, <<_::size(foo)>> -> :ok end
+          end
+
+        expand(code)
+      end
+
+      message = ~r"size in bitstring expects an integer or a variable as argument, got: foo()"
+
+      assert_raise CompileError, message, fn ->
+        code =
+          quote do
+            fn <<_::size(foo())>> -> :ok end
+          end
+
+        expand(code)
       end
     end
 
@@ -2285,6 +2413,10 @@ defmodule Kernel.ExpansionTest do
       expand(quote(do: 1.foo))
     end
 
+    assert_raise CompileError, ~r"invalid call 0\.foo\(\)", fn ->
+      expand(quote(do: __ENV__.line.foo))
+    end
+
     assert_raise CompileError, ~r"unhandled operator ->", fn ->
       expand(quote(do: (foo -> bar)))
     end
@@ -2321,26 +2453,6 @@ defmodule Kernel.ExpansionTest do
           length do
             _ -> :ok
           end
-        end
-
-      expand(code)
-    end
-
-    assert_raise CompileError, ~r/undefined variable "foo"/, fn ->
-      code =
-        quote do
-          fn <<_::size(foo)>> -> :ok end
-        end
-
-      expand(code)
-    end
-
-    message = ~r"size in bitstring expects an integer or a variable as argument, got: foo()"
-
-    assert_raise CompileError, message, fn ->
-      code =
-        quote do
-          fn <<_::size(foo())>> -> :ok end
         end
 
       expand(code)

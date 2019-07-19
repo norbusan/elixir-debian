@@ -4,8 +4,8 @@ defmodule Mix.Utils do
   @doc """
   Gets the Mix home.
 
-  It defaults to `~/.mix` unless the `MIX_HOME`
-  environment variable is set.
+  It uses the the locations `MIX_HOME`, `XDG_DATA_HOME/mix`,
+  `~/.mix` with decreasing priority.
 
   Developers should only store entries in the
   `MIX_HOME` directory which are guaranteed to
@@ -15,7 +15,29 @@ defmodule Mix.Utils do
   stored there.
   """
   def mix_home do
-    System.get_env("MIX_HOME") || Path.expand("~/.mix")
+    mix_home_xdg_lookup("XDG_DATA_HOME")
+  end
+
+  @doc """
+  Gets possible location of global Mix configuration.
+
+  Possible locations:
+
+   * `~/.mix`
+   * `MIX_HOME`
+   * `XDG_CONFIG_HOME/mix`
+
+  """
+  def mix_config do
+    mix_home_xdg_lookup("XDG_CONFIG_HOME")
+  end
+
+  defp mix_home_xdg_lookup(xdg) do
+    case {System.get_env("MIX_HOME"), System.get_env(xdg)} do
+      {directory, _} when is_binary(directory) -> directory
+      {nil, directory} when is_binary(directory) -> Path.join(directory, "mix")
+      {nil, nil} -> Path.expand("~/.mix")
+    end
   end
 
   @doc """
@@ -176,7 +198,7 @@ defmodule Mix.Utils do
   (1970-01-01 00:00:00).
   """
   def last_modified_and_size(path) do
-    now = System.system_time(:second)
+    now = System.os_time(:second)
 
     case :elixir_utils.read_posix_mtime_and_size(path) do
       {:ok, mtime, size} when mtime > now ->
@@ -184,8 +206,7 @@ defmodule Mix.Utils do
           "warning: mtime (modified time) for #{inspect(path)} was set to the future, resetting to now"
 
         Mix.shell().error(message)
-
-        :elixir_utils.change_posix_time(path, now)
+        File.touch(path, now)
         {mtime, size}
 
       {:ok, mtime, size} ->
@@ -477,7 +498,7 @@ defmodule Mix.Utils do
   end
 
   @doc """
-  Opens and reads content from either a URL or a local filesystem path.
+  Opens and reads content from either a URL or a local file system path.
 
   Returns the contents as a `{:ok, binary}`, `:badpath` for invalid
   paths or `{:local, message}` for local errors and `{:remote, message}`
@@ -487,6 +508,10 @@ defmodule Mix.Utils do
 
     * `:sha512` - checks against the given SHA-512 checksum. Returns
       `{:checksum, message}` in case it fails
+
+    * `:timeout` - times out the request after the given milliseconds.
+      Returns `{:remote, timeout_message}` if it fails. Defaults to 60
+      seconds
 
   """
   @spec read_path(String.t(), keyword) ::
@@ -498,7 +523,13 @@ defmodule Mix.Utils do
   def read_path(path, opts \\ []) do
     cond do
       url?(path) ->
-        read_httpc(path) |> checksum(opts)
+        task = Task.async(fn -> read_httpc(path) |> checksum(opts) end)
+        timeout = Keyword.get(opts, :timeout, 60_000)
+
+        case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+          {:ok, result} -> result
+          _ -> {:remote, "request timed out after #{timeout}ms"}
+        end
 
       file?(path) ->
         read_file(path) |> checksum(opts)
@@ -536,19 +567,6 @@ defmodule Mix.Utils do
     Base.encode16(:crypto.hash(hash, binary), case: :lower)
   end
 
-  @doc """
-  Prompts the user to overwrite the file if it exists. Returns
-  the user input.
-  """
-  def can_write?(path) do
-    if File.exists?(path) do
-      full = Path.expand(path)
-      Mix.shell().yes?(Path.relative_to_cwd(full) <> " already exists, overwrite?")
-    else
-      true
-    end
-  end
-
   defp read_file(path) do
     try do
       {:ok, File.read!(path)}
@@ -575,8 +593,6 @@ defmodule Mix.Utils do
     #
     # If a proxy environment variable was supplied add a proxy to httpc.
     http_options = [relaxed: true] ++ proxy_config(path)
-
-    :httpc.set_option(:ipfamily, :inet6fb4, :mix)
 
     case :httpc.request(:get, request, http_options, [body_format: :binary], :mix) do
       {:ok, {{_, status, _}, _, body}} when status in 200..299 ->

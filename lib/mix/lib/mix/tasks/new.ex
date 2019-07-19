@@ -9,11 +9,17 @@ defmodule Mix.Tasks.New do
   Creates a new Elixir project.
   It expects the path of the project as argument.
 
-      mix new PATH [--sup] [--module MODULE] [--app APP] [--umbrella]
+      mix new PATH [--app APP] [--module MODULE] [--sup] [--umbrella]
 
   A project at the given PATH will be created. The
   application name and module name will be retrieved
   from the path, unless `--module` or `--app` is given.
+
+  An `--app` option can be given in order to
+  name the OTP application for the project.
+
+  A `--module` option can be given in order
+  to name the modules in the generated code skeleton.
 
   A `--sup` option can be given to generate an OTP application
   skeleton including a supervision tree. Normally an app is
@@ -22,11 +28,6 @@ defmodule Mix.Tasks.New do
   An `--umbrella` option can be given to generate an
   umbrella project.
 
-  An `--app` option can be given in order to
-  name the OTP application for the project.
-
-  A `--module` option can be given in order
-  to name the modules in the generated code skeleton.
 
   ## Examples
 
@@ -55,6 +56,7 @@ defmodule Mix.Tasks.New do
     umbrella: :boolean
   ]
 
+  @impl true
   def run(argv) do
     {opts, argv} = OptionParser.parse!(argv, strict: @switches)
 
@@ -92,6 +94,8 @@ defmodule Mix.Tasks.New do
       version: get_version(System.version())
     ]
 
+    mod_filename = Macro.underscore(mod)
+
     create_file("README.md", readme_template(assigns))
     create_file(".formatter.exs", formatter_template(assigns))
     create_file(".gitignore", gitignore_template(assigns))
@@ -102,19 +106,16 @@ defmodule Mix.Tasks.New do
       create_file("mix.exs", mix_exs_template(assigns))
     end
 
-    create_directory("config")
-    create_file("config/config.exs", config_template(assigns))
-
     create_directory("lib")
-    create_file("lib/#{app}.ex", lib_template(assigns))
+    create_file("lib/#{mod_filename}.ex", lib_template(assigns))
 
     if opts[:sup] do
-      create_file("lib/#{app}/application.ex", lib_app_template(assigns))
+      create_file("lib/#{mod_filename}/application.ex", lib_app_template(assigns))
     end
 
     create_directory("test")
     create_file("test/test_helper.exs", test_helper_template(assigns))
-    create_file("test/#{app}_test.exs", test_template(assigns))
+    create_file("test/#{mod_filename}_test.exs", test_template(assigns))
 
     """
 
@@ -166,7 +167,7 @@ defmodule Mix.Tasks.New do
   end
 
   defp check_application_name!(name, inferred?) do
-    unless name =~ Regex.recompile!(~r/^[a-z][a-z0-9_]*$/) do
+    unless name =~ ~r/^[a-z][a-z0-9_]*$/ do
       Mix.raise(
         "Application name must start with a lowercase ASCII letter, followed by " <>
           "lowercase ASCII letters, numbers, or underscores, got: #{inspect(name)}" <>
@@ -181,7 +182,7 @@ defmodule Mix.Tasks.New do
   end
 
   defp check_mod_name_validity!(name) do
-    unless name =~ Regex.recompile!(~r/^[A-Z]\w*(\.[A-Z]\w*)*$/) do
+    unless name =~ ~r/^[A-Z]\w*(\.[A-Z]\w*)*$/ do
       Mix.raise(
         "Module name must be a valid Elixir alias (for example: Foo.Bar), got: #{inspect(name)}"
       )
@@ -276,7 +277,7 @@ defmodule Mix.Tasks.New do
   # The directory Mix downloads your dependencies sources to.
   /deps/
 
-  # Where 3rd-party dependencies like ExDoc output generated docs.
+  # Where third-party dependencies like ExDoc output generated docs.
   /doc/
 
   # Ignore .fetch files in case you like to edit your project deps locally.
@@ -318,7 +319,7 @@ defmodule Mix.Tasks.New do
     defp deps do
       [
         # {:dep_from_hexpm, "~> 0.3.0"},
-        # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
+        # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
       ]
     end
   end
@@ -354,7 +355,7 @@ defmodule Mix.Tasks.New do
       [
         # {:dep_from_hexpm, "~> 0.3.0"},
         # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
-        # {:sibling_app_in_umbrella, in_umbrella: true},
+        # {:sibling_app_in_umbrella, in_umbrella: true}
       ]
     end
   end
@@ -367,6 +368,7 @@ defmodule Mix.Tasks.New do
     def project do
       [
         apps_path: "apps",
+        version: "0.1.0",
         start_permanent: Mix.env() == :prod,
         deps: deps()
       ]
@@ -383,57 +385,25 @@ defmodule Mix.Tasks.New do
   end
   """)
 
-  embed_template(:config, ~S"""
-  # This file is responsible for configuring your application
-  # and its dependencies with the aid of the Mix.Config module.
-  use Mix.Config
-
-  # This configuration is loaded before any dependency and is restricted
-  # to this project. If another project depends on this project, this
-  # file won't be loaded nor affect the parent project. For this reason,
-  # if you want to provide default values for your application for
-  # 3rd-party users, it should be done in your "mix.exs" file.
-
-  # You can configure your application as:
-  #
-  #     config :<%= @app %>, key: :value
-  #
-  # and access this configuration in your application as:
-  #
-  #     Application.get_env(:<%= @app %>, :key)
-  #
-  # You can also configure a 3rd-party app:
-  #
-  #     config :logger, level: :info
-  #
-
-  # It is also possible to import configuration files, relative to this
-  # directory. For example, you can emulate configuration per environment
-  # by uncommenting the line below and defining dev.exs, test.exs and such.
-  # Configuration from the imported file will override the ones defined
-  # here (which is why it is important to import them last).
-  #
-  #     import_config "#{Mix.env()}.exs"
-  """)
-
   embed_template(:config_umbrella, ~S"""
-  # This file is responsible for configuring your application
-  # and its dependencies with the aid of the Mix.Config module.
-  use Mix.Config
+  # This file is responsible for configuring your umbrella
+  # and **all applications** and their dependencies with the
+  # help of the Config module.
+  #
+  # Note that all applications in your umbrella share the
+  # same configuration and dependencies, which is why they
+  # all use the same configuration file. If you want different
+  # configurations or dependencies per app, it is best to
+  # move said applications out of the umbrella.
+  import Config
 
-  # By default, the umbrella project as well as each child
-  # application will require this configuration file, ensuring
-  # they all use the same configuration. While one could
-  # configure all applications here, we prefer to delegate
-  # back to each application for organization purposes.
-  import_config "../apps/*/config/config.exs"
-
-  # Sample configuration (overrides the imported configuration above):
+  # Sample configuration:
   #
   #     config :logger, :console,
   #       level: :info,
   #       format: "$date $time [$level] $metadata$message\n",
   #       metadata: [:user_id]
+  #
   """)
 
   embed_template(:lib, """
@@ -466,10 +436,9 @@ defmodule Mix.Tasks.New do
     use Application
 
     def start(_type, _args) do
-      # List all child processes to be supervised
       children = [
         # Starts a worker by calling: <%= @mod %>.Worker.start_link(arg)
-        # {<%= @mod %>.Worker, arg},
+        # {<%= @mod %>.Worker, arg}
       ]
 
       # See https://hexdocs.pm/elixir/Supervisor.html

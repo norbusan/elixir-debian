@@ -283,11 +283,12 @@ defmodule IEx.Introspection do
             true ->
               module.module_info(:exports)
           end
+          |> Enum.sort()
 
         result =
           for {^function, arity} <- exports,
               (if docs do
-                 find_doc(docs, function, arity)
+                 find_doc_with_content(docs, function, arity)
                else
                  get_spec(module, function, arity) != []
                end) do
@@ -352,7 +353,7 @@ defmodule IEx.Introspection do
     )
 
     puts_error(
-      "If instead of accessing documentation you would like to more information about a value " <>
+      "If instead of accessing documentation you would like more information about a value " <>
         "or about the result of an expression, use the \"i\" helper instead"
     )
 
@@ -364,7 +365,7 @@ defmodule IEx.Introspection do
     spec = get_spec(mod, fun, arity)
 
     cond do
-      doc_tuple = find_doc(docs, fun, arity) ->
+      doc_tuple = find_doc_with_content(docs, fun, arity) ->
         print_fun(mod, doc_tuple, spec)
         :ok
 
@@ -388,15 +389,17 @@ defmodule IEx.Introspection do
   end
 
   defp has_callback?(mod, fun) do
-    mod
-    |> get_docs([:callback, :macrocallback])
-    |> Enum.any?(&match?({_, ^fun, _}, elem(&1, 0)))
+    case get_callback_docs(mod, &match?({_, ^fun, _}, elem(&1, 0))) do
+      {:ok, [_ | _]} -> true
+      _ -> false
+    end
   end
 
   defp has_callback?(mod, fun, arity) do
-    mod
-    |> get_docs([:callback, :macrocallback])
-    |> Enum.any?(&match?({_, ^fun, ^arity}, elem(&1, 0)))
+    case get_callback_docs(mod, &match?({_, ^fun, ^arity}, elem(&1, 0))) do
+      {:ok, [_ | _]} -> true
+      _ -> false
+    end
   end
 
   defp has_type?(mod, fun) do
@@ -423,16 +426,22 @@ defmodule IEx.Introspection do
 
   defp extract_name_and_arity({{_, name, arity}, _, _, _, _}), do: {name, arity}
 
+  defp find_doc_with_content(docs, function, arity) do
+    doc = find_doc(docs, function, arity)
+    if doc != nil and has_content?(doc), do: doc
+  end
+
+  defp has_content?({_, _, _, :hidden, _}), do: false
+  defp has_content?({{_, name, _}, _, _, :none, _}), do: hd(Atom.to_charlist(name)) != ?_
+  defp has_content?({_, _, _, _, _}), do: true
+
   defp find_doc(nil, _fun, _arity) do
     nil
   end
 
   defp find_doc(docs, fun, arity) do
-    doc =
-      Enum.find(docs, &match?({_, ^fun, ^arity}, elem(&1, 0))) ||
-        find_doc_defaults(docs, fun, arity)
-
-    if doc != nil and has_content?(doc), do: doc
+    Enum.find(docs, &match?({_, ^fun, ^arity}, elem(&1, 0))) ||
+      find_doc_defaults(docs, fun, arity)
   end
 
   defp find_doc_defaults(docs, function, min) do
@@ -444,10 +453,6 @@ defmodule IEx.Introspection do
         false
     end)
   end
-
-  defp has_content?({_, _, _, :hidden, _}), do: false
-  defp has_content?({{_, name, _}, _, _, :none, _}), do: hd(Atom.to_charlist(name)) != ?_
-  defp has_content?({_, _, _, _, _}), do: true
 
   defp print_fun(mod, {{kind, fun, arity}, _line, signature, doc, metadata}, spec) do
     if callback_module = doc == :none and callback_module(mod, fun, arity) do
@@ -466,19 +471,10 @@ defmodule IEx.Introspection do
   defp kind_to_def(:macro), do: :defmacro
 
   defp callback_module(mod, fun, arity) do
-    predicate = &match?({{^fun, ^arity}, _}, &1)
-
     mod.module_info(:attributes)
     |> Keyword.get_values(:behaviour)
     |> Stream.concat()
-    |> Enum.find(&Enum.any?(get_callbacks(&1), predicate))
-  end
-
-  defp get_callbacks(module) do
-    case Typespec.fetch_callbacks(module) do
-      {:ok, callbacks} -> callbacks
-      :error -> []
-    end
+    |> Enum.find(&has_callback?(&1, fun, arity))
   end
 
   defp get_spec(module, name, arity) do
@@ -504,9 +500,6 @@ defmodule IEx.Introspection do
       :no_beam ->
         no_beam(mod)
 
-      :no_docs ->
-        no_docs(mod)
-
       {:ok, []} ->
         puts_error("No callbacks for #{inspect(mod)} were found")
 
@@ -524,7 +517,6 @@ defmodule IEx.Introspection do
 
     case get_callback_docs(mod, filter) do
       :no_beam -> no_beam(mod)
-      :no_docs -> no_docs(mod)
       {:ok, []} -> docs_not_found("#{inspect(mod)}.#{fun}")
       {:ok, docs} -> Enum.each(docs, &print_typespec/1)
     end
@@ -537,7 +529,6 @@ defmodule IEx.Introspection do
 
     case get_callback_docs(mod, filter) do
       :no_beam -> no_beam(mod)
-      :no_docs -> no_docs(mod)
       {:ok, []} -> docs_not_found("#{inspect(mod)}.#{fun}/#{arity}")
       {:ok, docs} -> Enum.each(docs, &print_typespec/1)
     end
@@ -557,30 +548,70 @@ defmodule IEx.Introspection do
       :error ->
         :no_beam
 
-      _ when is_nil(docs) ->
-        :no_docs
-
       {:ok, callbacks} ->
         docs =
-          docs
+          callbacks
+          |> Enum.map(&translate_callback/1)
           |> Enum.filter(filter)
-          |> Enum.map(fn
-            {{:macrocallback, fun, arity}, _, _, doc, metadata} ->
-              macro = {:"MACRO-#{fun}", arity + 1}
-              {format_callback(:macrocallback, fun, macro, callbacks), doc, metadata}
-
-            {{kind, fun, arity}, _, _, doc, metadata} ->
-              {format_callback(kind, fun, {fun, arity}, callbacks), doc, metadata}
+          |> Enum.sort()
+          |> Enum.flat_map(fn {{_, function, arity}, _specs} = callback ->
+            case find_doc(docs, function, arity) do
+              nil -> [{format_callback(callback), :none, %{}}]
+              {_, _, _, :hidden, _} -> []
+              {_, _, _, doc, metadata} -> [{format_callback(callback), doc, metadata}]
+            end
           end)
 
         {:ok, docs}
     end
   end
 
+  defp translate_callback({name_arity, specs}) do
+    case translate_callback_name_arity(name_arity) do
+      {:macrocallback, _, _} = kind_name_arity ->
+        # The typespec of a macrocallback differs from the one expressed
+        # via @macrocallback:
+        #
+        #   * The function name is prefixed with "MACRO-"
+        #   * The arguments contain an additional first argument: the caller
+        #   * The arity is increased by 1
+        #
+        specs =
+          Enum.map(specs, fn {:type, line1, :fun, [{:type, line2, :product, [_ | args]}, spec]} ->
+            {:type, line1, :fun, [{:type, line2, :product, args}, spec]}
+          end)
+
+        {kind_name_arity, specs}
+
+      kind_name_arity ->
+        {kind_name_arity, specs}
+    end
+  end
+
+  defp translate_callback_name_arity({name, arity}) do
+    case Atom.to_string(name) do
+      "MACRO-" <> macro_name -> {:macrocallback, String.to_atom(macro_name), arity - 1}
+      _ -> {:callback, name, arity}
+    end
+  end
+
+  defp format_callback({{kind, name, _arity}, specs}) do
+    Enum.map(specs, fn spec ->
+      Typespec.spec_to_quoted(name, spec)
+      |> Macro.prewalk(&drop_macro_env/1)
+      |> format_typespec(kind, 0)
+    end)
+  end
+
   defp add_optional_callback_docs(docs, mod) do
     optional_callbacks =
       if Code.ensure_loaded?(mod) and function_exported?(mod, :behaviour_info, 1) do
         mod.behaviour_info(:optional_callbacks)
+        |> Enum.map(fn name_arity ->
+          {_kind, name, arity} = translate_callback_name_arity(name_arity)
+          {name, arity}
+        end)
+        |> Enum.sort()
       else
         []
       end
@@ -596,17 +627,7 @@ defmodule IEx.Introspection do
     format_typespec(callbacks, :optional_callbacks, 0)
   end
 
-  defp format_callback(kind, name, key, callbacks) do
-    {_, specs} = List.keyfind(callbacks, key, 0)
-
-    Enum.map(specs, fn spec ->
-      Typespec.spec_to_quoted(name, spec)
-      |> Macro.prewalk(&drop_macro_env/1)
-      |> format_typespec(kind, 0)
-    end)
-  end
-
-  defp drop_macro_env({name, meta, [{:::, _, [_, {{:., _, [Macro.Env, :t]}, _, _}]} | args]}),
+  defp drop_macro_env({name, meta, [{:"::", _, [_, {{:., _, [Macro.Env, :t]}, _, _}]} | args]}),
     do: {name, meta, args}
 
   defp drop_macro_env(other), do: other
@@ -623,7 +644,9 @@ defmodule IEx.Introspection do
         types_not_found(inspect(module))
 
       {:ok, types} ->
-        Enum.each(types, &(&1 |> format_type() |> IO.puts()))
+        types
+        |> Enum.sort_by(fn {_, {name, _, args}} -> {name, length(args)} end)
+        |> Enum.each(&(&1 |> format_type() |> IO.puts()))
     end
 
     dont_display_result()
@@ -635,14 +658,19 @@ defmodule IEx.Introspection do
         no_beam(module)
 
       {:ok, types} ->
-        printed =
-          for {_, {^type, _, args}} = typespec <- types do
-            type_doc(module, type, length(args), typespec)
-            |> print_typespec()
-          end
+        types
+        |> Enum.filter(&match?({kind, {^type, _, _}} when kind in [:type, :opaque], &1))
+        |> Enum.sort_by(fn {_, {name, _, args}} -> {name, length(args)} end)
+        |> case do
+          [] ->
+            types_not_found_or_private("#{inspect(module)}.#{type}")
 
-        if printed == [] do
-          types_not_found("#{inspect(module)}.#{type}")
+          types ->
+            Enum.map(types, fn {_, {_, _, args}} = typespec ->
+              module
+              |> type_doc(type, length(args), typespec)
+              |> print_typespec()
+            end)
         end
     end
 
@@ -655,14 +683,21 @@ defmodule IEx.Introspection do
         no_beam(module)
 
       {:ok, types} ->
-        printed =
-          for {_, {^type, _, args}} = typespec <- types, length(args) == arity do
-            type_doc(module, type, arity, typespec)
-            |> print_typespec()
-          end
+        types
+        |> Enum.find(
+          &match?(
+            {kind, {^type, _, args}} when kind in [:type, :opaque] and length(args) == arity,
+            &1
+          )
+        )
+        |> case do
+          nil ->
+            types_not_found_or_private("#{inspect(module)}.#{type}")
 
-        if printed == [] do
-          types_not_found("#{inspect(module)}.#{type}")
+          typespec ->
+            module
+            |> type_doc(type, arity, typespec)
+            |> print_typespec()
         end
     end
 
@@ -684,7 +719,7 @@ defmodule IEx.Introspection do
   end
 
   defp format_type({:opaque, type}) do
-    {:::, _, [ast, _]} = Typespec.type_to_quoted(type)
+    {:"::", _, [ast, _]} = Typespec.type_to_quoted(type)
     format_typespec(ast, :opaque, 0)
   end
 
@@ -768,6 +803,10 @@ defmodule IEx.Introspection do
 
   defp types_not_found(for), do: not_found(for, "type information")
   defp docs_not_found(for), do: not_found(for, "documentation")
+
+  defp types_not_found_or_private(for) do
+    puts_error("No type information for #{for} was found or #{for} is private")
+  end
 
   defp behaviour_found(for) do
     puts_error("""

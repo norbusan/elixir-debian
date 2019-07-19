@@ -4,7 +4,7 @@ This document covers some naming conventions in Elixir code, from casing to punc
 
 ## Casing
 
-Elixir developers must use `snake_case` when defining variables, function names, module attributes, etc:
+Elixir developers must use `snake_case` when defining variables, function names, module attributes, etc.:
 
     some_map = %{this_is_a_key: "and a value"}
     is_map(some_map)
@@ -35,7 +35,7 @@ Function names may also start with an underscore. Such functions are never impor
     iex> _wont_be_imported()
     ** (CompileError) iex:1: undefined function _wont_be_imported/0
 
-Due to this property, Elixir relies on functions starting with underscore to attach compile-time metadata to modules. Such functions are most often in the `__foo__` format. For example, every module in Elixir has an `__info__/1` function:
+Due to this property, Elixir relies on functions starting with underscore to attach compile-time metadata to modules. Such functions are most often in the `__foo__` format. For example, every module in Elixir has an [`__info__/1`](`c:Module.__info__/1`) function:
 
     iex> String.__info__(:functions)
     [at: 2, capitalize: 1, chunk: 2, ...]
@@ -67,11 +67,11 @@ The version without `!` is preferred when you want to handle different outcomes 
 
 However, if you expect the outcome to always to be successful (e.g. if you expect the file always to exist), the bang variation can be more convenient and will raise a more helpful error message (than a failed pattern match) on failure.
 
-More examples of paired functions: `Base.decode16/2` and `Base.decode16!/2`, `File.cwd/0` and `File.cwd!/0`
+More examples of paired functions: `Base.decode16/2` and `Base.decode16!/2`, `File.cwd/0` and `File.cwd!/0`.
 
-There are also some non-paired functions, with no non-bang variant. The bang still signifies that it will raise an exception on failure. Examples: `Mix.Config.validate!/1`, `Protocol.assert_protocol!/1`
+There are also some non-paired functions, with no non-bang variant. The bang still signifies that it will raise an exception on failure. Example: `Protocol.assert_protocol!/1`.
 
-In macro code, the bang on `Kernel.alias!/1` and `Kernel.var!/2` signifies that [macro hygiene](http://elixir-lang.org/getting-started/meta/macros.html#macros-hygiene) is set aside.
+In macro code, the bang on `Kernel.alias!/1` and `Kernel.var!/2` signifies that [macro hygiene](https://elixir-lang.org/getting-started/meta/macros.html#macros-hygiene) is set aside.
 
 ## Trailing question mark (`foo?`)
 

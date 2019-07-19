@@ -2,10 +2,29 @@ defmodule ExUnit.RunnerStats do
   @moduledoc false
 
   use GenServer
-  alias ExUnit.{FailuresManifest, Test, TestModule}
+  alias ExUnit.{FailuresManifest, Test}
 
-  def stats(pid) do
+  @typep counter :: non_neg_integer
+
+  @spec stats(pid) :: %{
+          excluded: counter,
+          failures: counter,
+          skipped: counter,
+          total: counter
+        }
+  def stats(pid) when is_pid(pid) do
     GenServer.call(pid, :stats, :infinity)
+  end
+
+  @spec get_failure_counter(pid) :: counter
+  def get_failure_counter(sup) when is_pid(sup) do
+    GenServer.call(sup, :get_failure_counter)
+  end
+
+  @spec increment_failure_counter(pid) :: pos_integer
+  def increment_failure_counter(sup, increment \\ 1)
+      when is_pid(sup) and is_integer(increment) and increment >= 1 do
+    GenServer.call(sup, {:increment_failure_counter, increment})
   end
 
   # Callbacks
@@ -13,11 +32,14 @@ defmodule ExUnit.RunnerStats do
   def init(opts) do
     state = %{
       total: 0,
+      passed: 0,
       failures: 0,
       skipped: 0,
       excluded: 0,
       failures_manifest_file: opts[:failures_manifest_file],
-      failures_manifest: FailuresManifest.new()
+      failures_manifest: FailuresManifest.new(),
+      failure_counter: 0,
+      pids: []
     }
 
     {:ok, state}
@@ -28,6 +50,15 @@ defmodule ExUnit.RunnerStats do
     {:reply, stats, state}
   end
 
+  def handle_call(:get_failure_counter, _from, state) do
+    {:reply, state.failure_counter, state}
+  end
+
+  def handle_call({:increment_failure_counter, increment}, _from, state) do
+    %{failure_counter: failure_counter} = state
+    {:reply, failure_counter, %{state | failure_counter: failure_counter + increment}}
+  end
+
   def handle_cast({:test_finished, %Test{} = test}, state) do
     state =
       state
@@ -36,12 +67,6 @@ defmodule ExUnit.RunnerStats do
       |> increment_status_counter(test.state)
 
     {:noreply, state}
-  end
-
-  def handle_cast({:module_finished, %TestModule{state: {:failed, _}} = test_module}, state) do
-    %{failures: failures, total: total} = state
-    test_count = length(test_module.tests)
-    {:noreply, %{state | failures: failures + test_count, total: total + test_count}}
   end
 
   def handle_cast({:suite_started, _opts}, %{failures_manifest_file: file} = state)
@@ -58,6 +83,10 @@ defmodule ExUnit.RunnerStats do
 
   def handle_cast(_, state) do
     {:noreply, state}
+  end
+
+  defp increment_status_counter(state, tag) when tag in [nil, :passed] do
+    Map.update!(state, :passed, &(&1 + 1))
   end
 
   defp increment_status_counter(state, {:skipped, _}) do

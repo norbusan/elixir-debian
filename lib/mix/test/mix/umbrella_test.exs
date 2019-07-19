@@ -3,8 +3,6 @@ Code.require_file("../test_helper.exs", __DIR__)
 defmodule Mix.UmbrellaTest do
   use MixTest.Case
 
-  @moduletag apps: [:foo, :bar]
-
   test "apps_paths" do
     in_fixture("umbrella_dep/deps/umbrella", fn ->
       assert Mix.Project.apps_paths() == nil
@@ -26,6 +24,28 @@ defmodule Mix.UmbrellaTest do
         File.mkdir_p!("apps/errors")
         File.write!("apps/errors/mix.exs", "raise :oops")
         assert Mix.Project.apps_paths() == %{bar: "apps/bar", foo: "apps/foo"}
+      end)
+    end)
+  end
+
+  test "umbrella app dir and the app name defined in mix.exs should be equal" do
+    in_fixture("umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", fn _ ->
+        File.write!("apps/bar/mix.exs", """
+        defmodule Bar.MixProject do
+          use Mix.Project
+
+          def project do
+            [app: :baz,
+             version: "0.1.0",
+             deps: []]
+          end
+        end
+        """)
+
+        assert_raise Mix.Error, ~r/^Umbrella app :baz is located at directory bar/, fn ->
+          Mix.Task.run("deps")
+        end
       end)
     end)
   end
@@ -80,7 +100,11 @@ defmodule Mix.UmbrellaTest do
         defmodule Elixir.Mix.Tasks.Umbrella.Recur do
           use Mix.Task
           @recursive true
-          def run(_), do: Mix.Task.run("compile", ["--verbose"])
+
+          def run(_) do
+            assert Mix.Task.recursing?()
+            Mix.Task.run("compile", ["--verbose"])
+          end
         end
 
         Mix.Task.run("umbrella.recur")
@@ -197,7 +221,7 @@ defmodule Mix.UmbrellaTest do
     end)
   end
 
-  test "finds umbrella sibling dependencies conflicts with :in_umbrella" do
+  test "conflicts with umbrella sibling dependencies in :in_umbrella" do
     in_fixture("umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project(:umbrella, ".", fn _ ->
         File.write!("apps/bar/mix.exs", """
@@ -219,7 +243,9 @@ defmodule Mix.UmbrellaTest do
         assert_received {:mix_shell, :error, ["Dependencies have diverged:"]}
 
         assert_received {:mix_shell, :error,
-                         ["  the dependency foo in mix.exs is overriding a child" <> _]}
+                         ["  the dependency foo in mix.exs is overriding a child" <> message]}
+
+        assert message =~ "Please remove the conflicting options from your definition"
       end)
     end)
   end
@@ -326,6 +352,22 @@ defmodule Mix.UmbrellaTest do
     end)
   end
 
+  test "halts when sibling fails to compile" do
+    in_fixture("umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", fn _ ->
+        File.write!("apps/foo/lib/foo.ex", "raise ~s[oops]")
+
+        ExUnit.CaptureIO.capture_io(fn ->
+          assert catch_exit(Mix.Task.run("compile", ["--verbose"]))
+        end)
+
+        refute_received {:mix_shell, :info, ["Generated foo app"]}
+        refute_received {:mix_shell, :info, ["Generated bar app"]}
+        refute Code.ensure_loaded?(Bar)
+      end)
+    end)
+  end
+
   test "recompiles after runtime path dependency changes" do
     in_fixture("umbrella_dep/deps/umbrella/apps", fn ->
       Mix.Project.in_project(:bar, "bar", fn _ ->
@@ -337,15 +379,17 @@ defmodule Mix.UmbrellaTest do
 
         # Noop by default
         assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:noop, []}
+        Mix.Shell.Process.flush()
 
-        # Noop when there is no runtime dependency
+        # Ok but no compilation when there is no runtime dependency
         mtime = File.stat!("_build/dev/lib/bar/.mix/compile.elixir").mtime
         ensure_touched("_build/dev/lib/foo/ebin/Elixir.Foo.beam", mtime)
 
         mtime = File.stat!("_build/dev/lib/bar/.mix/compile.elixir").mtime
         ensure_touched("_build/dev/lib/foo/.mix/compile.elixir", mtime)
 
-        assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:noop, []}
+        assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
+        refute_received {:mix_shell, :info, ["Compiled " <> _]}
 
         # Add runtime dependency
         File.write!("lib/bar.ex", """
@@ -355,14 +399,7 @@ defmodule Mix.UmbrellaTest do
         """)
 
         assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
-        assert_receive {:mix_shell, :info, ["Compiled lib/bar.ex"]}
-
-        # Noop for runtime dependencies
-        mtime = File.stat!("_build/dev/lib/bar/.mix/compile.elixir").mtime
-        ensure_touched("_build/dev/lib/foo/ebin/Elixir.Foo.beam", mtime)
-        ensure_touched("_build/dev/lib/foo/.mix/compile.elixir", mtime)
-
-        assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:noop, []}
+        assert_received {:mix_shell, :info, ["Compiled lib/bar.ex"]}
       end)
     end)
   end

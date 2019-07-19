@@ -34,8 +34,9 @@ defmodule Mix.Tasks.Archive.Install do
 
       mix some_task
 
-  Note that installing via Git/GitHub/Hex fetches the source of the archive
-  and builds it, while using URL/local path fetches a pre-built archive.
+  Note that installing via Git, GitHub, or Hex fetches the source
+  of the archive and builds it, while using a URL or a local path
+  fetches a pre-built archive.
 
   ## Command line options
 
@@ -54,6 +55,9 @@ defmodule Mix.Tasks.Archive.Install do
     * `--organization` - specifies an organization to use if fetching the package
       from a private Hex repository
 
+    * `--timeout` - sets a request timeout in milliseconds for fetching
+      archives from URLs. Default is 60 seconds
+
   """
 
   @behaviour Mix.Local.Installer
@@ -63,14 +67,16 @@ defmodule Mix.Tasks.Archive.Install do
     sha512: :string,
     submodules: :boolean,
     app: :string,
-    organization: :string
+    organization: :string,
+    timeout: :integer
   ]
 
+  @impl true
   def run(argv) do
     Mix.Local.Installer.install(__MODULE__, argv, @switches)
   end
 
-  # Callbacks
+  @impl true
   def check_install_spec({local_or_url, path_or_url} = _install_spec, _opts)
       when local_or_url in [:local, :url] do
     if Path.extname(path_or_url) == ".ez" do
@@ -82,6 +88,7 @@ defmodule Mix.Tasks.Archive.Install do
 
   def check_install_spec(_, _), do: :ok
 
+  @impl true
   def find_previous_versions(src) do
     app =
       src
@@ -96,6 +103,7 @@ defmodule Mix.Tasks.Archive.Install do
     end
   end
 
+  @impl true
   def install(basename, contents, previous) do
     ez_path = Path.join(Mix.Local.path_for(:archive), basename)
     dir_dest = resolve_destination(ez_path, contents)
@@ -112,6 +120,7 @@ defmodule Mix.Tasks.Archive.Install do
     :ok
   end
 
+  @impl true
   def build(_install_spec, _opts) do
     src = Mix.Local.name_for(:archive, Mix.Project.config())
     previous = find_previous_versions(src)
@@ -138,9 +147,8 @@ defmodule Mix.Tasks.Archive.Install do
   end
 
   defp archives(name) do
-    # TODO: We can remove the .ez extension on Elixir 2.0 since we always unzip since 1.3
     Mix.Local.path_for(:archive)
-    |> Path.join(name <> "{,*.ez}")
+    |> Path.join(name)
     |> Path.wildcard()
   end
 

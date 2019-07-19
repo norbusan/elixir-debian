@@ -8,7 +8,8 @@ defmodule Module do
   After a module is compiled, using many of the functions in
   this module will raise errors, since it is out of their scope
   to inspect runtime data. Most of the runtime data can be inspected
-  via the `__info__/1` function attached to each compiled module.
+  via the [`__info__/1`](`c:Module.__info__/1`) function attached to
+  each compiled module.
 
   ## Module attributes
 
@@ -41,7 +42,7 @@ defmodule Module do
         @callback default_port() :: integer
 
         @doc "Parses the given URL"
-        @callback parse(uri_info :: URI.t) :: URI.t
+        @callback parse(uri_info :: URI.t()) :: URI.t()
       end
 
   And then a module may use it as:
@@ -60,14 +61,25 @@ defmodule Module do
   To aid in the correct implementation of behaviours, you may optionally declare
   `@impl` for implemented callbacks of a behaviour. This makes callbacks
   explicit and can help you to catch errors in your code. The compiler will warn
-  you if you mark a function as `@impl` when in fact it is not a callback, and
-  vice-versa. It also helps with maintainability by making it clear to other
-  developers that the function's purpose is to implement a callback.
+  in these cases:
 
-  Using `@impl` the example above can be rewritten as:
+    * if you mark a function with `@impl` when that function is not a callback.
+
+    * if you don't mark a function with `@impl` when other functions are marked
+      with `@impl`. If you mark one function with `@impl`, you must mark all
+      other callbacks for that behaviour as `@impl`.
+
+  `@impl` works on a per-context basis. If you generate a function through a macro
+  and mark it with `@impl`, that won't affect the module where that function is
+  generated in.
+
+  `@impl` also helps with maintainability by making it clear to other developers
+  that the function is implementing a callback.
+
+  Using `@impl`, the example above can be rewritten as:
 
       defmodule URI.HTTP do
-        @behaviour URI.parser
+        @behaviour URI.Parser
 
         @impl true
         def default_port(), do: 80
@@ -82,14 +94,16 @@ defmodule Module do
         @behaviour Bar
         @behaviour Baz
 
-        @impl true # will warn if neither Bar nor Baz specify a callback named bar/0
+        # Will warn if neither Bar nor Baz specify a callback named bar/0.
+        @impl true
         def bar(), do: :ok
 
-        @impl Baz # will warn if Baz does not specify a callback named baz/0
+        # Will warn if Baz does not specify a callback named baz/0.
+        @impl Baz
         def baz(), do: :ok
       end
 
-  Readability of the code is increased, as it is now clear which functions are
+  The code is now more readable, as it is now clear which functions are
   part of your API and which ones are callback implementations. To reinforce this
   idea, `@impl true` automatically marks the function as `@doc false`, disabling
   documentation unless `@doc` is explicitly set.
@@ -128,7 +142,7 @@ defmodule Module do
   Using the `@deprecated` attribute will also be reflected in the
   documentation of the given function and macro. You can choose between
   the `@deprecated` attribute and the documentation metadata to provide
-  hard-deprecations (with warnings) and soft-deprecations (with warnings):
+  hard-deprecations (with warnings) and soft-deprecations (without warnings):
 
   This is a soft-deprecation as it simply annotates the documentation
   as deprecated:
@@ -161,7 +175,7 @@ defmodule Module do
 
   Accepts a string (often a heredoc) or `false` where `@doc false` will
   make the entity invisible to documentation extraction tools like
-  ExDoc. For example:
+  [`ExDoc`](https://hexdocs.pm/ex_doc/). For example:
 
       defmodule MyModule do
         @typedoc "This type"
@@ -184,9 +198,10 @@ defmodule Module do
 
   As can be seen in the example above, `@doc` and `@typedoc` also accept
   a keyword list that serves as a way to provide arbitrary metadata
-  about the entity. Tools like ExDoc and IEx may use this information to
-  display annotations. A common use case is `since` that may be used
-  to annotate in which version the function was introduced.
+  about the entity. Tools like [`ExDoc`](https://hexdocs.pm/ex_doc/) and
+  `IEx` may use this information to display annotations. A common use
+  case is `since` that may be used to annotate in which version the
+  function was introduced.
 
   As illustrated in the example, it is possible to use these attributes
   more than once before an entity. However, the compiler will warn if
@@ -197,6 +212,9 @@ defmodule Module do
   Note that since the compiler also defines some additional metadata,
   there are a few reserved keys that will be ignored and warned if used.
   Currently these are: `:opaque` and `:defaults`.
+
+  Once this module is compiled, this information becomes available via
+  the `Code.fetch_docs/1` function.
 
   ### `@dialyzer`
 
@@ -256,11 +274,14 @@ defmodule Module do
 
   Accepts a string (often a heredoc) or `false` where `@moduledoc false`
   will make the module invisible to documentation extraction tools like
-  ExDoc.
+  [`ExDoc`](https://hexdocs.pm/ex_doc/).
 
   Similarly to `@doc` also accepts a keyword list to provide metadata
   about the module. For more details, see the documentation of `@doc`
   above.
+
+  Once this module is compiled, this information becomes available via
+  the `Code.fetch_docs/1` function.
 
   ### `@on_definition`
 
@@ -276,9 +297,9 @@ defmodule Module do
 
   Accepts the function name (as an atom) of a function in the current module or
   `{function_name, 0}` tuple where `function_name` is the name of a function in
-  the current module. The function must have arity 0 (no arguments) and has to
-  return `:ok`, otherwise the loading of the module will be aborted. For
-  example:
+  the current module. The function must be public and have an arity of 0 (no
+  arguments). If the function does not return `:ok`, the loading of the module
+  will be aborted. For example:
 
       defmodule MyModule do
         @on_load :load_check
@@ -324,8 +345,9 @@ defmodule Module do
   ### Custom attributes
 
   In addition to the built-in attributes outlined above, custom attributes may
-  also be added. A custom attribute is any valid identifier prefixed with an
-  `@` and followed by a valid Elixir value:
+  also be added. Custom attributes are expressed using the `@/1` operator followed
+  by a valid variable name. The value given to the custom attribute must be a valid 
+  Elixir value:
 
       defmodule MyModule do
         @custom_attr [some: "stuff"]
@@ -356,7 +378,7 @@ defmodule Module do
         @after_compile __MODULE__
 
         def __after_compile__(env, _bytecode) do
-          IO.inspect env
+          IO.inspect(env)
         end
       end
 
@@ -432,12 +454,12 @@ defmodule Module do
 
       defmodule Hooks do
         def on_def(_env, kind, name, args, guards, body) do
-          IO.puts "Defining #{kind} named #{name} with args:"
-          IO.inspect args
-          IO.puts "and guards"
-          IO.inspect guards
-          IO.puts "and body"
-          IO.puts Macro.to_string(body)
+          IO.puts("Defining #{kind} named #{name} with args:")
+          IO.inspect(args)
+          IO.puts("and guards")
+          IO.inspect(guards)
+          IO.puts("and body")
+          IO.puts(Macro.to_string(body))
         end
       end
 
@@ -480,27 +502,37 @@ defmodule Module do
   @typep definition :: {atom, arity}
   @typep def_kind :: :def | :defp | :defmacro | :defmacrop
 
+  @extra_error_msg_defines? "Use Kernel.function_exported?/3 and Kernel.macro_exported?/3 " <>
+                              "to check for public functions and macros instead"
+
+  @extra_error_msg_definitions_in "Use the Module.__info__/1 callback to get public functions and macros instead"
+
   @doc """
-  Provides runtime information about functions and macros defined by the
-  module, etc.
+  Provides runtime information about functions, macros, and other information
+  defined by the module.
 
   Each module gets an `__info__/1` function when it's compiled. The function
-  takes one of the following atoms:
+  takes one of the following items:
 
-    * `:functions` - keyword list of public functions along with their arities
-
-    * `:macros` - keyword list of public macros along with their arities
-
-    * `:module` - the module atom name
-
-    * `:md5` - the MD5 of the module
+    * `:attributes` - a keyword list with all persisted attributes
 
     * `:compile` - a list with compiler metadata
 
-    * `:attributes` - a list with all persisted attributes
+    * `:functions` - a keyword list of public functions and their arities
+
+    * `:macros` - a keyword list of public macros and their arities
+
+    * `:md5` - the MD5 of the module
+
+    * `:module` - the module atom name
 
   """
-  def __info__(kind)
+  @callback __info__(:attributes) :: keyword()
+  @callback __info__(:compile) :: [term()]
+  @callback __info__(:functions) :: keyword()
+  @callback __info__(:macros) :: keyword()
+  @callback __info__(:md5) :: binary()
+  @callback __info__(:module) :: module()
 
   @doc """
   Checks if a module is open.
@@ -524,11 +556,16 @@ defmodule Module do
   ## Examples
 
       defmodule Foo do
-        contents = quote do: (def sum(a, b), do: a + b)
-        Module.eval_quoted __MODULE__, contents
+        contents =
+          quote do
+            def sum(a, b), do: a + b
+          end
+
+        Module.eval_quoted(__MODULE__, contents)
       end
 
-      Foo.sum(1, 2) #=> 3
+      Foo.sum(1, 2)
+      #=> 3
 
   For convenience, you can pass any `Macro.Env` struct, such
   as  `__ENV__/0`, as the first argument or as options. Both
@@ -536,11 +573,16 @@ defmodule Module do
   from the environment:
 
       defmodule Foo do
-        contents = quote do: (def sum(a, b), do: a + b)
-        Module.eval_quoted __ENV__, contents
+        contents =
+          quote do
+            def sum(a, b), do: a + b
+          end
+
+        Module.eval_quoted(__ENV__, contents)
       end
 
-      Foo.sum(1, 2) #=> 3
+      Foo.sum(1, 2)
+      #=> 3
 
   Note that if you pass a `Macro.Env` struct as first argument
   while also passing `opts`, they will be merged with `opts`
@@ -561,7 +603,7 @@ defmodule Module do
 
   def eval_quoted(module, quoted, binding, opts)
       when is_atom(module) and is_list(binding) and is_list(opts) do
-    assert_not_compiled!(:eval_quoted, module)
+    assert_not_compiled!(__ENV__.function, module)
     :elixir_def.reset_last(module)
 
     {value, binding, _env, _scope} =
@@ -595,7 +637,8 @@ defmodule Module do
 
       Module.create(Hello, contents, Macro.Env.location(__ENV__))
 
-      Hello.world #=> true
+      Hello.world()
+      #=> true
 
   ## Differences from `defmodule`
 
@@ -622,7 +665,7 @@ defmodule Module do
       raise ArgumentError, "expected :file to be given as option"
     end
 
-    next = :erlang.unique_integer()
+    next = :elixir_module.next_counter(nil)
     line = Keyword.get(opts, :line, 0)
     quoted = :elixir_quote.linify_with_context_counter(line, {module, next}, quoted)
     :elixir_module.compile(module, quoted, [], :elixir.env_for_eval(opts))
@@ -876,21 +919,27 @@ defmodule Module do
   Use `defines?/3` to assert for a specific type.
 
   This function can only be used on modules that have not yet been compiled.
-  Use `Kernel.function_exported?/3` to check compiled modules.
+  Use `Kernel.function_exported?/3` and `Kernel.macro_exported?/3` to check for
+  public functions and macros respectively in compiled modules.
+
+  Note that `defines?` returns false for functions and macros that have
+  been defined but then marked as overridable and no other implementation
+  has been provided. You can check the overridable status by calling
+  `overridable?/2`.
 
   ## Examples
 
       defmodule Example do
-        Module.defines? __MODULE__, {:version, 0} #=> false
+        Module.defines?(__MODULE__, {:version, 0}) #=> false
         def version, do: 1
-        Module.defines? __MODULE__, {:version, 0} #=> true
+        Module.defines?(__MODULE__, {:version, 0}) #=> true
       end
 
   """
   @spec defines?(module, definition) :: boolean
   def defines?(module, {name, arity} = tuple)
       when is_atom(module) and is_atom(name) and is_integer(arity) and arity >= 0 and arity <= 255 do
-    assert_not_compiled!(:defines?, module)
+    assert_not_compiled!(__ENV__.function, module, @extra_error_msg_defines?)
     {set, _bag} = data_tables_for(module)
     :ets.member(set, {:def, tuple})
   end
@@ -902,14 +951,15 @@ defmodule Module do
   `kind` can be any of `:def`, `:defp`, `:defmacro`, or `:defmacrop`.
 
   This function can only be used on modules that have not yet been compiled.
-  Use `Kernel.function_exported?/3` to check compiled modules.
+  Use `Kernel.function_exported?/3` and `Kernel.macro_exported?/3` to check for
+  public functions and macros respectively in compiled modules.
 
   ## Examples
 
       defmodule Example do
-        Module.defines? __MODULE__, {:version, 0}, :defp #=> false
+        Module.defines?(__MODULE__, {:version, 0}, :def) #=> false
         def version, do: 1
-        Module.defines? __MODULE__, {:version, 0}, :defp #=> false
+        Module.defines?(__MODULE__, {:version, 0}, :def) #=> true
       end
 
   """
@@ -917,7 +967,8 @@ defmodule Module do
   def defines?(module, {name, arity} = tuple, def_kind)
       when is_atom(module) and is_atom(name) and is_integer(arity) and arity >= 0 and arity <= 255 and
              def_kind in [:def, :defp, :defmacro, :defmacrop] do
-    assert_not_compiled!(:defines?, module)
+    assert_not_compiled!(__ENV__.function, module, @extra_error_msg_defines?)
+
     {set, _bag} = data_tables_for(module)
 
     case :ets.lookup(set, {:def, tuple}) do
@@ -938,9 +989,11 @@ defmodule Module do
   end
 
   @doc """
-  Converts the given spec to a callback.
+  Copies the given spec as a callback.
 
-  Returns `true` if there is such a spec and it was converted to a callback.
+  Returns `true` if there is such a spec and it was copied as a callback.
+  If the function associated to the spec has documentation defined prior to
+  invoking this function, the docs are copied too.
   """
   @doc since: "1.7.0"
   @spec spec_to_callback(module, definition) :: boolean
@@ -949,19 +1002,27 @@ defmodule Module do
   end
 
   @doc """
-  Returns all functions defined in `module`.
+  Returns all functions and macros defined in `module`.
+
+  It returns a list with all defined functions and macros, public and private,
+  in the shape of `[{name, arity}, ...]`.
+
+  This function can only be used on modules that have not yet been compiled.
+  Use the `c:Module.__info__/1` callback to get the public functions and macros in
+  compiled modules.
 
   ## Examples
 
       defmodule Example do
         def version, do: 1
-        Module.definitions_in __MODULE__ #=> [{:version, 0}]
+        defmacrop test(arg), do: arg
+        Module.definitions_in(__MODULE__) #=> [{:version, 0}, {:test, 1}]
       end
 
   """
   @spec definitions_in(module) :: [definition]
   def definitions_in(module) when is_atom(module) do
-    assert_not_compiled!(:definitions_in, module)
+    assert_not_compiled!(__ENV__.function, module, @extra_error_msg_definitions_in)
     {_, bag} = data_tables_for(module)
     bag_lookup_element(bag, :defs, 2)
   end
@@ -970,19 +1031,23 @@ defmodule Module do
   Returns all functions defined in `module`, according
   to its kind.
 
+  This function can only be used on modules that have not yet been compiled.
+  Use the `c:Module.__info__/1` callback to get the public functions and macros in
+  compiled modules.
+
   ## Examples
 
       defmodule Example do
         def version, do: 1
-        Module.definitions_in __MODULE__, :def  #=> [{:version, 0}]
-        Module.definitions_in __MODULE__, :defp #=> []
+        Module.definitions_in(__MODULE__, :def)  #=> [{:version, 0}]
+        Module.definitions_in(__MODULE__, :defp) #=> []
       end
 
   """
   @spec definitions_in(module, def_kind) :: [definition]
   def definitions_in(module, def_kind)
       when is_atom(module) and def_kind in [:def, :defp, :defmacro, :defmacrop] do
-    assert_not_compiled!(:definitions_in, module)
+    assert_not_compiled!(__ENV__.function, module, @extra_error_msg_definitions_in)
     {set, _} = data_tables_for(module)
     :lists.concat(:ets.match(set, {{:def, :"$1"}, def_kind, :_, :_, :_, :_}))
   end
@@ -993,10 +1058,15 @@ defmodule Module do
   An overridable function is lazily defined, allowing a
   developer to customize it. See `Kernel.defoverridable/1` for
   more information and documentation.
+
+  Once a function or a macro is marked as overridable, it will
+  no longer be listed under `definitions_in/1` or return true
+  when given to `defines?/2` until another implementation is
+  given.
   """
   @spec make_overridable(module, [definition]) :: :ok
   def make_overridable(module, tuples) when is_atom(module) and is_list(tuples) do
-    assert_not_compiled!(:make_overridable, module)
+    assert_not_compiled!(__ENV__.function, module)
 
     func = fn
       {function_name, arity} = tuple
@@ -1009,18 +1079,7 @@ defmodule Module do
 
           clause ->
             neighbours = :elixir_locals.yank(tuple, module)
-            overridable_definitions = :elixir_overridable.overridable(module)
-
-            count =
-              case :maps.find(tuple, overridable_definitions) do
-                {:ok, {count, _, _, _}} -> count + 1
-                :error -> 1
-              end
-
-            overridable_definitions =
-              :maps.put(tuple, {count, clause, neighbours, false}, overridable_definitions)
-
-            :elixir_overridable.overridable(module, overridable_definitions)
+            :elixir_overridable.record_overridable(module, tuple, clause, neighbours)
         end
 
       other ->
@@ -1105,7 +1164,7 @@ defmodule Module do
   @spec overridable?(module, definition) :: boolean
   def overridable?(module, {function_name, arity} = tuple)
       when is_atom(function_name) and is_integer(arity) and arity >= 0 and arity <= 255 do
-    :maps.is_key(tuple, :elixir_overridable.overridable(module))
+    :elixir_overridable.overridable_for(module, tuple) != :not_overridable
   end
 
   @doc """
@@ -1114,13 +1173,13 @@ defmodule Module do
   ## Examples
 
       defmodule MyModule do
-        Module.put_attribute __MODULE__, :custom_threshold_for_lib, 10
+        Module.put_attribute(__MODULE__, :custom_threshold_for_lib, 10)
       end
 
   """
   @spec put_attribute(module, atom, term) :: :ok
   def put_attribute(module, key, value) when is_atom(module) and is_atom(key) do
-    put_attribute(module, key, value, nil)
+    __put_attribute__(module, key, value, nil)
   end
 
   @doc """
@@ -1140,21 +1199,32 @@ defmodule Module do
 
       Module.get_attribute(__MODULE__, :foo)
 
+  This function can only be used on modules that have not yet been compiled.
+  Use the `c:Module.__info__/1` callback to get all persisted attributes, or
+  `Code.fetch_docs/1` to retrieve all documentation related attributes in
+  compiled modules.
+
   ## Examples
 
       defmodule Foo do
-        Module.put_attribute __MODULE__, :value, 1
-        Module.get_attribute __MODULE__, :value #=> 1
+        Module.put_attribute(__MODULE__, :value, 1)
+        Module.get_attribute(__MODULE__, :value) #=> 1
 
-        Module.register_attribute __MODULE__, :value, accumulate: true
-        Module.put_attribute __MODULE__, :value, 1
-        Module.get_attribute __MODULE__, :value #=> [1]
+        Module.get_attribute(__MODULE__, :value, :default) #=> 1
+        Module.get_attribute(__MODULE__, :not_found, :default) #=> :default
+
+        Module.register_attribute(__MODULE__, :value, accumulate: true)
+        Module.put_attribute(__MODULE__, :value, 1)
+        Module.get_attribute(__MODULE__, :value) #=> [1]
       end
 
   """
-  @spec get_attribute(module, atom) :: term
-  def get_attribute(module, key) when is_atom(module) and is_atom(key) do
-    get_attribute(module, key, nil)
+  @spec get_attribute(module, atom, term) :: term
+  def get_attribute(module, key, default \\ nil) when is_atom(module) and is_atom(key) do
+    case __get_attribute__(module, key, nil) do
+      nil -> default
+      value -> value
+    end
   end
 
   @doc """
@@ -1165,14 +1235,14 @@ defmodule Module do
   ## Examples
 
       defmodule MyModule do
-        Module.put_attribute __MODULE__, :custom_threshold_for_lib, 10
-        Module.delete_attribute __MODULE__, :custom_threshold_for_lib
+        Module.put_attribute(__MODULE__, :custom_threshold_for_lib, 10)
+        Module.delete_attribute(__MODULE__, :custom_threshold_for_lib)
       end
 
   """
   @spec delete_attribute(module, atom) :: term
   def delete_attribute(module, key) when is_atom(module) and is_atom(key) do
-    assert_not_compiled!(:delete_attribute, module)
+    assert_not_compiled!(__ENV__.function, module)
     {set, bag} = data_tables_for(module)
 
     case :ets.lookup(set, key) do
@@ -1202,7 +1272,7 @@ defmodule Module do
   When registering an attribute, two options can be given:
 
     * `:accumulate` - several calls to the same attribute will
-      accumulate instead of override the previous one. New attributes
+      accumulate instead of overriding the previous one. New attributes
       are always added to the top of the accumulated list.
 
     * `:persist` - the attribute will be persisted in the Erlang
@@ -1213,9 +1283,7 @@ defmodule Module do
   ## Examples
 
       defmodule MyModule do
-        Module.register_attribute __MODULE__,
-          :custom_threshold_for_lib,
-          accumulate: true, persist: false
+        Module.register_attribute(__MODULE__, :custom_threshold_for_lib, accumulate: true)
 
         @custom_threshold_for_lib 10
         @custom_threshold_for_lib 20
@@ -1226,7 +1294,7 @@ defmodule Module do
   @spec register_attribute(module, atom, [{:accumulate, boolean}, {:persist, boolean}]) :: :ok
   def register_attribute(module, attribute, options)
       when is_atom(module) and is_atom(attribute) and is_list(options) do
-    assert_not_compiled!(:register_attribute, module)
+    assert_not_compiled!(__ENV__.function, module)
     {set, bag} = data_tables_for(module)
 
     if Keyword.get(options, :persist) do
@@ -1278,10 +1346,9 @@ defmodule Module do
   end
 
   @doc false
-  # TODO: Remove by 2.0
   @deprecated "Use @doc instead"
   def add_doc(module, line, kind, {name, arity}, signature \\ [], doc) do
-    assert_not_compiled!(:add_doc, module)
+    assert_not_compiled!(__ENV__.function, module)
 
     if kind in [:defp, :defmacrop, :typep] do
       if doc, do: {:error, :private_doc}, else: :ok
@@ -1316,7 +1383,7 @@ defmodule Module do
         "#{kind} #{name}/#{arity} is private, " <>
           "@doc attribute is always discarded for private functions/macros/types"
 
-      :elixir_errors.warn(line, env.file, message)
+      IO.warn(message, Macro.Env.stacktrace(%{env | line: line}))
     end
   end
 
@@ -1416,7 +1483,7 @@ defmodule Module do
 
     pending_callbacks =
       if impls != [] do
-        {non_implemented_callbacks, contexts} = check_impls(behaviours, callbacks, impls)
+        {non_implemented_callbacks, contexts} = check_impls(env, behaviours, callbacks, impls)
         warn_missing_impls(env, non_implemented_callbacks, contexts, all_definitions)
         non_implemented_callbacks
       else
@@ -1434,27 +1501,21 @@ defmodule Module do
           message =
             "@behaviour #{inspect(behaviour)} must be an atom (in module #{inspect(env.module)})"
 
-          :elixir_errors.warn(env.line, env.file, message)
+          IO.warn(message, Macro.Env.stacktrace(env))
           acc
 
         not Code.ensure_compiled?(behaviour) ->
           message =
             "@behaviour #{inspect(behaviour)} does not exist (in module #{inspect(env.module)})"
 
-          unless standard_behaviour?(behaviour) do
-            :elixir_errors.warn(env.line, env.file, message)
-          end
-
+          IO.warn(message, Macro.Env.stacktrace(env))
           acc
 
         not function_exported?(behaviour, :behaviour_info, 1) ->
           message =
             "module #{inspect(behaviour)} is not a behaviour (in module #{inspect(env.module)})"
 
-          unless standard_behaviour?(behaviour) do
-            :elixir_errors.warn(env.line, env.file, message)
-          end
-
+          IO.warn(message, Macro.Env.stacktrace(env))
           acc
 
         true ->
@@ -1472,26 +1533,21 @@ defmodule Module do
     case acc do
       %{^callback => {_kind, conflict, _optional?}} ->
         message =
-          "conflicting behaviours found. #{format_definition(kind, callback)} is required by " <>
-            "#{inspect(conflict)} and #{inspect(behaviour)} (in module #{inspect(env.module)})"
+          if conflict == behaviour do
+            "the behavior #{inspect(conflict)} has been declared twice " <>
+              "(conflict in #{format_definition(kind, callback)} in module #{inspect(env.module)})"
+          else
+            "conflicting behaviours found. #{format_definition(kind, callback)} is required by " <>
+              "#{inspect(conflict)} and #{inspect(behaviour)} (in module #{inspect(env.module)})"
+          end
 
-        :elixir_errors.warn(env.line, env.file, message)
+        IO.warn(message, Macro.Env.stacktrace(env))
 
       %{} ->
         :ok
     end
 
     Map.put(acc, callback, {kind, behaviour, original in optional_callbacks})
-  end
-
-  defp standard_behaviour?(behaviour) do
-    behaviour in [
-      Collectable,
-      Enumerable,
-      Inspect,
-      List.Chars,
-      String.Chars
-    ]
   end
 
   defp check_callbacks(env, callbacks, all_definitions) do
@@ -1502,7 +1558,7 @@ defmodule Module do
             format_callback(callback, kind, behaviour) <>
               " is not implemented (in module #{inspect(env.module)})"
 
-          :elixir_errors.warn(env.line, env.file, message)
+          IO.warn(message, Macro.Env.stacktrace(env))
 
         {_, wrong_kind, _, _} when kind != wrong_kind ->
           message =
@@ -1510,7 +1566,7 @@ defmodule Module do
               " was implemented as \"#{wrong_kind}\" but should have been \"#{kind}\" " <>
               "(in module #{inspect(env.module)})"
 
-          :elixir_errors.warn(env.line, env.file, message)
+          IO.warn(message, Macro.Env.stacktrace(env))
 
         _ ->
           :ok
@@ -1532,7 +1588,7 @@ defmodule Module do
       module.__protocol__(:module) == module
   end
 
-  defp check_impls(behaviours, callbacks, impls) do
+  defp check_impls(env, behaviours, callbacks, impls) do
     acc = {callbacks, %{}}
 
     Enum.reduce(impls, acc, fn {fa, context, defaults, kind, line, file, value}, acc ->
@@ -1545,7 +1601,8 @@ defmodule Module do
           end)
 
         {:error, message} ->
-          :elixir_errors.warn(line, file, format_impl_warning(fa, kind, message))
+          formatted = format_impl_warning(fa, kind, message)
+          IO.warn(formatted, Macro.Env.stacktrace(%{env | line: line, file: file}))
           acc
       end
     end)
@@ -1661,7 +1718,7 @@ defmodule Module do
             "This either means you forgot to add the \"@impl true\" annotation before the " <>
             "definition or that you are accidentally overriding this callback"
 
-        :elixir_errors.warn(:elixir_utils.get_line(meta), env.file, message)
+        IO.warn(message, Macro.Env.stacktrace(%{env | line: :elixir_utils.get_line(meta)}))
       end
     end
 
@@ -1701,8 +1758,13 @@ defmodule Module do
   @doc false
   # Used internally by Kernel's @.
   # This function is private and must be used only internally.
-  def get_attribute(module, key, line) when is_atom(key) do
-    assert_not_compiled!(:get_attribute, module)
+  def __get_attribute__(module, key, line) when is_atom(key) do
+    assert_not_compiled!(
+      {:get_attribute, 2},
+      module,
+      "Use the Module.__info__/1 callback or Code.fetch_docs/1 instead"
+    )
+
     {set, bag} = data_tables_for(module)
 
     case :ets.lookup(set, key) do
@@ -1733,8 +1795,8 @@ defmodule Module do
   @doc false
   # Used internally by Kernel's @.
   # This function is private and must be used only internally.
-  def put_attribute(module, key, value, line) when is_atom(key) do
-    assert_not_compiled!(:put_attribute, module)
+  def __put_attribute__(module, key, value, line) when is_atom(key) do
+    assert_not_compiled!(__ENV__.function, module)
     {set, bag} = data_tables_for(module)
     value = preprocess_attribute(key, value)
     put_attribute(module, key, value, line, set, bag)
@@ -1758,9 +1820,8 @@ defmodule Module do
     end
   end
 
-  # This is the same list of attributes as in :elixir_module.
-  # We do not insert into the :attributes key in the bag table
-  # because those attributes are deleted on every definition.
+  # Optimize some attributes by avoiding writing to the attributes key
+  # in the bag table since we handle them internally.
   defp put_attribute(module, key, value, line, set, _bag)
        when key in [:doc, :typedoc, :moduledoc, :impl, :deprecated] do
     try do
@@ -1777,6 +1838,18 @@ defmodule Module do
     end
 
     :ets.insert(set, {key, value, line})
+  end
+
+  defp put_attribute(_module, :on_load, value, line, set, bag) do
+    try do
+      :ets.lookup_element(set, :on_load, 3)
+    catch
+      :error, :badarg ->
+        :ets.insert(set, {:on_load, value, line})
+        :ets.insert(bag, {:attributes, :on_load})
+    else
+      _ -> raise ArgumentError, "the @on_load attribute can only be set once per module"
+    end
   end
 
   defp put_attribute(_module, key, value, line, set, bag) do
@@ -1801,7 +1874,7 @@ defmodule Module do
 
   defp preprocess_attribute(key, value) when key in [:moduledoc, :typedoc, :doc] do
     case value do
-      {line, doc} when is_integer(line) and (is_binary(doc) or is_boolean(doc) or is_nil(doc)) ->
+      {line, doc} when is_integer(line) and (is_binary(doc) or doc == false or is_nil(doc)) ->
         value
 
       {line, [{key, _} | _]} when is_integer(line) and is_atom(key) ->
@@ -1809,13 +1882,13 @@ defmodule Module do
 
       {line, doc} when is_integer(line) ->
         raise ArgumentError,
-              "@#{key} is a built-in module attribute for documentation. It should be " <>
-                "a string, boolean, keyword list, or nil, got: #{inspect(doc)}"
+              "@#{key} is a built-in module attribute for documentation. It should be either " <>
+                "false, nil, a string, or a keyword list, got: #{inspect(doc)}"
 
       _other ->
         raise ArgumentError,
               "@#{key} is a built-in module attribute for documentation. When set dynamically, " <>
-                "it should be {line, doc} (where \"doc\" is a string, boolean, keyword list, or nil), " <>
+                "it should be {line, doc} (where \"doc\" is either false, nil, a string, or a keyword list), " <>
                 "got: #{inspect(value)}"
     end
   end
@@ -1864,9 +1937,9 @@ defmodule Module do
     do: {atom, :__on_definition__}
 
   defp preprocess_attribute(key, _value)
-       when key in [:type, :typep, :export_type, :opaque, :spec, :callback, :macrocallback] do
+       when key in [:type, :typep, :opaque, :spec, :callback, :macrocallback] do
     raise ArgumentError,
-          "attributes type, typep, export_type, opaque, spec, callback, and macrocallback " <>
+          "attributes type, typep, opaque, spec, callback, and macrocallback " <>
             "must be set directly via the @ notation"
   end
 
@@ -1928,6 +2001,18 @@ defmodule Module do
             "representing the replacement for the deprecated entity, got: #{inspect(value)}"
   end
 
+  defp validate_doc_meta(:delegate_to, value) do
+    case value do
+      {m, f, a} when is_atom(m) and is_atom(f) and is_integer(a) and a >= 0 ->
+        :ok
+
+      _ ->
+        raise ArgumentError,
+              ":delegate_to is a built-in documentation metadata key. It should be a three-element " <>
+                "tuple in the form of {module, function, arity}, got: #{inspect(value)}"
+    end
+  end
+
   defp validate_doc_meta(_, _), do: :ok
 
   defp get_doc_info(table, env) do
@@ -1950,9 +2035,19 @@ defmodule Module do
     :error, :badarg -> []
   end
 
-  defp assert_not_compiled!(fun, module) do
+  defp assert_not_compiled!(function_name_arity, module, extra_msg \\ "") do
     open?(module) ||
       raise ArgumentError,
-            "could not call #{fun} with argument #{inspect(module)} because the module is already compiled"
+            assert_not_compiled_message(function_name_arity, module, extra_msg)
+  end
+
+  defp assert_not_compiled_message({function_name, arity}, module, extra_msg) do
+    mfa = "Module.#{function_name}/#{arity}"
+
+    "could not call #{mfa} because the module #{inspect(module)} is already compiled" <>
+      case extra_msg do
+        "" -> ""
+        _ -> ". " <> extra_msg
+      end
   end
 end

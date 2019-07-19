@@ -10,15 +10,14 @@ defmodule ExUnit.CaptureIO do
         import ExUnit.CaptureIO
 
         test "example" do
-          assert capture_io(fn ->
-            IO.puts "a"
-          end) == "a\n"
+          assert capture_io(fn -> IO.puts("a") end) == "a\n"
         end
 
         test "checking the return value and the IO output" do
           fun = fn ->
-            assert Enum.each(["some", "example"], &(IO.puts &1)) == :ok
+            assert Enum.each(["some", "example"], &IO.puts(&1)) == :ok
           end
+
           assert capture_io(fun) == "some\nexample\n"
           # tip: or use only: "capture_io(fun)" to silence the IO output (so only assert the return value)
         end
@@ -32,18 +31,18 @@ defmodule ExUnit.CaptureIO do
   Returns the binary which is the captured output.
 
   By default, `capture_io` replaces the `group_leader` (`:stdio`)
-  for the current process. However, the capturing of any other
-  named device, such as `:stderr`, is also possible globally by
-  giving the registered device name explicitly as an argument.
+  for the current process. Capturing the group leader is done per
+  process and therefore can be done concurrently.
 
-  Note that when capturing something other than `:stdio`,
-  the test should run with async false.
+  However, the capturing of any other named device, such as `:stderr`,
+  happens globally and requires `async: false`.
 
   When capturing `:stdio`, if the `:capture_prompt` option is `false`,
   prompts (specified as arguments to `IO.get*` functions) are not
   captured.
 
-  A developer can set a string as an input. The default input is `:eof`.
+  A developer can set a string as an input. The default input
+  is an empty string (which is equivalent to `:eof`).
 
   ## Examples
 
@@ -54,14 +53,14 @@ defmodule ExUnit.CaptureIO do
       true
 
       iex> capture_io("this is input", fn ->
-      ...>   input = IO.gets ">"
-      ...>   IO.write input
-      ...> end) == ">this is input"
+      ...>   input = IO.gets("> ")
+      ...>   IO.write(input)
+      ...> end) == "> this is input"
       true
 
       iex> capture_io([input: "this is input", capture_prompt: false], fn ->
-      ...>   input = IO.gets ">"
-      ...>   IO.write input
+      ...>   input = IO.gets("> ")
+      ...>   IO.write(input)
       ...> end) == "this is input"
       true
 
@@ -73,34 +72,36 @@ defmodule ExUnit.CaptureIO do
   and use `ExUnit.Assertions.assert_received/2` to match on the results:
 
       capture_io([input: "this is input", capture_prompt: false], fn ->
-        send self(), {:block_result, 42}
+        send(self(), {:block_result, 42})
         # ...
       end)
 
       assert_received {:block_result, 42}
 
   """
-  def capture_io(fun) do
-    do_capture_io(:standard_io, [], fun)
+  def capture_io(fun) when is_function(fun, 0) do
+    capture_io(:stdio, [], fun)
   end
 
-  def capture_io(device, fun) when is_atom(device) do
+  def capture_io(device, fun) when is_atom(device) and is_function(fun, 0) do
     capture_io(device, [], fun)
   end
 
-  def capture_io(input, fun) when is_binary(input) do
-    capture_io(:standard_io, [input: input], fun)
+  def capture_io(input, fun) when is_binary(input) and is_function(fun, 0) do
+    capture_io(:stdio, [input: input], fun)
   end
 
-  def capture_io(options, fun) when is_list(options) do
-    capture_io(:standard_io, options, fun)
+  def capture_io(options, fun) when is_list(options) and is_function(fun, 0) do
+    capture_io(:stdio, options, fun)
   end
 
-  def capture_io(device, input, fun) when is_binary(input) do
+  def capture_io(device, input, fun)
+      when is_atom(device) and is_binary(input) and is_function(fun, 0) do
     capture_io(device, [input: input], fun)
   end
 
-  def capture_io(device, options, fun) when is_list(options) do
+  def capture_io(device, options, fun)
+      when is_atom(device) and is_list(options) and is_function(fun, 0) do
     do_capture_io(map_dev(device), options, fun)
   end
 
@@ -154,8 +155,8 @@ defmodule ExUnit.CaptureIO do
         :erlang.raise(kind, reason, __STACKTRACE__)
     else
       _ ->
-        {:ok, output} = StringIO.close(string_io)
-        elem(output, 1)
+        {:ok, {_input, output}} = StringIO.close(string_io)
+        output
     end
   end
 end

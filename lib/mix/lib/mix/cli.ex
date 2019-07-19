@@ -29,7 +29,7 @@ defmodule Mix.CLI do
     load_mix_exs()
     {task, args} = get_task(args)
     ensure_hex(task)
-    change_env(task)
+    maybe_change_env_and_target(task)
     run_task(task, args)
   end
 
@@ -45,7 +45,7 @@ defmodule Mix.CLI do
     task = "mix #{Mix.Project.config()[:default_task]}"
 
     Mix.shell().error(
-      "** (Mix) Mix only recognizes the flags --help and --version.\n" <>
+      "** (Mix) Mix only recognizes the options --help and --version.\n" <>
         "You may have wanted to invoke a task instead, such as #{inspect(task)}"
     )
 
@@ -104,28 +104,41 @@ defmodule Mix.CLI do
     end
   end
 
-  defp change_env(task) do
-    if env = preferred_cli_env(task) do
-      Mix.env(env)
+  defp maybe_change_env_and_target(task) do
+    task = String.to_atom(task)
+    config = Mix.Project.config()
 
-      if project = Mix.Project.pop() do
-        %{name: name, file: file} = project
-        Mix.Project.push(name, file)
-      end
+    env = preferred_cli_env(task, config)
+    target = preferred_cli_target(task, config)
+    env && Mix.env(env)
+    target && Mix.target(target)
+
+    if env || target do
+      reload_project()
     end
   end
 
-  defp preferred_cli_env(task) do
+  defp reload_project() do
+    if project = Mix.Project.pop() do
+      %{name: name, file: file} = project
+      Mix.Project.push(name, file)
+    end
+  end
+
+  defp preferred_cli_env(task, config) do
     if System.get_env("MIX_ENV") do
       nil
     else
-      task = String.to_atom(task)
-      Mix.Project.config()[:preferred_cli_env][task] || Mix.Task.preferred_cli_env(task)
+      config[:preferred_cli_env][task] || Mix.Task.preferred_cli_env(task)
     end
   end
 
+  defp preferred_cli_target(task, config) do
+    config[:preferred_cli_target][task]
+  end
+
   defp load_dot_config do
-    path = Path.join(Mix.Utils.mix_home(), "config.exs")
+    path = Path.join(Mix.Utils.mix_config(), "config.exs")
 
     if File.regular?(path) do
       Mix.Task.run("loadconfig", [path])
@@ -149,7 +162,7 @@ defmodule Mix.CLI do
         mix help        - Lists all available tasks
         mix help TASK   - Prints documentation for a given task
 
-    The --help and --version flags can be given instead of a task for usage and versioning information.
+    The --help and --version options can be given instead of a task for usage and versioning information.
     """)
   end
 

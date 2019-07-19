@@ -12,7 +12,7 @@ defmodule Path do
   that require it (like `wildcard/2` and `expand/1`).
   """
 
-  @type t :: :unicode.chardata()
+  @type t :: IO.chardata()
 
   @doc """
   Converts the given path to an absolute one. Unlike
@@ -30,15 +30,16 @@ defmodule Path do
 
   ### Windows
 
-      Path.absname("foo").
+      Path.absname("foo")
       #=> "D:/usr/local/foo"
-      Path.absname("../x").
+
+      Path.absname("../x")
       #=> "D:/usr/local/../x"
 
   """
   @spec absname(t) :: binary
   def absname(path) do
-    absname(path, System.cwd!())
+    absname(path, File.cwd!())
   end
 
   @doc """
@@ -150,7 +151,7 @@ defmodule Path do
   """
   @spec expand(t) :: binary
   def expand(path) do
-    expand_dot(absname(expand_home(path), System.cwd!()))
+    expand_dot(absname(expand_home(path), File.cwd!()))
   end
 
   @doc """
@@ -171,14 +172,15 @@ defmodule Path do
       #=> "/quux/baz/foo/bar"
 
       Path.expand("foo/bar/../bar", "/baz")
-      "/baz/foo/bar"
+      #=> "/baz/foo/bar"
+
       Path.expand("/foo/bar/../bar", "/baz")
-      "/foo/bar"
+      #=> "/foo/bar"
 
   """
   @spec expand(t, t) :: binary
   def expand(path, relative_to) do
-    expand_dot(absname(absname(expand_home(path), expand_home(relative_to)), System.cwd!()))
+    expand_dot(absname(absname(expand_home(path), expand_home(relative_to)), File.cwd!()))
   end
 
   @doc """
@@ -399,6 +401,9 @@ defmodule Path do
       iex> Path.dirname("/foo/bar/")
       "/foo/bar"
 
+      iex> Path.dirname("bar.ex")
+      "."
+
   """
   @spec dirname(t) :: binary
   def dirname(path) do
@@ -616,6 +621,10 @@ defmodule Path do
   exactly the same character in the same position will match. Note
   that matching is case-sensitive: `"a"` will not match `"A"`.
 
+  Directory separators must always be written as `/`, even on Windows.
+  You may call `Path.expand/1` to normalize the path before invoking
+  this function.
+
   By default, the patterns `*` and `?` do not match files starting
   with a dot `.`. See the `:match_dot` option in the "Options" section
   below.
@@ -678,14 +687,9 @@ defmodule Path do
 
   defp resolve_home(rest) do
     case {rest, major_os_type()} do
-      {"\\" <> _, :win32} ->
-        System.user_home!() <> rest
-
-      {"/" <> _, _} ->
-        System.user_home!() <> rest
-
-      _ ->
-        rest
+      {"\\" <> _, :win32} -> System.user_home!() <> rest
+      {"/" <> _, _} -> System.user_home!() <> rest
+      _ -> "~" <> rest
     end
   end
 

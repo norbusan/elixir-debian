@@ -71,6 +71,14 @@ defmodule Mix.Tasks.NewTest do
     end)
   end
 
+  test "new with --module uses the module name also for naming the files in lib and test" do
+    in_tmp("new_with_module", fn ->
+      Mix.Tasks.New.run(["hello_world", "--module", "MyTestModule"])
+      assert_file("hello_world/lib/my_test_module.ex", ~r/defmodule MyTestModule do/)
+      assert_file("hello_world/test/my_test_module_test.exs", ~r/defmodule MyTestModuleTest do/)
+    end)
+  end
+
   test "new with --app" do
     in_tmp("new app", fn ->
       Mix.Tasks.New.run(["HELLO_WORLD", "--app", "hello_world"])

@@ -91,16 +91,24 @@ defmodule Kernel.QuoteTest do
     assert nested_quote_in_macro() == 1
   end
 
-  Enum.each([foo: 1, bar: 2, baz: 3], fn {k, v} ->
-    def unquote(k)(arg) do
-      unquote(v) + arg
+  defmodule Dyn do
+    for {k, v} <- [foo: 1, bar: 2, baz: 3] do
+      # Local call unquote
+      def unquote(k)(), do: unquote(v)
+
+      # Remote call unquote
+      def unquote(k)(arg), do: __MODULE__.unquote(k)() + arg
     end
-  end)
+  end
 
   test "dynamic definition with unquote" do
-    assert foo(1) == 2
-    assert bar(2) == 4
-    assert baz(3) == 6
+    assert Dyn.foo() == 1
+    assert Dyn.bar() == 2
+    assert Dyn.baz() == 3
+
+    assert Dyn.foo(1) == 2
+    assert Dyn.bar(2) == 4
+    assert Dyn.baz(3) == 6
   end
 
   test "splice on root" do
@@ -175,7 +183,8 @@ defmodule Kernel.QuoteTest do
       {:foo, [], Kernel.QuoteTest}
     ]
 
-    assert quote(bind_quoted: [foo: 1 + 2], do: foo) == {:__block__, [], args}
+    quoted = quote(bind_quoted: [foo: 1 + 2], do: foo)
+    assert quoted == {:__block__, [], args}
   end
 
   test "literals" do
@@ -286,7 +295,7 @@ defmodule Kernel.QuoteTest.ErrorsTest do
       RuntimeError ->
         mod = Kernel.QuoteTest.ErrorsTest
         file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
-        assert [{^mod, :will_raise, 2, [file: ^file, line: 266]} | _] = __STACKTRACE__
+        assert [{^mod, :will_raise, 2, [file: ^file, line: 275]} | _] = __STACKTRACE__
     else
       _ -> flunk("expected failure")
     end
@@ -299,7 +308,7 @@ defmodule Kernel.QuoteTest.ErrorsTest do
       RuntimeError ->
         mod = Kernel.QuoteTest.ErrorsTest
         file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
-        assert [{^mod, _, _, [file: ^file, line: 297]} | _] = __STACKTRACE__
+        assert [{^mod, _, _, [file: ^file, line: 306]} | _] = __STACKTRACE__
     else
       _ -> flunk("expected failure")
     end
@@ -374,7 +383,11 @@ defmodule Kernel.QuoteTest.VarHygieneTest do
     read_interference()
   end
 
-  test "nested" do
+  test "hat" do
+    assert hat() == 1
+  end
+
+  test "nested macro" do
     assert (nested 1 do
               nested 2 do
                 _ = :ok
@@ -382,8 +395,48 @@ defmodule Kernel.QuoteTest.VarHygieneTest do
             end) == 1
   end
 
-  test "hat" do
-    assert hat() == 1
+  test "nested quoted" do
+    defmodule NestedQuote do
+      defmacro __using__(_) do
+        quote unquote: false do
+          arg = quote(do: arg)
+
+          def test(arg) do
+            unquote(arg)
+          end
+        end
+      end
+    end
+
+    defmodule UseNestedQuote do
+      use NestedQuote
+    end
+
+    assert UseNestedQuote.test("foo") == "foo"
+  end
+
+  test "nested bind quoted" do
+    defmodule NestedBindQuoted do
+      defmacrop macro(arg) do
+        quote bind_quoted: [arg: arg] do
+          quote bind_quoted: [arg: arg], do: String.duplicate(arg, 2)
+        end
+      end
+
+      defmacro __using__(_) do
+        quote do
+          def test do
+            unquote(macro("foo"))
+          end
+        end
+      end
+    end
+
+    defmodule UseNestedBindQuoted do
+      use NestedBindQuoted
+    end
+
+    assert UseNestedBindQuoted.test() == "foofoo"
   end
 end
 

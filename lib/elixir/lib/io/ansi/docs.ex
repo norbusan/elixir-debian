@@ -56,7 +56,7 @@ defmodule IO.ANSI.Docs do
   end
 
   @doc """
-  Prints documentation metadata (only `since` and `deprecated` for now).
+  Prints documentation metadata (only `delegate_to`, `deprecated`, `guard`, and `since` for now).
 
   See `default_options/0` for docs on the supported options.
   """
@@ -66,7 +66,7 @@ defmodule IO.ANSI.Docs do
     print_each_metadata(metadata, options) && IO.write("\n")
   end
 
-  @metadata_filter [:deprecated, :since]
+  @metadata_filter [:deprecated, :guard, :since]
 
   defp print_each_metadata(metadata, options) do
     Enum.reduce(metadata, false, fn
@@ -74,6 +74,13 @@ defmodule IO.ANSI.Docs do
         label = metadata_label(key, options)
         indent = String.duplicate(" ", length_without_escape(label, 0) + 1)
         write_with_wrap([label | String.split(value, @spaces)], options[:width], indent, true)
+
+      {key, value}, _printed when is_boolean(value) and key in @metadata_filter ->
+        IO.puts([metadata_label(key, options), ' ', to_string(value)])
+
+      {:delegate_to, {m, f, a}}, _printed ->
+        label = metadata_label(:delegate_to, options)
+        IO.puts([label, ' ', Exception.format_mfa(m, f, a)])
 
       _metadata, printed ->
         printed
@@ -91,7 +98,7 @@ defmodule IO.ANSI.Docs do
   @doc """
   Prints the documentation body.
 
-  In addition to the printing string, takes a set of options
+  In addition to the printing string, takes a set of `options`
   defined in `default_options/0`.
   """
   @spec print(String.t(), keyword) :: :ok
@@ -517,22 +524,20 @@ defmodule IO.ANSI.Docs do
   end
 
   defp escape_underlines_in_link(text) do
-    ~r{https?\S*}
-    |> Regex.recompile!()
-    |> Regex.replace(text, &String.replace(&1, "_", "\\_"))
+    # Regular expression adapted from https://tools.ietf.org/html/rfc3986#appendix-B
+    Regex.replace(~r{[a-z][a-z0-9\+\-\.]*://\S*}i, text, &String.replace(&1, "_", "\\_"))
   end
 
   defp remove_square_brackets_in_link(text) do
-    ~r{\[(.*?)\]\((.*?)\)}
-    |> Regex.recompile!()
-    |> Regex.replace(text, "\\1 (\\2)")
+    Regex.replace(~r{\[([^\]]*?)\]\((.*?)\)}, text, "\\1 (\\2)")
   end
 
   # We have four entries: **, *, _ and `.
   #
   # The first three behave the same while the last one is simpler
-  # when it comes to delimiters. But, since the first has two
-  # characters, we need to handle 3 cases:
+  # when it comes to delimiters as it ignores spaces and escape
+  # characters. But, since the first has two characters, we need to
+  # handle 3 cases:
   #
   # 1. **
   # 2. _ and *
@@ -594,8 +599,7 @@ defmodule IO.ANSI.Docs do
   end
 
   # An escape is not valid inside `
-  defp handle_inline(<<?\\, mark, rest::binary>>, limit, buffer, acc, options)
-       when not (mark == limit and mark == ?`) do
+  defp handle_inline(<<?\\, mark, rest::binary>>, limit, buffer, acc, options) when limit != ?` do
     handle_inline(rest, limit, [mark | buffer], acc, options)
   end
 

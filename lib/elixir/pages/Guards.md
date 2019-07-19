@@ -6,61 +6,19 @@ Not all expressions are allowed in guard clauses, but only a handful of them. Th
 
 ## List of allowed expressions
 
-For reference, the following is a comprehensive list of all expressions allowed in guards:
+You can find the built-in list of guards [in the `Kernel` module](Kernel.html#guards). Here is an overview:
 
-  * comparison operators ([`==`](`Kernel.==/2`), [`!=`](`Kernel.!=/2`), [`===`](`Kernel.===/2`), [`!==`](`Kernel.!==/2`),
-    [`>`](`Kernel.>/2`), [`>=`](`Kernel.>=/2`), [`<`](`Kernel.</2`), [`<=`](`Kernel.<=/2`))
-  * strictly boolean operators ([`and`](`Kernel.and/2`), [`or`](`Kernel.or/2`), [`not`](`Kernel.not/1`))
-    - __NOTE__: [`&&`](`Kernel.&&/2`), [`||`](`Kernel.||/2`), and [`!`](`Kernel.!/1`) sibling operators are not allowed as they're not
-    *strictly* boolean - meaning they don't require both sides to be booleans
-  * arithmetic binary operators ([`+`](`Kernel.+/2`), [`-`](`Kernel.-/2`), [`*`](`Kernel.*/2`), [`/`](`Kernel.//2`))
-  * arithmetic unary operators ([`+`](`Kernel.+/1`), [`-`](`Kernel.-/1`))
-  * binary concatenation operator ([`<>`](`Kernel.<>/2`))
-  * [`in`](`Kernel.in/2`) and [`not in`](`Kernel.in/2`) operators (as long as the right-hand side is a list or a range)
-  * the following "type-check" functions (all documented in the `Kernel` module):
-    * `is_atom/1`
-    * `is_binary/1`
-    * `is_bitstring/1`
-    * `is_boolean/1`
-    * `is_float/1`
-    * `is_function/1`
-    * `is_function/2`
-    * `is_integer/1`
-    * `is_list/1`
-    * `is_map/1`
-    * `is_nil/1`
-    * `is_number/1`
-    * `is_pid/1`
-    * `is_port/1`
-    * `is_reference/1`
-    * `is_tuple/1`
-  * the following guard-friendly functions (all documented in the `Kernel` module):
-    * `abs/1`
-    * `binary_part/3`
-    * `bit_size/1`
-    * `byte_size/1`
-    * `div/2`
-    * `elem/2`
-    * `hd/1`
-    * `length/1`
-    * `map_size/1`
-    * `node/0`
-    * `node/1`
-    * `rem/2`
-    * `round/1`
-    * `self/0`
-    * `tl/1`
-    * `trunc/1`
-    * `tuple_size/1`
-  * the following handful of Erlang bitwise operations, if imported from the `Bitwise` module:
-    * [`band/2`](`Bitwise.band/2`) or the [`&&&`](`Bitwise.&&&/2`) operator
-    * [`bor/2`](`Bitwise.bor/2`) or the [`|||`](`Bitwise.|||/2`) operator
-    * [`bnot/1`](`Bitwise.bnot/1`) or the [`~~~`](`Bitwise.~~~/1`) operator
-    * [`bsl/2`](`Bitwise.bsl/2`) or the [`<<<`](`Bitwise.<<</2`) operator
-    * [`bsr/2`](`Bitwise.bsr/2`) or the [`>>>`](`Bitwise.>>>/2`) operator
-    * [`bxor/2`](`Bitwise.bxor/2`) or the [`^^^`](`Bitwise.^^^/2`) operator
+  * comparison operators ([`==`](`==/2`), [`!=`](`!=/2`), [`===`](`===/2`), [`!==`](`!==/2`),
+    [`>`](`>/2`), [`>=`](`>=/2`), [`<`](`</2`), [`<=`](`<=/2`))
+  * strictly boolean operators ([`and`](`and/2`), [`or`](`or/2`), [`not`](`not/1`)). Note [`&&`](`&&/2`), [`||`](`||/2`), and [`!`](`!/1`) sibling operators are **not allowed** as they're not *strictly* boolean - meaning they don't require arguments to be booleans
+  * arithmetic unary and binary operators ([`+`](`+/1`), [`-`](`-/1`), [`+`](`+/2`), [`-`](`-/2`), [`*`](`*/2`), [`/`](`//2`))
+  * [`in`](`in/2`) and [`not in`](`in/2`) operators (as long as the right-hand side is a list or a range)
+  * "type-check" functions ([`is_list/1`](`is_list/1`), [`is_number/1`](`is_number/1`), etc.)
+  * functions that work on built-in datatypes ([`abs/1`](`abs/1`), [`map_size/1`](`map_size/1`), etc.)
 
-Macros constructed out of any combination of the above guards are also valid guards - for example, `Integer.is_even/1`. See the section "Defining custom guard expressions" below.
+The module `Bitwise` also includes a handful of [Erlang bitwise operations as guards](Bitwise.html#guards).
+
+Macros constructed out of any combination of the above guards are also valid guards - for example, `Integer.is_even/1`. For more information, see the "Defining custom guard expressions" section shown below.
 
 ## Why guards
 
@@ -86,7 +44,7 @@ In the example above, we show how guards can be used in function clauses. There 
   def foo(term) when is_float(term), do: round(term)
   ```
 
-  * [`case`](`Kernel.SpecialForms.case/2`) expressions:
+  * [`case`](`case/2`) expressions:
 
   ```elixir
   case x do
@@ -96,7 +54,7 @@ In the example above, we show how guards can be used in function clauses. There 
   end
   ```
 
-  * anonymous functions ([`fn`](`Kernel.SpecialForms.fn/1`)s):
+  * anonymous functions ([`fn`](`fn/1`)s):
 
   ```elixir
   larger_than_two? = fn
@@ -105,10 +63,10 @@ In the example above, we show how guards can be used in function clauses. There 
   end
   ```
 
-  * custom guards can also be defined with `Kernel.defguard/1` and `Kernel.defguardp/1`.
+  * custom guards can also be defined with `defguard/1` and `defguardp/1`.
     A custom guard is always defined based on existing guards.
 
-Other constructs are [`for`](`Kernel.SpecialForms.for/1`), [`with`](`Kernel.SpecialForms.with/1`), [`try/rescue/catch/else`](`Kernel.SpecialForms.try/1`), and the `Kernel.match?/2`.
+Other constructs are [`for`](`for/1`), [`with`](`with/1`), [`try/rescue/catch/else`](`try/1`), and the `match?/2`.
 
 ## Failing guards
 
@@ -148,15 +106,11 @@ def my_function(number) when is_integer(number) and rem(number, 2) == 0 do
 end
 ```
 
-This would be repetitive to write every time we need this check, so, as mentioned at the beginning of this section, we can abstract this away using a macro. Remember that defining a function that performs this check wouldn't work because we can't use custom functions in guards. Our macro would look like this:
+This would be repetitive to write every time we need this check, so, as mentioned at the beginning of this section, we can abstract this away using a macro. Remember that defining a function that performs this check wouldn't work because we can't use custom functions in guards. Use `defguard` and `defguardp` to create guard macros. Here's an example:
 
 ```elixir
 defmodule MyInteger do
-  defmacro is_even(number) do
-    quote do
-      is_integer(unquote(number)) and rem(unquote(number), 2) == 0
-    end
-  end
+  defguard is_even(value) when is_integer(value) and rem(value, 2) == 0
 end
 ```
 
@@ -170,13 +124,7 @@ def my_function(number) when is_even(number) do
 end
 ```
 
-While it's possible to create custom guards with macros, it's recommended to define them using `defguard` and `defguardp` which perform additional compile-time checks. Here's an example:
-
-```elixir
-defmodule MyInteger do
-  defguard is_even(value) when is_integer(value) and rem(value, 2) == 0
-end
-```
+While it's possible to create custom guards with macros, it's recommended to define them using `defguard` and `defguardp` which perform additional compile-time checks.
 
 ## Multiple guards in the same clause
 
@@ -204,32 +152,34 @@ def foo(_other) do
 end
 ```
 
-For most cases, the two forms are exactly the same. However, there exists a subtle difference in the case of failing guards, as discussed in the section above.
-In case of a boolean expression guard, a failed element means the whole guard fails. In case of multiple guards it means the next one will be evaluated.
-The difference can be highlighted with an example:
+If each guard expression always returns a boolean, the two forms are equivalent. However, recall that if any function call in a guard raises an exception, the entire guard fails. So this function will not detect empty tuples:
 
 ```elixir
-def multiguard(value)
-    when map_size(value) < 1
-    when tuple_size(value) < 1 do
-  :guard_passed
-end
-def multiguard(_value) do
-  :guard_failed
+defmodule Check do
+  # If given a tuple, map_size/1 will raise, and tuple_size/1 will not be evaluated
+  def empty?(val) when map_size(val) == 0 or tuple_size(val) == 0, do: true
+  def empty?(_val), do: false
 end
 
-def boolean(value) when map_size(value) < 1 or tuple_size(value) < 1 do
-  :guard_passed
-end
-def boolean(value) do
-  :guard_failed
-end
-
-multiguard(%{}) #=> :guard_passed
-multiguard({})  #=> :guard_passed
-
-boolean(%{}) #=> :guard_passed
-boolean({})  #=> :guard_failed
+Check.empty?(%{}) #=> true
+Check.empty?({}) #=> false # true was expected!
 ```
 
-For cases where guards do not rely on the failing guard behavior the two forms are exactly the same semantically but there are cases where multiple guard clauses may be more aesthetically pleasing.
+This could be corrected by ensuring that no exception is raised, either via type checks like `is_map(val) and map_size(val) == 0`, or by checking equality instead, like `val == %{}`.
+
+It could also be corrected by using multiple guards, so that if an exception causes one guard to fail, the next one is evaluated.
+
+```elixir
+defmodule Check do
+  # If given a tuple, map_size/1 will raise, and the second guard will be evaluated
+  def empty?(val)
+      when map_size(val) == 0
+      when tuple_size(val) == 0,
+      do: true
+
+  def empty?(_val), do: false
+end
+
+Check.empty?(%{}) #=> true
+Check.empty?({}) #=> true
+```

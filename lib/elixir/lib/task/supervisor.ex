@@ -78,7 +78,7 @@ defmodule Task.Supervisor do
   give them directly to `start_child` and `async`.
   """
   @spec start_link([option]) :: Supervisor.on_start()
-  # TODO: Deprecate passing restart and shutdown here on Elixir v1.8.
+  # TODO: Deprecate passing restart and shutdown here on Elixir v1.10.
   def start_link(options \\ []) do
     {restart, options} = Keyword.pop(options, :restart, :temporary)
     {shutdown, options} = Keyword.pop(options, :shutdown, 5000)
@@ -97,9 +97,12 @@ defmodule Task.Supervisor do
   @doc """
   Starts a task that can be awaited on.
 
-  The `supervisor` must be a reference as defined in `Task.Supervisor`.
+  The `supervisor` must be a reference as defined in `Supervisor`.
   The task will still be linked to the caller, see `Task.async/3` for
   more information and `async_nolink/2` for a non-linked variant.
+
+  Raises an error if `supervisor` has reached the maximum number of
+  children.
 
   ## Options
 
@@ -115,9 +118,12 @@ defmodule Task.Supervisor do
   @doc """
   Starts a task that can be awaited on.
 
-  The `supervisor` must be a reference as defined in `Task.Supervisor`.
+  The `supervisor` must be a reference as defined in `Supervisor`.
   The task will still be linked to the caller, see `Task.async/3` for
   more information and `async_nolink/2` for a non-linked variant.
+
+  Raises an error if `supervisor` has reached the maximum number of
+  children.
 
   ## Options
 
@@ -133,9 +139,12 @@ defmodule Task.Supervisor do
   @doc """
   Starts a task that can be awaited on.
 
-  The `supervisor` must be a reference as defined in `Task.Supervisor`.
+  The `supervisor` must be a reference as defined in `Supervisor`.
   The task won't be linked to the caller, see `Task.async/3` for
   more information.
+
+  Raises an error if `supervisor` has reached the maximum number of
+  children.
 
   ## Options
 
@@ -156,6 +165,53 @@ defmodule Task.Supervisor do
   terminates, the caller's process will always receive a `:DOWN` message
   with the same `ref` value that is held by the task struct. If the task
   terminates normally, the reason in the `:DOWN` message will be `:normal`.
+
+  ## Examples
+
+  Typically, you use `async_nolink/3` when there is a reasonable expectation that
+  the task may fail, and you don't want it to take down the caller. Let's see an
+  example where a `GenServer` is meant to run a single task and track its status:
+
+      defmodule MyApp.Server do
+        use GenServer
+
+        # ...
+
+        def start_task do
+          GenServer.call(__MODULE__, :start_task)
+        end
+
+        # In this case the task is already running, so we just return :ok.
+        def handle_call(:start_task, _from, %{ref: ref} = state) when is_reference(ref) do
+          {:reply, :ok, state}
+        end
+
+        # The task is not running yet, so let's start it.
+        def handle_call(:start_task, _from, %{ref: nil} = state) do
+          task =
+            Task.Supervisor.async_nolink(MyApp.TaskSupervisor, fn ->
+              ...
+            end)
+
+          # We return :ok and the server will continue running
+          {:reply, :ok, %{state | ref: task.ref}}
+        end
+
+        # The task completed successfully
+        def handle_info({ref, answer}, %{ref: ref} = state) do
+          # We don't care about the DOWN message now, so let's demonitor and flush it
+          Process.demonitor(ref, [:flush])
+          # Do something with the result and then return
+          {:noreply, %{state | ref: nil}}
+        end
+
+        # The task failed
+        def handle_info({:DOWN, ref, :process, _pid, _reason}, %{ref: ref} = state) do
+          # Log and possibly restart the task...
+          {:noreply, %{state | ref: nil}}
+        end
+      end
+
   """
   @spec async_nolink(Supervisor.supervisor(), (() -> any), Keyword.t()) :: Task.t()
   def async_nolink(supervisor, fun, options \\ []) do
@@ -165,9 +221,12 @@ defmodule Task.Supervisor do
   @doc """
   Starts a task that can be awaited on.
 
-  The `supervisor` must be a reference as defined in `Task.Supervisor`.
+  The `supervisor` must be a reference as defined in `Supervisor`.
   The task won't be linked to the caller, see `Task.async/3` for
   more information.
+
+  Raises an error if `supervisor` has reached the maximum number of
+  children.
 
   Note this function requires the task supervisor to have `:temporary`
   as the `:restart` option (the default), as `async_nolink/4` keeps a
@@ -179,44 +238,47 @@ defmodule Task.Supervisor do
   end
 
   @doc """
-  Returns a stream that runs the given `module`, `function`, and `args`
-  concurrently on each item in `enumerable`.
+  Returns a stream where the given function (`module` and `function`)
+  is mapped concurrently on each element in `enumerable`.
 
-  Each item will be prepended to the given `args` and processed by its
+  Each element will be prepended to the given `args` and processed by its
   own task. The tasks will be spawned under the given `supervisor` and
   linked to the current process, similarly to `async/4`.
 
   When streamed, each task will emit `{:ok, value}` upon successful
   completion or `{:exit, reason}` if the caller is trapping exits.
-  Results are emitted in the same order as the original `enumerable`.
+  The order of results depends on the value of the `:ordered` option.
 
-  The level of concurrency can be controlled via the `:max_concurrency`
-  option and defaults to `System.schedulers_online/0`. A timeout
-  can also be given as an option representing the maximum amount of
-  time to wait without a task reply.
+  The level of concurrency and the time tasks are allowed to run can
+  be controlled via options (see the "Options" section below).
 
-  Finally, if you find yourself trapping exits to handle exits inside
+  If you find yourself trapping exits to handle exits inside
   the async stream, consider using `async_stream_nolink/6` to start tasks
-  that are not linked to the current process.
+  that are not linked to the calling process.
 
   ## Options
 
     * `:max_concurrency` - sets the maximum number of tasks to run
       at the same time. Defaults to `System.schedulers_online/0`.
+
     * `:ordered` - whether the results should be returned in the same order
       as the input stream. This option is useful when you have large
       streams and don't want to buffer results before they are delivered.
+      This is also useful when you're using the tasks for side effects.
       Defaults to `true`.
+
     * `:timeout` - the maximum amount of time to wait (in milliseconds)
       without receiving a task reply (across all running tasks).
       Defaults to `5000`.
+
     * `:on_timeout` - what do to when a task times out. The possible
       values are:
       * `:exit` (default) - the process that spawned the tasks exits.
       * `:kill_task` - the task that timed out is killed. The value
         emitted for that task is `{:exit, :timeout}`.
+
     * `:shutdown` - `:brutal_kill` if the tasks must be killed directly on shutdown
-      or an integer indicating the timeout value, defaults to 5000 milliseconds.
+      or an integer indicating the timeout value. Defaults to `5000` milliseconds.
 
   ## Examples
 
@@ -236,9 +298,9 @@ defmodule Task.Supervisor do
 
   @doc """
   Returns a stream that runs the given function `fun` concurrently
-  on each item in `enumerable`.
+  on each element in `enumerable`.
 
-  Each item in `enumerable` is passed as argument to the given function `fun`
+  Each element in `enumerable` is passed as argument to the given function `fun`
   and processed by its own task. The tasks will be spawned under the given
   `supervisor` and linked to the current process, similarly to `async/2`.
 
@@ -252,10 +314,10 @@ defmodule Task.Supervisor do
   end
 
   @doc """
-  Returns a stream that runs the given `module`, `function`, and `args`
-  concurrently on each item in `enumerable`.
+  Returns a stream where the given function (`module` and `function`)
+  is mapped concurrently on each element in `enumerable`.
 
-  Each item in `enumerable` will be prepended to the given `args` and processed
+  Each element in `enumerable` will be prepended to the given `args` and processed
   by its own task. The tasks will be spawned under the given `supervisor` and
   will not be linked to the current process, similarly to `async_nolink/4`.
 
@@ -277,9 +339,9 @@ defmodule Task.Supervisor do
 
   @doc """
   Returns a stream that runs the given `function` concurrently on each
-  item in `enumerable`.
+  element in `enumerable`.
 
-  Each item in `enumerable` is passed as argument to the given function `fun`
+  Each element in `enumerable` is passed as argument to the given function `fun`
   and processed by its own task. The tasks will be spawned under the given
   `supervisor` and will not be linked to the current process, similarly to `async_nolink/2`.
 
@@ -333,7 +395,7 @@ defmodule Task.Supervisor do
   def start_child(supervisor, fun, options \\ []) do
     restart = options[:restart]
     shutdown = options[:shutdown]
-    args = [get_info(self()), {:erlang, :apply, [fun, []]}]
+    args = [get_owner(self()), get_callers(self()), {:erlang, :apply, [fun, []]}]
     start_child_with_spec(supervisor, args, restart, shutdown)
   end
 
@@ -349,7 +411,7 @@ defmodule Task.Supervisor do
       when is_atom(fun) and is_list(args) do
     restart = options[:restart]
     shutdown = options[:shutdown]
-    args = [get_info(self()), {module, fun, args}]
+    args = [get_owner(self()), get_callers(self()), {module, fun, args}]
     start_child_with_spec(supervisor, args, restart, shutdown)
   end
 
@@ -360,35 +422,58 @@ defmodule Task.Supervisor do
     GenServer.call(supervisor, {:start_task, args, restart, shutdown}, :infinity)
   end
 
-  defp get_info(self) do
-    name =
-      case Process.info(self, :registered_name) do
+  defp get_owner(pid) do
+    self_or_name =
+      case Process.info(pid, :registered_name) do
         {:registered_name, name} when is_atom(name) -> name
-        _ -> self
+        _ -> pid
       end
 
-    {node(), name}
+    {node(), self_or_name, pid}
+  end
+
+  defp get_callers(owner) do
+    case :erlang.get(:"$callers") do
+      [_ | _] = list -> [owner | list]
+      _ -> [owner]
+    end
   end
 
   defp async(supervisor, link_type, module, fun, args, options) do
     owner = self()
-    args = [owner, :monitor, get_info(owner), {module, fun, args}]
+    args = [get_owner(owner), get_callers(owner), :monitor, {module, fun, args}]
     shutdown = options[:shutdown]
-    {:ok, pid} = start_child_with_spec(supervisor, args, :temporary, shutdown)
-    if link_type == :link, do: Process.link(pid)
-    ref = Process.monitor(pid)
-    send(pid, {owner, ref})
-    %Task{pid: pid, ref: ref, owner: owner}
+
+    case start_child_with_spec(supervisor, args, :temporary, shutdown) do
+      {:ok, pid} ->
+        if link_type == :link, do: Process.link(pid)
+        ref = Process.monitor(pid)
+        send(pid, {owner, ref})
+        %Task{pid: pid, ref: ref, owner: owner}
+
+      {:error, :max_children} ->
+        raise """
+        reached the maximum number of tasks for this task supervisor. The maximum number \
+        of tasks that are allowed to run at the same time under this supervisor can be \
+        configured with the :max_children option passed to Task.Supervisor.start_link/1\
+        """
+    end
   end
 
   defp build_stream(supervisor, link_type, enumerable, fun, options) do
     shutdown = options[:shutdown]
 
-    &Task.Supervised.stream(enumerable, &1, &2, fun, options, fn owner, mfa ->
-      args = [owner, :monitor, get_info(owner), mfa]
-      {:ok, pid} = start_child_with_spec(supervisor, args, :temporary, shutdown)
-      if link_type == :link, do: Process.link(pid)
-      {link_type, pid}
+    &Task.Supervised.stream(enumerable, &1, &2, fun, options, fn [owner | _] = callers, mfa ->
+      args = [get_owner(owner), callers, :monitor, mfa]
+
+      case start_child_with_spec(supervisor, args, :temporary, shutdown) do
+        {:ok, pid} ->
+          if link_type == :link, do: Process.link(pid)
+          {:ok, link_type, pid}
+
+        {:error, :max_children} ->
+          {:error, :max_children}
+      end
     end)
   end
 end

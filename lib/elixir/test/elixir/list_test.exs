@@ -6,7 +6,7 @@ defmodule ListTest do
   doctest List
 
   test "cons cell precedence" do
-    assert [1 | :lists.flatten([2, 3])] == [1, 2, 3]
+    assert [1 | List.flatten([2, 3])] == [1, 2, 3]
   end
 
   test "optional comma" do
@@ -22,6 +22,13 @@ defmodule ListTest do
     assert (&[&1, &2 | &3]).(1, 2, 3) == [1, 2 | 3]
   end
 
+  test "delete/2" do
+    assert List.delete([:a, :b, :c], :a) == [:b, :c]
+    assert List.delete([:a, :b, :c], :d) == [:a, :b, :c]
+    assert List.delete([:a, :b, :b, :c], :b) == [:a, :b, :c]
+    assert List.delete([], :b) == []
+  end
+
   test "wrap/1" do
     assert List.wrap([1, 2, 3]) == [1, 2, 3]
     assert List.wrap(1) == [1]
@@ -35,12 +42,14 @@ defmodule ListTest do
 
     assert List.flatten([]) == []
     assert List.flatten([[]]) == []
+    assert List.flatten([[], [[], []]]) == []
   end
 
   test "flatten/2" do
     assert List.flatten([1, 2, 3], [4, 5]) == [1, 2, 3, 4, 5]
     assert List.flatten([1, [2], 3], [4, 5]) == [1, 2, 3, 4, 5]
     assert List.flatten([[1, [2], 3]], [4, 5]) == [1, 2, 3, 4, 5]
+    assert List.flatten([1, [], 2], [3, [], 4]) == [1, 2, 3, [], 4]
   end
 
   test "foldl/3" do
@@ -56,8 +65,15 @@ defmodule ListTest do
   end
 
   test "duplicate/2" do
+    assert List.duplicate(1, 0) == []
     assert List.duplicate(1, 3) == [1, 1, 1]
     assert List.duplicate([1], 1) == [[1]]
+  end
+
+  test "first/1" do
+    assert List.first([]) == nil
+    assert List.first([1]) == 1
+    assert List.first([1, 2, 3]) == 1
   end
 
   test "last/1" do
@@ -104,6 +120,12 @@ defmodule ListTest do
     assert List.keydelete([a: 1, b: 2], :a, 0) == [{:b, 2}]
     assert List.keydelete([a: 1, b: 2], 2, 1) == [{:a, 1}]
     assert List.keydelete([a: 1, b: 2], :c, 0) == [{:a, 1}, {:b, 2}]
+  end
+
+  test "keytake/3" do
+    assert List.keytake([a: 1, b: 2], :a, 0) == {{:a, 1}, [b: 2]}
+    assert List.keytake([a: 1, b: 2], 2, 1) == {{:b, 2}, [a: 1]}
+    assert List.keytake([a: 1, b: 2], :c, 0) == nil
   end
 
   test "insert_at/3" do
@@ -185,7 +207,7 @@ defmodule ListTest do
       assert List.starts_with?([1, 2, 3], [])
     end
 
-    test "only accepts lists" do
+    test "only accepts proper lists" do
       message = "no function clause matching in List.starts_with?/2"
 
       assert_raise FunctionClauseError, message, fn ->
@@ -203,6 +225,8 @@ defmodule ListTest do
   test "to_string/1" do
     assert List.to_string([?æ, ?ß]) == "æß"
     assert List.to_string([?a, ?b, ?c]) == "abc"
+    assert List.to_string([]) == ""
+    assert List.to_string([[], []]) == ""
 
     assert_raise UnicodeConversionError, "invalid code point 57343", fn ->
       List.to_string([0xDFFF])
@@ -214,6 +238,24 @@ defmodule ListTest do
 
     assert_raise ArgumentError, ~r"cannot convert the given list to a string", fn ->
       List.to_string([:a, :b])
+    end
+  end
+
+  test "to_charlist/1" do
+    assert List.to_charlist([0x00E6, 0x00DF]) == 'æß'
+    assert List.to_charlist([0x0061, "bc"]) == 'abc'
+    assert List.to_charlist([0x0064, "ee", ['p']]) == 'deep'
+
+    assert_raise UnicodeConversionError, "invalid code point 57343", fn ->
+      List.to_charlist([0xDFFF])
+    end
+
+    assert_raise UnicodeConversionError, "invalid encoding starting at <<216, 0>>", fn ->
+      List.to_charlist(["a", "b", <<0xD800::size(16)>>])
+    end
+
+    assert_raise ArgumentError, ~r"cannot convert the given list to a charlist", fn ->
+      List.to_charlist([:a, :b])
     end
   end
 
@@ -241,6 +283,54 @@ defmodule ListTest do
 
       assert List.myers_difference([3, 2, 0, 2], [2, 2, 1, 0, 2]) ==
                [del: [3], eq: [2], ins: [2, 1], eq: [0, 2]]
+    end
+  end
+
+  test "improper?/1" do
+    assert List.improper?([1 | 2])
+    assert List.improper?([1, 2, 3 | 4])
+    refute List.improper?([])
+    refute List.improper?([1])
+    refute List.improper?([[1]])
+    refute List.improper?([1, 2])
+    refute List.improper?([1, 2, 3])
+
+    assert_raise FunctionClauseError, fn ->
+      List.improper?(%{})
+    end
+  end
+
+  describe "ascii_printable?/2" do
+    test "proper lists without limit" do
+      assert List.ascii_printable?([])
+      assert List.ascii_printable?('abc')
+      refute(List.ascii_printable?('abc' ++ [0]))
+      refute List.ascii_printable?('mañana')
+
+      printable_chars = '\a\b\t\n\v\f\r\e' ++ Enum.to_list(32..126)
+      non_printable_chars = '🌢áéíóúźç©¢🂭'
+
+      assert List.ascii_printable?(printable_chars)
+
+      for char <- printable_chars do
+        assert List.ascii_printable?([char])
+      end
+
+      refute List.ascii_printable?(non_printable_chars)
+
+      for char <- non_printable_chars do
+        refute List.ascii_printable?([char])
+      end
+    end
+
+    test "proper lists with limit" do
+      assert List.ascii_printable?([], 100)
+      assert List.ascii_printable?('abc' ++ [0], 2)
+    end
+
+    test "improper lists" do
+      refute List.ascii_printable?('abc' ++ ?d)
+      assert List.ascii_printable?('abc' ++ ?d, 3)
     end
   end
 end

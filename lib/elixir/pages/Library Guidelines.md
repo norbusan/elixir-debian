@@ -16,7 +16,7 @@ For more information on running your project, see the official [Mix & OTP guide]
 
 ### Applications with supervision tree
 
-The `mix new` command also allows the `--sup` flag to scaffold an application with a supervision tree out of the box. We talk about supervision trees later on when discussing one of the common anti-patterns when writing libraries.
+The `mix new` command also allows the `--sup` option to scaffold an application with a supervision tree out of the box. We talk about supervision trees later on when discussing one of the common anti-patterns when writing libraries.
 
 ## Publishing
 
@@ -24,7 +24,7 @@ Writing code is only the first of many steps to publish a package. We strongly r
 
   * Choose a versioning schema. Elixir requires versions to be in the format `MAJOR.MINOR.PATCH` but the meaning of those numbers is up to you. Most projects choose [Semantic Versioning](https://semver.org/).
 
-  * Choose a [license](https://choosealicense.com/). The most common licenses in the Elixir community are the [MIT License](https://choosealicense.com/licenses/mit/) and the [Apache 2.0 License](https://choosealicense.com/licenses/apache-2.0/). The latter is also the one used by Elixir itself.
+  * Choose a [license](https://choosealicense.com/). The most common licenses in the Elixir community are the [MIT License](https://choosealicense.com/licenses/mit/) and the [Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/). The latter is also the one used by Elixir itself.
 
   * Run the [code formatter](https://hexdocs.pm/mix/Mix.Tasks.Format.html). The code formatter formats your code according to a consistent style shared by your library and the whole community, making it easier for other developers to understand your code and contribute.
 
@@ -70,7 +70,7 @@ iex> File.read(1)
 ** (FunctionClauseError) no function clause matching in IO.chardata_to_string/1
 ```
 
-The usage of `:ok`/`:error` tuples is about the domain that the function works on, in this case, filesystem access. Bad arguments, logical errors, invalid options should raise regardless of the function name. If in doubt, prefer to return tuples instead of raising, as users of your library can always match on the results and raise if necessary.
+The usage of `:ok`/`:error` tuples is about the domain that the function works on, in this case, file system access. Bad arguments, logical errors, invalid options should raise regardless of the function name. If in doubt, prefer to return tuples instead of raising, as users of your library can always match on the results and raise if necessary.
 
 ### Avoid working with invalid data
 
@@ -100,7 +100,7 @@ This advice does not only apply to libraries but to any Elixir code. Every time 
 
 ### Avoid application configuration
 
-You should avoid using [the application environment](https://hexdocs.pm/elixir/Application.html#get_env/2) as the configuration mechanism for libraries. The application environment is **global** which means it becomes impossible for two dependencies to use your library in two different ways.
+You should avoid using the application environment (see `Application.get_env/2`) as the configuration mechanism for libraries. The application environment is **global** which means it becomes impossible for two dependencies to use your library in two different ways.
 
 Let's see a simple example. Imagine that you implement a library that breaks a string in two parts based on the first occurrence of the dash `-` character:
 
@@ -172,7 +172,7 @@ end
 
 it allows `use MyLib` to run *any* code into the `MyApp` module. For someone reading the code, it is impossible to assess the impact that `use MyLib` has in a module without looking at the implementation of `__using__`.
 
-The following code is much clearer:
+The following code is clearer:
 
 ```elixir
 defmodule MyApp do
@@ -184,7 +184,7 @@ The code above says we are only bringing in the functions from `MyLib` so we can
 
 If the module you want to invoke a function on has a long name, such as `SomeLibrary.Namespace.MyLib`, and you find it verbose, you can leverage the `alias/2` special form and still refer to the module as `MyLib`.
 
-While there are many situations where using a module is required, `use` should be skipped when all it does is to `import` or `alias` a module. In a nutshell, `alias` is simpler and clearer than `import`, and `import` is simpler and clearer than `use`.
+While there are situations where `use SomeModule` is necessary, `use` should be skipped when all it does is to `import` or `alias` other modules. In a nutshell, `alias` should be preferred, as it is simpler and clearer than `import`, while `import` is simpler and clearer than `use`.
 
 ### Avoid macros
 
@@ -192,17 +192,17 @@ Although the previous section could be summarized as "avoid macros", both topics
 
 To quote [the official guide on Macros](https://elixir-lang.org/getting-started/meta/macros.html):
 
-> Even though Elixir attempts its best to provide a safe environment for macros, the major responsibility of writing clean code with macros falls on developers. Macros are harder to write than ordinary Elixir functions and it’s considered to be bad style to use them when they’re not necessary. So write macros responsibly.
+> Even though Elixir attempts its best to provide a safe environment for macros, the major responsibility of writing clean code with macros falls on developers. Macros are harder to write than ordinary Elixir functions and it's considered to be bad style to use them when they're not necessary. So write macros responsibly.
 >
 > Elixir already provides mechanisms to write your everyday code in a simple and readable fashion by using its data structures and functions. Macros should only be used as a last resort. Remember that **explicit is better than implicit**. **Clear code is better than concise code**.
 
-When you absolutely have to use a macro, make sure that a macro is not the only way the user can interface with your library and keep the amount of code generated by a macro to a minimum. For example, the `Logger` module provides `debug/2`, `info/2` and friends as macros that are capable of extracting environment information, but a low-level mechanism for logging is still available with `Logger.bare_log/3`.
+When you absolutely have to use a macro, make sure that a macro is not the only way the user can interface with your library and keep the amount of code generated by a macro to a minimum. For example, the `Logger` module provides `Logger.debug/2`, `Logger.info/2` and friends as macros that are capable of extracting environment information, but a low-level mechanism for logging is still available with `Logger.bare_log/3`.
 
 ### Avoid using processes for code organization
 
 A developer must never use a process for code organization purposes. A process must be used to model runtime properties such as:
 
-  * Mutable state and access to shared resources (such as ets, files, etc)
+  * Mutable state and access to shared resources (such as ETS, files, etc.)
   * Concurrency and distribution
   * Initialization, shutdown and restart logic (as seen in supervisors)
   * System messages such as timer messages and monitoring events
@@ -256,24 +256,22 @@ and then defining a `my_app/application.ex` file with the following template:
 
 ```elixir
 defmodule MyApp.Application do
-    # See https://hexdocs.pm/elixir/Application.html
-    # for more information on OTP Applications
-    @moduledoc false
+  # See https://hexdocs.pm/elixir/Application.html
+  # for more information on OTP Applications
+  @moduledoc false
 
-    use Application
+  use Application
 
-    def start(_type, _args) do
-      # List all child processes to be supervised
-      children = [
-        # Starts a worker by calling: MyApp.Worker.start_link(arg)
-        # {MyApp.Worker, arg},
-      ]
+  def start(_type, _args) do
+    children = [
+      # Starts a worker by calling: MyApp.Worker.start_link(arg)
+      # {MyApp.Worker, arg}
+    ]
 
-      # See https://hexdocs.pm/elixir/Supervisor.html
-      # for other strategies and supported options
-      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
-      Supervisor.start_link(children, opts)
-    end
+    # See https://hexdocs.pm/elixir/Supervisor.html
+    # for other strategies and supported options
+    opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+    Supervisor.start_link(children, opts)
   end
 end
 ```

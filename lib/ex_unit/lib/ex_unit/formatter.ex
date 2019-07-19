@@ -35,6 +35,11 @@ defmodule ExUnit.Formatter do
     * `{:case_finished, test_module}` -
       a test module has finished. See `ExUnit.TestCase` for details.
 
+  The full ExUnit configuration is passed as the argument to `c:GenServer.init/1` callback when the
+  formatters are started. If you need to do runtime configuration of a
+  formatter, you can add any configuration needed by using `ExUnit.configure/1`
+  or `ExUnit.start/1`, and this will then be included in the options passed to
+  the `c:GenServer.init/1` callback.
   """
 
   @type id :: term
@@ -104,8 +109,8 @@ defmodule ExUnit.Formatter do
   @spec format_filters(keyword, atom) :: String.t()
   def format_filters(filters, type) do
     case type do
-      :include -> "Including tags: #{inspect(filters)}"
       :exclude -> "Excluding tags: #{inspect(filters)}"
+      :include -> "Including tags: #{inspect(filters)}"
     end
   end
 
@@ -138,6 +143,7 @@ defmodule ExUnit.Formatter do
 
     [
       note: if_value(struct.message, &format_message(&1, formatter)),
+      doctest: if_value(struct.doctest, &code_multiline(&1, 2 + byte_size(@counter_padding))),
       code: if_value(struct.expr, &code_multiline(&1, padding_size)),
       code: unless_value(struct.expr, fn -> get_code(test, stack) || @no_value end),
       arguments: if_value(struct.args, &format_args(&1, width)),
@@ -148,8 +154,8 @@ defmodule ExUnit.Formatter do
     |> make_into_lines(counter_padding)
   end
 
-  # TODO: Deprecate on Elixir v1.8
   @doc false
+  @deprecated "Use ExUnit.Formatter.format_test_all_failure/5 instead"
   def format_test_case_failure(test_case, failures, counter, width, formatter) do
     format_test_all_failure(test_case, failures, counter, width, formatter)
   end
@@ -373,7 +379,13 @@ defmodule ExUnit.Formatter do
   end
 
   defp with_location(tags) do
-    "#{Path.relative_to_cwd(tags[:file])}:#{tags[:line]}"
+    path = "#{Path.relative_to_cwd(tags[:file])}:#{tags[:line]}"
+
+    if prefix = Application.get_env(:ex_unit, :test_location_relative_path) do
+      Path.join(prefix, path)
+    else
+      path
+    end
   end
 
   defp failure_header([_], _), do: ""
@@ -391,7 +403,8 @@ defmodule ExUnit.Formatter do
     "#{counter}) #{msg}"
   end
 
-  defp test_module_info(msg, nil), do: msg <> "failure on setup_all callback, test invalidated\n"
+  defp test_module_info(msg, nil),
+    do: msg <> "failure on setup_all callback, all tests have been invalidated\n"
 
   defp test_module_info(msg, formatter),
     do: test_module_info(formatter.(:test_module_info, msg), nil)

@@ -2,8 +2,8 @@ defmodule Range do
   @moduledoc """
   Defines a range.
 
-  A range represents a discrete number of values where
-  the first and last values are integers.
+  A range represents a sequence of one or many,
+  ascending or descending, consecutive integers.
 
   Ranges can be either increasing (`first <= last`) or
   decreasing (`first > last`). Ranges are also always
@@ -36,12 +36,16 @@ defmodule Range do
       iex> Enum.member?(range, 8)
       true
 
+  Such function calls are efficient memory-wise no matter the
+  size of the range. The implementation of the `Enumerable`
+  protocol uses logic based solely on the endpoints and does
+  not materialize the whole list of integers.
   """
 
   defstruct first: nil, last: nil
 
-  @type t :: %Range{first: integer, last: integer}
-  @type t(first, last) :: %Range{first: first, last: last}
+  @type t :: %__MODULE__{first: integer, last: integer}
+  @type t(first, last) :: %__MODULE__{first: first, last: last}
 
   @doc """
   Creates a new range.
@@ -57,7 +61,33 @@ defmodule Range do
             "got: #{inspect(first)}..#{inspect(last)}"
   end
 
-  # TODO: Remove by 2.0
+  @doc """
+  Checks if two ranges are disjoint.
+
+  ## Examples
+
+      iex> Range.disjoint?(1..5, 6..9)
+      true
+      iex> Range.disjoint?(5..1, 6..9)
+      true
+      iex> Range.disjoint?(1..5, 5..9)
+      false
+      iex> Range.disjoint?(1..5, 2..7)
+      false
+
+  """
+  @doc since: "1.8.0"
+  @spec disjoint?(t, t) :: boolean
+  def disjoint?(first1..last1 = _range1, first2..last2 = _range2) do
+    {first1, last1} = normalize(first1, last1)
+    {first2, last2} = normalize(first2, last2)
+    last2 < first1 or last1 < first2
+  end
+
+  @compile inline: [normalize: 2]
+  defp normalize(first, last) when first > last, do: {last, first}
+  defp normalize(first, last), do: {first, last}
+
   @doc false
   @deprecated "Pattern match on first..last instead"
   def range?(term)

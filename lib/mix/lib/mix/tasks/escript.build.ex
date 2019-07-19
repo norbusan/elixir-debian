@@ -3,6 +3,7 @@ defmodule Mix.Tasks.Escript.Build do
   use Bitwise, only_operators: true
 
   @shortdoc "Builds an escript for the project"
+  @recursive true
 
   @moduledoc ~S"""
   Builds an escript for the project.
@@ -22,8 +23,8 @@ defmodule Mix.Tasks.Escript.Build do
   Escripts should be used as a mechanism to share scripts between
   developers and not as a deployment mechanism. For running live
   systems, consider using `mix run` or building releases. See
-  the `Application` module for more information on systems life-
-  cycles.
+  the `Application` module for more information on systems
+  life-cycles.
 
   By default, this task starts the current application. If this
   is not desired, set the `:app` configuration to nil.
@@ -116,6 +117,8 @@ defmodule Mix.Tasks.Escript.Build do
       end
 
   """
+
+  @impl true
   def run(args) do
     Mix.Project.get!()
     Mix.Task.run("loadpaths", args)
@@ -131,11 +134,6 @@ defmodule Mix.Tasks.Escript.Build do
 
   defp escriptize(project, language) do
     escript_opts = project[:escript] || []
-
-    if Mix.Project.umbrella?() do
-      Mix.raise("Building escripts for umbrella projects is unsupported")
-    end
-
     script_name = Mix.Local.name_for(:escript, project)
     filename = escript_opts[:path] || script_name
     main = escript_opts[:main_module]
@@ -271,27 +269,13 @@ defmodule Mix.Tasks.Escript.Build do
 
   defp strip_beams(tuples) do
     for {basename, maybe_beam} <- tuples do
-      case Path.extname(basename) do
-        ".beam" -> {basename, strip_beam(maybe_beam)}
+      with ".beam" <- Path.extname(basename),
+           {:ok, binary} <- Mix.Release.strip_beam(maybe_beam) do
+        {basename, binary}
+      else
         _ -> {basename, maybe_beam}
       end
     end
-  end
-
-  defp strip_beam(beam) when is_binary(beam) do
-    {:ok, _, all_chunks} = :beam_lib.all_chunks(beam)
-    strip_chunks = ['Abst', 'CInf', 'Dbgi', 'Docs']
-    preserved_chunks = for {name, _} = chunk <- all_chunks, name not in strip_chunks, do: chunk
-    {:ok, content} = :beam_lib.build_module(preserved_chunks)
-    compress(content)
-  end
-
-  defp compress(binary) do
-    {:ok, file} = :ram_file.open(binary, [:write, :binary])
-    {:ok, _} = :ram_file.compress(file)
-    {:ok, binary} = :ram_file.get_file(file)
-    :ok = :ram_file.close(file)
-    binary
   end
 
   defp consolidated_paths(config) do
@@ -316,7 +300,7 @@ defmodule Mix.Tasks.Escript.Build do
   defp gen_main(project, name, module, app, language) do
     config =
       if File.regular?(project[:config_path]) do
-        {config, _} = Mix.Config.eval!(project[:config_path])
+        config = Config.Reader.read!(project[:config_path])
         Macro.escape(config)
       else
         []
@@ -360,7 +344,7 @@ defmodule Mix.Tasks.Escript.Build do
                 end
 
               error_message = [
-                "Could not start application ",
+                "ERROR! Could not start application ",
                 :erlang.atom_to_binary(app, :utf8),
                 ": ",
                 formatted_error,
@@ -368,7 +352,6 @@ defmodule Mix.Tasks.Escript.Build do
               ]
 
               io_error(error_message)
-
               :erlang.halt(1)
           end
         end
@@ -384,33 +367,16 @@ defmodule Mix.Tasks.Escript.Build do
 
   defp main_body_for(:elixir) do
     quote do
-      erl_version = :erlang.system_info(:otp_release)
-
-      case :string.to_integer(erl_version) do
-        {num, _} when num >= 19 ->
-          nil
-
-        _ ->
-          error_message = [
-            "Incompatible Erlang/OTP release: ",
-            erl_version,
-            ".\nThis escript requires at least Erlang/OTP 19.0\n"
-          ]
-
-          io_error(error_message)
-
-          :erlang.halt(1)
-      end
+      load_config(@config)
 
       case :application.ensure_all_started(:elixir) do
         {:ok, _} ->
-          load_config(@config)
           start_app(@app)
           args = Enum.map(args, &List.to_string(&1))
-          Kernel.CLI.run(fn _ -> @module.main(args) end, true)
+          Kernel.CLI.run(fn _ -> @module.main(args) end)
 
         error ->
-          io_error(["Failed to start Elixir.\n", :io_lib.format('error: ~p~n', [error])])
+          io_error(["ERROR! Failed to start Elixir.\n", :io_lib.format('error: ~p~n', [error])])
           :erlang.halt(1)
       end
     end

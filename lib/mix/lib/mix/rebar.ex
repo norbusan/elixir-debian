@@ -75,16 +75,17 @@ defmodule Mix.Rebar do
 
   @doc """
   Updates Rebar configuration to be more suitable for dependencies.
-
-  Drops `warnings_as_errors` from `erl_opts`.
   """
   def dependency_config(config) do
-    Enum.map(config, fn
+    Enum.flat_map(config, fn
       {:erl_opts, opts} ->
-        {:erl_opts, List.delete(opts, :warnings_as_errors)}
+        [{:erl_opts, List.delete(opts, :warnings_as_errors)}]
+
+      {:project_plugins, _} ->
+        []
 
       other ->
-        other
+        [other]
     end)
   end
 
@@ -92,7 +93,7 @@ defmodule Mix.Rebar do
   Parses the dependencies in given `rebar.config` to Mix's dependency format.
   """
   def deps(config) do
-    # We don't have to handle rebar3 profiles because dependencies
+    # We don't have to handle Rebar3 profiles because dependencies
     # are always in the default profile which cannot be customized
     if deps = config[:deps] do
       Enum.map(deps, &parse_dep/1)
@@ -119,7 +120,7 @@ defmodule Mix.Rebar do
     [fun.(config) | subs]
   end
 
-  # Translate a rebar dependency declaration to a mix declaration
+  # Translate a Rebar dependency declaration to a Mix declaration
   # From http://www.rebar3.org/docs/dependencies#section-declaring-dependencies
   defp parse_dep(app) when is_atom(app) do
     {app, ">= 0.0.0", override: true}
@@ -180,7 +181,7 @@ defmodule Mix.Rebar do
             re
 
           {:error, reason} ->
-            Mix.raise("Unable to compile version regex: #{inspect(req)}, #{reason}")
+            Mix.raise("Unable to compile version regular expression: #{inspect(req)}, #{reason}")
         end
     end
   end

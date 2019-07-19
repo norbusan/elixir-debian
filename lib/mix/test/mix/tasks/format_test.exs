@@ -368,7 +368,7 @@ defmodule Mix.Tasks.FormatTest do
       [inputs: "a.ex"]
       """)
 
-      File.touch!("lib/sub/.formatter.exs", {{2030, 1, 1}, {0, 0, 0}})
+      File.touch!("lib/sub/.formatter.exs", {{2038, 1, 1}, {0, 0, 0}})
       Mix.Tasks.Format.run([])
 
       assert File.read!("lib/sub/a.ex") == """
@@ -388,7 +388,7 @@ defmodule Mix.Tasks.FormatTest do
       other_fun :baz
       """)
 
-      File.touch!("lib/extra/.formatter.exs", {{2030, 1, 1}, {0, 0, 0}})
+      File.touch!("lib/extra/.formatter.exs", {{2038, 1, 1}, {0, 0, 0}})
       Mix.Tasks.Format.run([])
 
       formatter_opts = Mix.Tasks.Format.formatter_opts_for_file("lib/extra/a.ex")
@@ -435,7 +435,7 @@ defmodule Mix.Tasks.FormatTest do
 
       message =
         "Unavailable dependency :my_dep given to :import_deps in the formatter configuration. " <>
-          "The dependency cannot be found in the filesystem, please run mix deps.get and try again"
+          "The dependency cannot be found in the file system, please run \"mix deps.get\" and try again"
 
       assert_raise Mix.Error, message, fn -> Mix.Tasks.Format.run([]) end
 
@@ -448,6 +448,48 @@ defmodule Mix.Tasks.FormatTest do
           "The dependency is not listed in your mix.exs for environment :dev"
 
       assert_raise Mix.Error, message, fn -> Mix.Tasks.Format.run([]) end
+    end)
+  end
+
+  test "prints an error on conflicting .formatter.exs files", context do
+    in_tmp(context.test, fn ->
+      File.write!(".formatter.exs", """
+      [inputs: "lib/**/*.{ex,exs}", subdirectories: ["lib", "foo"]]
+      """)
+
+      File.mkdir_p!("lib")
+
+      File.write!("lib/.formatter.exs", """
+      [inputs: "a.ex", locals_without_parens: [my_fun: 2]]
+      """)
+
+      File.mkdir_p!("foo")
+
+      File.write!("foo/.formatter.exs", """
+      [inputs: "../lib/a.ex", locals_without_parens: [my_fun: 2]]
+      """)
+
+      File.write!("lib/a.ex", """
+      my_fun :foo, :bar
+      other_fun :baz
+      """)
+
+      Mix.Tasks.Format.run([])
+
+      message1 =
+        "Both .formatter.exs and lib/.formatter.exs specify the file lib/a.ex in their " <>
+          ":inputs option. To resolve the conflict, the configuration in .formatter.exs " <>
+          "will be ignored. Please change the list of :inputs in one of the formatter files " <>
+          "so only one of them matches lib/a.ex"
+
+      message2 =
+        "Both lib/.formatter.exs and foo/.formatter.exs specify the file lib/a.ex in their " <>
+          ":inputs option. To resolve the conflict, the configuration in lib/.formatter.exs " <>
+          "will be ignored. Please change the list of :inputs in one of the formatter files " <>
+          "so only one of them matches lib/a.ex"
+
+      assert_received {:mix_shell, :error, [^message1]}
+      assert_received {:mix_shell, :error, [^message2]}
     end)
   end
 
@@ -474,6 +516,18 @@ defmodule Mix.Tasks.FormatTest do
       end
 
       assert_received {:mix_shell, :error, ["mix format failed for file: a.ex"]}
+    end)
+  end
+
+  test "raises SyntaxError when parsing invalid stdin", context do
+    in_tmp(context.test, fn ->
+      assert_raise SyntaxError, ~r"stdin:1: syntax error before: '='", fn ->
+        capture_io("defmodule <%= module %>.Bar do end", fn ->
+          Mix.Tasks.Format.run(["-"])
+        end)
+      end
+
+      assert_received {:mix_shell, :error, ["mix format failed for stdin"]}
     end)
   end
 end

@@ -3,6 +3,7 @@ defmodule IEx.Pry do
   The low-level API for prying sessions and setting up breakpoints.
   """
 
+  @doc false
   use GenServer
 
   @table __MODULE__
@@ -12,12 +13,19 @@ defmodule IEx.Pry do
 
   @type id :: integer()
   @type break :: {id, module, {function, arity}, pending :: non_neg_integer}
+  @type break_error ::
+          :recompilation_failed
+          | :no_beam_file
+          | :unknown_function_arity
+          | :missing_debug_info
+          | :outdated_debug_info
+          | :non_elixir_module
 
   @doc """
-  Callback for `IEx.pry/1`.
+  Callback for `IEx.pry/0`.
 
   You can invoke this function directly when you are not able to invoke
-  `IEx.pry/1` as a macro. This function expects the binding (from
+  `IEx.pry/0` as a macro. This function expects the binding (from
   `Kernel.binding/0`) and the environment (from `__ENV__/0`).
   """
   def pry(binding, %Macro.Env{} = env) do
@@ -61,14 +69,14 @@ defmodule IEx.Pry do
       end
 
     # We cannot use colors because IEx may be off
-    case IEx.Server.take_over(request, opts) do
-      :ok ->
-        :ok
+    case IEx.Broker.take_over(request, [evaluator: self()] ++ opts) do
+      {:ok, server, group_leader} ->
+        IEx.Evaluator.init(:no_ack, server, group_leader, opts)
 
       {:error, :no_iex} ->
         extra =
           if match?({:win32, _}, :os.type()) do
-            " If you are using Windows, you may need to start IEx with the --werl flag."
+            " If you are using Windows, you may need to start IEx with the --werl option."
           else
             ""
           end
@@ -146,33 +154,54 @@ defmodule IEx.Pry do
   end
 
   @doc """
-  Sets up a breakpoint on the given module/function/arity matching the given
-  args and guard.
+  Sets up a breakpoint on the given module/function/arity.
   """
-  @spec break(module, function, arity, Macro.t(), pos_integer) ::
-          {:ok, id()}
-          | {
-              :error,
-              :recompilation_failed
-              | :no_beam_file
-              | :unknown_function_arity
-              | :otp_20_is_required
-              | :missing_debug_info
-              | :outdated_debug_info
-              | :non_elixir_module
-            }
-  def break(module, function, arity, condition, breaks \\ 1)
+  @spec break(module, function, arity, pos_integer) :: {:ok, id()} | {:error, break_error()}
+  def break(module, function, arity, breaks \\ 1)
       when is_atom(module) and is_atom(function) and is_integer(arity) and arity >= 0 and
              is_integer(breaks) and breaks > 0 do
+    break_call(module, function, arity, quote(do: _), breaks)
+  end
+
+  @doc """
+  Sets up a breakpoint on the given module/function/args with the given `guard`.
+
+  It requires an `env` to be given to make the expansion of the guards.
+  """
+  @spec break(module, function, [Macro.t()], Macro.t(), Macro.Env.t(), pos_integer) ::
+          {:ok, id()} | {:error, break_error()}
+  def break(module, function, args, guard, env, breaks \\ 1)
+      when is_atom(module) and is_atom(function) and is_list(args) and is_integer(breaks) and
+             breaks > 0 do
+    condition = build_args_guard_condition(args, guard, env)
+    break_call(module, function, length(args), condition, breaks)
+  end
+
+  defp break_call(module, function, arity, condition, breaks) do
     GenServer.call(@server, {:break, module, {function, arity}, condition, breaks}, @timeout)
   end
 
   @doc """
-  Raising variant of `break/5`.
+  Raising variant of `break/4`.
   """
-  @spec break(module, function, arity, Macro.t(), pos_integer) :: id()
-  def break!(module, function, arity, condition, breaks \\ 1) do
-    case break(module, function, arity, condition, breaks) do
+  @spec break!(module, function, arity, pos_integer) :: id()
+  def break!(module, function, arity, breaks \\ 1) do
+    break_call!(module, function, arity, quote(do: _), breaks)
+  end
+
+  @doc """
+  Raising variant of `break/6`.
+  """
+  @spec break!(module, function, [Macro.t()], Macro.t(), Macro.Env.t(), pos_integer) :: id()
+  def break!(module, function, args, guard, env, breaks \\ 1)
+      when is_atom(module) and is_atom(function) and is_list(args) and is_integer(breaks) and
+             breaks > 0 do
+    condition = build_args_guard_condition(args, guard, env)
+    break_call!(module, function, length(args), condition, breaks)
+  end
+
+  defp break_call!(module, function, arity, condition, breaks) do
+    case break_call(module, function, arity, condition, breaks) do
       {:ok, id} ->
         id
 
@@ -188,9 +217,6 @@ defmodule IEx.Pry do
             :non_elixir_module ->
               "module #{inspect(module)} was not written in Elixir"
 
-            :otp_20_is_required ->
-              "you are running on an earlier version than Erlang/OTP 20"
-
             :outdated_debug_info ->
               "module #{inspect(module)} was not compiled with the latest debug_info"
 
@@ -205,8 +231,24 @@ defmodule IEx.Pry do
     end
   end
 
+  defp build_args_guard_condition(args, guards, env) do
+    pattern = {:when, [], [{:{}, [], args}, guards]}
+
+    to_expand =
+      quote do
+        case Unknown.module() do
+          unquote(pattern) -> :ok
+        end
+      end
+
+    {{:case, _, [_, [do: [{:->, [], [[condition], _]}]]]}, _} =
+      :elixir_expand.expand(to_expand, env)
+
+    condition
+  end
+
   @doc """
-  Resets the breaks on a given breakpoint id.
+  Resets the breaks on a given breakpoint ID.
   """
   @spec reset_break(id) :: :ok | :not_found
   def reset_break(id) when is_integer(id) do
@@ -383,10 +425,6 @@ defmodule IEx.Pry do
           {:ok, {_, [debug_info: {:debug_info_v1, _, _}]}} ->
             {:error, :non_elixir_module}
 
-          {:error, :beam_lib, {:unknown_chunk, _, _}} ->
-            # TODO: Remove this when we require OTP 20+
-            {:error, :otp_20_is_required}
-
           {:error, :beam_lib, {:missing_chunk, _, _}} ->
             {:error, :missing_debug_info}
 
@@ -458,7 +496,7 @@ defmodule IEx.Pry do
 
     update_op = Macro.escape({5, -1, -1, -1})
 
-    # Generate the take_over condition with the ets lookup.
+    # Generate the take_over condition with the ETS lookup.
     # Remember this is expanded AST, so no aliases allowed,
     # no locals (such as the unary -) and so on.
     condition =

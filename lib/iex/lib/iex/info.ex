@@ -18,7 +18,7 @@ defimpl IEx.Info, for: Atom do
   def info(atom) do
     specific_info =
       cond do
-        Code.ensure_loaded?(atom) ->
+        module?(atom) ->
           info_module(atom)
 
         match?("Elixir." <> _, Atom.to_string(atom)) ->
@@ -41,6 +41,17 @@ defimpl IEx.Info, for: Atom do
       end
 
     [{"Data type", "Atom"}] ++ description ++ specific_info
+  end
+
+  defp module?(atom) do
+    case :code.get_object_code(atom) do
+      :error ->
+        Code.ensure_loaded?(atom)
+
+      {^atom, beam, _path} ->
+        info = :beam_lib.info(beam)
+        Keyword.fetch(info, :module) == {:ok, atom}
+    end
   end
 
   defp info_module(mod) do
@@ -120,21 +131,21 @@ defimpl IEx.Info, for: List do
     specific_info =
       cond do
         list == [] -> info_list(list)
-        List.ascii_printable?(list) -> info_charlist(list)
+        List.ascii_printable?(list) -> info_printable_charlist(list)
         Keyword.keyword?(list) -> info_kw_list(list)
+        List.improper?(list) -> info_improper_list(list)
         true -> info_list(list)
       end
 
     [{"Data type", "List"}] ++ specific_info
   end
 
-  defp info_charlist(charlist) do
+  defp info_printable_charlist(charlist) do
     description = """
     This is a list of integers that is printed as a sequence of characters
-    delimited by single quotes because all the integers in it represent valid
-    ASCII characters. Conventionally, such lists of integers are referred to
-    as "charlists" (more precisely, a charlist is a list of Unicode codepoints,
-    and ASCII is a subset of Unicode).
+    delimited by single quotes because all the integers in it represent printable
+    ASCII characters. Conventionally, a list of Unicode code points is known as a
+    charlist and a list of ASCII characters is a subset of it.
     """
 
     [
@@ -151,6 +162,20 @@ defimpl IEx.Info, for: List do
     """
 
     [{"Description", description}, {"Reference modules", "Keyword, List"}]
+  end
+
+  defp info_improper_list(_improper_list) do
+    description = """
+    This is what is referred to as an "improper list". An improper list is a
+    list which its last tail is not to an empty list. For example: [1, 2, 3]
+    is a proper list, as it is equivalent to [1, 2, 3 | []], as opposed to
+    [1, 2 | 3] which is an improper list since its last tail returns 3.
+    """
+
+    [
+      {"Description", description},
+      {"Reference modules", "List"}
+    ]
   end
 
   defp info_list(_list) do
@@ -174,7 +199,7 @@ defimpl IEx.Info, for: BitString do
   defp info_string(bitstring) do
     description = """
     This is a string: a UTF-8 encoded binary. It's printed surrounded by
-    "double quotes" because all UTF-8 encoded codepoints in it are printable.
+    "double quotes" because all UTF-8 encoded code points in it are printable.
     """
 
     [
@@ -191,7 +216,7 @@ defimpl IEx.Info, for: BitString do
     desc = """
     This is a string: a UTF-8 encoded binary. It's printed with the `<<>>`
     syntax (as opposed to double quotes) because it contains non-printable
-    UTF-8 encoded codepoints (the first non-printable codepoint being
+    UTF-8 encoded code points (the first non-printable code point being
     `#{inspect(first_non_printable)}`).
     """
 

@@ -17,13 +17,15 @@ defmodule Mix.Compilers.Erlang do
   For example, a simple compiler for Lisp Flavored Erlang
   would be implemented like:
 
-      manifest = Path.join Mix.Project.manifest_path, "compile.lfe"
-      dest = Mix.Project.compile_path
+      manifest = Path.join(Mix.Project.manifest_path(), "compile.lfe")
+      dest = Mix.Project.compile_path()
 
-      compile manifest, [{"src", dest}], :lfe, :beam, opts, fn input, output ->
-        :lfe_comp.file(to_erl_file(input),
-                       [{:outdir, Path.dirname(output)}, :return, :report])
-      end
+      compile(manifest, [{"src", dest}], :lfe, :beam, opts, fn input, output ->
+        :lfe_comp.file(
+          to_erl_file(input),
+          [{:outdir, Path.dirname(output)}, :return, :report]
+        )
+      end)
 
   The command above will:
 
@@ -56,7 +58,6 @@ defmodule Mix.Compilers.Erlang do
 
   def compile(manifest, mappings, src_ext, dest_ext, force, callback)
       when is_boolean(force) or is_nil(force) do
-    # TODO: Remove this on v2.0
     IO.warn(
       "Mix.Compilers.Erlang.compile/6 with a boolean or nil as 5th argument is deprecated, " <>
         "please pass [force: true] or [] instead"
@@ -82,7 +83,7 @@ defmodule Mix.Compilers.Erlang do
     stale = for {:stale, src, dest} <- mappings, do: {src, dest}
 
     # Get the previous entries from the manifest
-    timestamp = :calendar.universal_time()
+    timestamp = System.os_time(:second)
     entries = read_manifest(manifest)
 
     # Files to remove are the ones in the manifest
@@ -227,7 +228,6 @@ defmodule Mix.Compilers.Erlang do
   end
 
   defp do_compile({input, output}, callback, timestamp, verbose) do
-    # TODO: Deprecate {:ok, _} and :error return on Elixir v1.8
     case callback.(input, output) do
       {:ok, _, warnings} ->
         File.touch!(output, timestamp)
@@ -238,9 +238,19 @@ defmodule Mix.Compilers.Erlang do
         {:error, [], warnings, errors}
 
       {:ok, _} ->
+        IO.warn(
+          "returning {:ok, contents} in the Mix.Compilers.Erlang.compile/6 callback is deprecated " <>
+            "The callback should return {:ok, contents, warnings} or {:error, errors, warnings}"
+        )
+
         {:ok, [], [], []}
 
       :error ->
+        IO.warn(
+          "returning :error in the Mix.Compilers.Erlang.compile/6 callback is deprecated " <>
+            "The callback should return {:ok, contents, warnings} or {:error, errors, warnings}"
+        )
+
         {:error, [], [], []}
     end
   end
@@ -261,9 +271,11 @@ defmodule Mix.Compilers.Erlang do
   defp to_diagnostics(warnings_or_errors, severity) do
     for {file, issues} <- warnings_or_errors,
         {line, module, data} <- issues do
+      position = if is_integer(line) and line >= 1, do: line
+
       %Mix.Task.Compiler.Diagnostic{
         file: Path.absname(file),
-        position: line,
+        position: position,
         message: to_string(module.format_error(data)),
         severity: severity,
         compiler_name: to_string(module),

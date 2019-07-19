@@ -76,17 +76,91 @@ defmodule TypespecTest do
     end
 
     test "undefined type" do
-      assert_raise CompileError, ~r"type foo\(\) undefined", fn ->
+      assert_raise CompileError, ~r"type foo/0 undefined", fn ->
         test_module do
           @type omg :: foo
         end
       end
+
+      assert_raise CompileError, ~r"type foo/2 undefined", fn ->
+        test_module do
+          @type omg :: foo(atom, integer)
+        end
+      end
+
+      assert_raise CompileError, ~r"type bar/0 undefined", fn ->
+        test_module do
+          @spec foo(bar, integer) :: {atom, integer}
+          def foo(var1, var2), do: {var1, var2}
+        end
+      end
     end
 
-    test "undefined spec for function" do
+    test "redefined type" do
+      assert_raise CompileError, ~r"type foo/0 is already defined", fn ->
+        test_module do
+          @type foo :: atom
+          @type foo :: integer
+        end
+      end
+
+      assert_raise CompileError, ~r"type foo/2 is already defined", fn ->
+        test_module do
+          @type foo :: atom
+          @type foo(var1, var2) :: {var1, var2}
+          @type foo(x, y) :: {x, y}
+        end
+      end
+
+      assert_raise CompileError, ~r"type foo/0 is already defined", fn ->
+        test_module do
+          @type foo :: atom
+          @typep foo :: integer
+        end
+      end
+    end
+
+    test "type variable unused (singleton type variable)" do
+      assert_raise CompileError, ~r"type variable x is unused", fn ->
+        test_module do
+          @type foo(x) :: integer
+        end
+      end
+    end
+
+    test "@type with a variable starting with underscore" do
+      test_module do
+        assert @type(foo(_hello) :: integer) == :ok
+      end
+    end
+
+    test "type variable _ should be invalid" do
+      assert_raise CompileError, ~r"type variable '_' is invalid", fn ->
+        test_module do
+          @type foo(_) :: integer
+        end
+      end
+
+      assert_raise CompileError, ~r"type variable '_' is invalid", fn ->
+        test_module do
+          @type foo(_, _) :: integer
+        end
+      end
+    end
+
+    test "spec for undefined function" do
       assert_raise CompileError, ~r"spec for undefined function omg/0", fn ->
         test_module do
           @spec omg :: atom
+        end
+      end
+    end
+
+    test "spec variable unused (singleton type variable)" do
+      assert_raise CompileError, ~r"type variable x is unused", fn ->
+        test_module do
+          @spec foo(x, integer) :: integer when x: var
+          def foo(x, y), do: x + y
         end
       end
     end
@@ -313,9 +387,33 @@ defmodule TypespecTest do
     end
 
     test "@type with invalid binary spec" do
-      assert_raise CompileError, fn ->
+      assert_raise CompileError, ~r"invalid binary specification", fn ->
         test_module do
           @type my_type :: <<_::3*8>>
+        end
+      end
+
+      assert_raise CompileError, ~r"invalid binary specification", fn ->
+        test_module do
+          @type my_type :: <<_::atom>>
+        end
+      end
+
+      assert_raise CompileError, ~r"invalid binary specification", fn ->
+        test_module do
+          @type my_type :: <<_::(-4)>>
+        end
+      end
+
+      assert_raise CompileError, ~r"invalid binary specification", fn ->
+        test_module do
+          @type my_type :: <<_::3, _::_*atom>>
+        end
+      end
+
+      assert_raise CompileError, ~r"invalid binary specification", fn ->
+        test_module do
+          @type my_type :: <<_::3, _::_*(-8)>>
         end
       end
     end
@@ -323,11 +421,25 @@ defmodule TypespecTest do
     test "@type with a range op" do
       bytecode =
         test_module do
-          @type my_type :: 1..10
+          @type range1 :: 1..10
+          @type range2 :: -1..1
         end
 
-      assert [type: {:my_type, {:type, _, :range, [{:integer, _, 1}, {:integer, _, 10}]}, []}] =
-               types(bytecode)
+      assert [
+               {:type, {:range1, {:type, _, :range, range1_args}, []}},
+               {:type, {:range2, {:type, _, :range, range2_args}, []}}
+             ] = types(bytecode)
+
+      assert [{:integer, _, 1}, {:integer, _, 10}] = range1_args
+      assert [{:op, _, :-, {:integer, _, 1}}, {:integer, _, 1}] = range2_args
+    end
+
+    test "@type with invalid range" do
+      assert_raise CompileError, ~r"invalid range specification", fn ->
+        test_module do
+          @type my_type :: atom..10
+        end
+      end
     end
 
     test "@type with a keyword map" do
@@ -368,14 +480,42 @@ defmodule TypespecTest do
       assert {:type, _, :map_field_exact, [{:atom, _, :other}, {:type, _, :term, []}]} = arg2
     end
 
+    @fields Enum.map(10..42, &{:"f#{&1}", :ok})
+
+    test "@type with a large struct" do
+      bytecode =
+        test_module do
+          defstruct unquote(@fields)
+          @type my_type :: %TypespecSample{unquote_splicing(@fields)}
+        end
+
+      assert [type: {:my_type, type, []}] = types(bytecode)
+      assert {:type, _, :map, [struct, arg1, arg2 | _]} = type
+      assert {:type, _, :map_field_exact, struct_args} = struct
+      assert [{:atom, _, :__struct__}, {:atom, _, TypespecSample}] = struct_args
+      assert {:type, _, :map_field_exact, [{:atom, _, :f10}, {:atom, _, :ok}]} = arg1
+      assert {:type, _, :map_field_exact, [{:atom, _, :f11}, {:atom, _, :ok}]} = arg2
+    end
+
+    test "@type with struct does not @enforce_keys" do
+      bytecode =
+        test_module do
+          @enforce_keys [:other]
+          defstruct hello: nil, other: nil
+          @type my_type :: %TypespecSample{hello: :world}
+        end
+
+      assert [type: {:my_type, type, []}] = types(bytecode)
+    end
+
     test "@type with undefined struct" do
-      assert_raise UndefinedFunctionError, fn ->
+      assert_raise CompileError, ~r"ThisModuleDoesNotExist.__struct__/0 is undefined", fn ->
         test_module do
           @type my_type :: %ThisModuleDoesNotExist{}
         end
       end
 
-      assert_raise CompileError, ~r"struct is not defined for TypespecSample", fn ->
+      assert_raise CompileError, ~r"cannot access struct TypespecTest.TypespecSample", fn ->
         test_module do
           @type my_type :: %TypespecSample{}
         end
@@ -383,7 +523,7 @@ defmodule TypespecTest do
     end
 
     test "@type with a struct with undefined field" do
-      assert_raise CompileError, ~r"undefined field no_field on struct TypespecSample", fn ->
+      assert_raise CompileError, ~r"undefined field :no_field on struct TypespecSample", fn ->
         test_module do
           defstruct [:hello, :eric]
           @type my_type :: %TypespecSample{no_field: :world}
@@ -392,7 +532,7 @@ defmodule TypespecTest do
     end
 
     test "@type when overriding Elixir built-in" do
-      assert_raise CompileError, ~r"type struct/0 is a builtin type", fn ->
+      assert_raise CompileError, ~r"type struct/0 is a built-in type", fn ->
         test_module do
           @type struct :: :oops
         end
@@ -400,7 +540,7 @@ defmodule TypespecTest do
     end
 
     test "@type when overriding Erlang built-in" do
-      assert_raise CompileError, ~r"type list/0 is a builtin type", fn ->
+      assert_raise CompileError, ~r"type list/0 is a built-in type", fn ->
         test_module do
           @type list :: :oops
         end
@@ -418,8 +558,8 @@ defmodule TypespecTest do
       assert [type: {:my_type, type, []}] = types(bytecode)
       assert {:type, _, :tuple, [timestamp, term, foo]} = type
       assert {:atom, 0, :timestamp} = timestamp
-      assert {:type, 0, :term, []} = term
-      assert {:atom, 0, :foo} = foo
+      assert {:ann_type, 0, [{:var, 0, :date}, {:type, 0, :term, []}]} = term
+      assert {:ann_type, 0, [{:var, 0, :time}, {:atom, 0, :foo}]} = foo
     end
 
     test "@type with private record" do
@@ -432,7 +572,12 @@ defmodule TypespecTest do
 
       assert [type: {:my_type, type, []}] = types(bytecode)
       assert {:type, _, :tuple, args} = type
-      assert [{:atom, 0, :timestamp}, {:type, 0, :term, []}, {:atom, 0, :foo}] = args
+
+      assert [
+               {:atom, 0, :timestamp},
+               {:ann_type, 0, [{:var, 0, :date}, {:type, 0, :term, []}]},
+               {:ann_type, 0, [{:var, 0, :time}, {:atom, 0, :foo}]}
+             ] = args
     end
 
     test "@type with named record" do
@@ -446,8 +591,8 @@ defmodule TypespecTest do
       assert [type: {:my_type, type, []}] = types(bytecode)
       assert {:type, _, :tuple, [my_timestamp, term, foo]} = type
       assert {:atom, 0, :my_timestamp} = my_timestamp
-      assert {:type, 0, :term, []} = term
-      assert {:atom, 0, :foo} = foo
+      assert {:ann_type, 0, [{:var, 0, :date}, {:type, 0, :term, []}]} = term
+      assert {:ann_type, 0, [{:var, 0, :time}, {:atom, 0, :foo}]}
     end
 
     test "@type with undefined record" do
@@ -466,6 +611,25 @@ defmodule TypespecTest do
           @type my_type :: record(:timestamp, no_field: :foo)
         end
       end
+    end
+
+    test "@type with a record which declares the name as the type `atom` rather than an atom literal" do
+      assert_raise CompileError, ~r"expected the record name to be an atom literal", fn ->
+        test_module do
+          @type my_type :: record(atom, field: :foo)
+        end
+      end
+    end
+
+    test "@type can be named record" do
+      bytecode =
+        test_module do
+          @type record :: binary
+          @spec foo?(record) :: boolean
+          def foo?(_), do: true
+        end
+
+      assert [type: {:record, {:type, _, :binary, []}, []}] = types(bytecode)
     end
 
     test "@type with an invalid map notation" do
@@ -665,6 +829,17 @@ defmodule TypespecTest do
       end
     end
 
+    test "spec_to_callback/2" do
+      bytecode =
+        test_module do
+          @spec foo() :: term()
+          def foo(), do: :ok
+          Kernel.Typespec.spec_to_callback(__MODULE__, {:foo, 0})
+        end
+
+      assert specs(bytecode) == callbacks(bytecode)
+    end
+
     test "@spec(spec)" do
       bytecode =
         test_module do
@@ -773,42 +948,42 @@ defmodule TypespecTest do
       end
 
       assert [
-               {:type, {:::, _, [{:type1, _, _}, {:boolean, _, _}]},
+               {:type, {:"::", _, [{:type1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.type1()
 
       assert [
-               {:type, {:::, _, [{:type3, _, _}, {:pid, _, _}]},
+               {:type, {:"::", _, [{:type3, _, _}, {:pid, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}},
-               {:type, {:::, _, [{:type2, _, _}, {:atom, _, _}]},
+               {:type, {:"::", _, [{:type2, _, _}, {:atom, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}},
-               {:type, {:::, _, [{:type1, _, _}, {:boolean, _, _}]},
+               {:type, {:"::", _, [{:type1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.type2()
 
       assert [
-               {:opaque, {:::, _, [{:opaque1, _, _}, {:boolean, _, _}]},
+               {:opaque, {:"::", _, [{:opaque1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.opaque1()
 
       assert [
-               {:opaque, {:::, _, [{:opaque3, _, _}, {:pid, _, _}]},
+               {:opaque, {:"::", _, [{:opaque3, _, _}, {:pid, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}},
-               {:opaque, {:::, _, [{:opaque2, _, _}, {:atom, _, _}]},
+               {:opaque, {:"::", _, [{:opaque2, _, _}, {:atom, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}},
-               {:opaque, {:::, _, [{:opaque1, _, _}, {:boolean, _, _}]},
+               {:opaque, {:"::", _, [{:opaque1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.opaque2()
 
       assert [
-               {:typep, {:::, _, [{:typep1, _, _}, {:boolean, _, _}]},
+               {:typep, {:"::", _, [{:typep1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.typep1()
 
       assert [
-               {:typep, {:::, _, [{:typep2, _, _}, {:atom, _, _}]},
+               {:typep, {:"::", _, [{:typep2, _, _}, {:atom, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}},
-               {:typep, {:::, _, [{:typep1, _, _}, {:boolean, _, _}]},
+               {:typep, {:"::", _, [{:typep1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.TypeModuleAttributes, _}}
              ] = TypeModuleAttributes.typep2()
     after
@@ -839,37 +1014,37 @@ defmodule TypespecTest do
       end
 
       assert [
-               {:spec, {:::, _, [{:spec1, _, _}, {:boolean, _, _}]},
+               {:spec, {:"::", _, [{:spec1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}}
              ] = SpecModuleAttributes.spec1()
 
       assert [
-               {:spec, {:::, _, [{:spec2, _, _}, {:atom, _, _}]},
+               {:spec, {:"::", _, [{:spec2, _, _}, {:atom, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}},
-               {:spec, {:::, _, [{:spec1, _, _}, {:boolean, _, _}]},
+               {:spec, {:"::", _, [{:spec1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}}
              ] = SpecModuleAttributes.spec2()
 
       assert [
-               {:spec, {:::, _, [{:spec3, _, _}, {:pid, _, _}]},
+               {:spec, {:"::", _, [{:spec3, _, _}, {:pid, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}},
-               {:spec, {:::, _, [{:spec2, _, _}, {:atom, _, _}]},
+               {:spec, {:"::", _, [{:spec2, _, _}, {:atom, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}},
-               {:spec, {:::, _, [{:spec1, _, _}, {:boolean, _, _}]},
+               {:spec, {:"::", _, [{:spec1, _, _}, {:boolean, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}}
              ] = SpecModuleAttributes.spec4()
 
       assert [
-               {:callback, {:::, _, [{:callback2, _, _}, {:boolean, _, _}]},
+               {:callback, {:"::", _, [{:callback2, _, _}, {:boolean, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}},
-               {:callback, {:::, _, [{:callback1, _, _}, {:integer, _, _}]},
+               {:callback, {:"::", _, [{:callback1, _, _}, {:integer, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}}
              ] = SpecModuleAttributes.callback()
 
       assert [
-               {:macrocallback, {:::, _, [{:macrocallback2, _, _}, {:boolean, _, _}]},
+               {:macrocallback, {:"::", _, [{:macrocallback2, _, _}, {:boolean, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}},
-               {:macrocallback, {:::, _, [{:macrocallback1, _, _}, {:integer, _, _}]},
+               {:macrocallback, {:"::", _, [{:macrocallback1, _, _}, {:integer, _, _}]},
                 {TypespecTest.SpecModuleAttributes, _}}
              ] = SpecModuleAttributes.macrocallback()
     after
@@ -1003,7 +1178,7 @@ defmodule TypespecTest do
       type = {:my_type, {:paren_type, 0, [{:type, 0, :integer, []}]}, []}
 
       assert Code.Typespec.type_to_quoted(type) ==
-               {:::, [], [{:my_type, [], []}, {:integer, [line: 0], []}]}
+               {:"::", [], [{:my_type, [], []}, {:integer, [line: 0], []}]}
     end
 
     test "spec_to_quoted" do
@@ -1140,36 +1315,36 @@ defmodule TypespecTest do
           quote(do: @type(literal_2_element_tuple() :: {1, 2})),
 
           ## Built-in types
-          quote(do: @type(builtin_term() :: term())),
-          quote(do: @type(builtin_arity() :: arity())),
-          quote(do: @type(builtin_as_boolean() :: as_boolean(:t))),
-          quote(do: @type(builtin_binary() :: binary())),
-          quote(do: @type(builtin_bitstring() :: bitstring())),
-          quote(do: @type(builtin_boolean() :: boolean())),
-          quote(do: @type(builtin_byte() :: byte())),
-          quote(do: @type(builtin_char() :: char())),
-          quote(do: @type(builtin_charlist() :: charlist())),
-          quote(do: @type(builtin_nonempty_charlist() :: nonempty_charlist())),
-          quote(do: @type(builtin_fun() :: fun())),
-          quote(do: @type(builtin_function() :: function())),
-          quote(do: @type(builtin_identifier() :: identifier())),
-          quote(do: @type(builtin_iodata() :: iodata())),
-          quote(do: @type(builtin_iolist() :: iolist())),
-          quote(do: @type(builtin_keyword() :: keyword())),
-          quote(do: @type(builtin_keyword_value_type() :: keyword(:t))),
-          quote(do: @type(builtin_list() :: list())),
-          quote(do: @type(builtin_nonempty_list() :: nonempty_list())),
-          quote(do: @type(builtin_maybe_improper_list() :: maybe_improper_list())),
+          quote(do: @type(built_in_term() :: term())),
+          quote(do: @type(built_in_arity() :: arity())),
+          quote(do: @type(built_in_as_boolean() :: as_boolean(:t))),
+          quote(do: @type(built_in_binary() :: binary())),
+          quote(do: @type(built_in_bitstring() :: bitstring())),
+          quote(do: @type(built_in_boolean() :: boolean())),
+          quote(do: @type(built_in_byte() :: byte())),
+          quote(do: @type(built_in_char() :: char())),
+          quote(do: @type(built_in_charlist() :: charlist())),
+          quote(do: @type(built_in_nonempty_charlist() :: nonempty_charlist())),
+          quote(do: @type(built_in_fun() :: fun())),
+          quote(do: @type(built_in_function() :: function())),
+          quote(do: @type(built_in_identifier() :: identifier())),
+          quote(do: @type(built_in_iodata() :: iodata())),
+          quote(do: @type(built_in_iolist() :: iolist())),
+          quote(do: @type(built_in_keyword() :: keyword())),
+          quote(do: @type(built_in_keyword_value_type() :: keyword(:t))),
+          quote(do: @type(built_in_list() :: list())),
+          quote(do: @type(built_in_nonempty_list() :: nonempty_list())),
+          quote(do: @type(built_in_maybe_improper_list() :: maybe_improper_list())),
           quote(
-            do: @type(builtin_nonempty_maybe_improper_list() :: nonempty_maybe_improper_list())
+            do: @type(built_in_nonempty_maybe_improper_list() :: nonempty_maybe_improper_list())
           ),
-          quote(do: @type(builtin_mfa() :: mfa())),
-          quote(do: @type(builtin_module() :: module())),
-          quote(do: @type(builtin_no_return() :: no_return())),
-          quote(do: @type(builtin_node() :: node())),
-          quote(do: @type(builtin_number() :: number())),
-          quote(do: @type(builtin_struct() :: struct())),
-          quote(do: @type(builtin_timeout() :: timeout())),
+          quote(do: @type(built_in_mfa() :: mfa())),
+          quote(do: @type(built_in_module() :: module())),
+          quote(do: @type(built_in_no_return() :: no_return())),
+          quote(do: @type(built_in_node() :: node())),
+          quote(do: @type(built_in_number() :: number())),
+          quote(do: @type(built_in_struct() :: struct())),
+          quote(do: @type(built_in_timeout() :: timeout())),
 
           ## Remote types
           quote(do: @type(remote_enum_t0() :: Enum.t())),
@@ -1212,11 +1387,11 @@ defmodule TypespecTest do
             assert ast_string ==
                      "@type(literal_struct_all_fields_key_type() :: %TypespecTest.SomeStruct{key: integer()})"
 
-          {:builtin_fun, _, _} ->
-            assert ast_string == "@type(builtin_fun() :: (... -> any()))"
+          {:built_in_fun, _, _} ->
+            assert ast_string == "@type(built_in_fun() :: (... -> any()))"
 
-          {:builtin_nonempty_list, _, _} ->
-            assert ast_string == "@type(builtin_nonempty_list() :: [...])"
+          {:built_in_nonempty_list, _, _} ->
+            assert ast_string == "@type(built_in_nonempty_list() :: [...])"
 
           _ ->
             assert ast_string == Macro.to_string(definition)

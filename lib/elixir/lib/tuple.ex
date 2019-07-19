@@ -4,10 +4,10 @@ defmodule Tuple do
 
   Please note the following functions for tuples are found in `Kernel`:
 
-    * `elem/2` - access a tuple by index
-    * `put_elem/3` - insert a value into a tuple by index
-    * `tuple_size/1` - get the number of elements in a tuple
-    
+    * `elem/2` - accesses a tuple by index
+    * `put_elem/3` - inserts a value into a tuple by index
+    * `tuple_size/1` - gets the number of elements in a tuple
+
   Tuples are intended as fixed-size containers for multiple elements.
   To manipulate a collection of elements, use a list instead. `Enum`
   functions do not work on tuples.
@@ -20,27 +20,28 @@ defmodule Tuple do
       {1, :two, "three"}
 
   A tuple may contain elements of different types, which are stored
-  contiguously in memory. Accessing any element takes constant time, 
-  but modifying a tuple, which produces a shallow copy, takes linear time. 
+  contiguously in memory. Accessing any element takes constant time,
+  but modifying a tuple, which produces a shallow copy, takes linear time.
   Tuples are good for reading data while lists are better for traversals.
 
   Tuples are typically used either when a function has multiple return values
-  or for error handling. `File.read/1` returns `{:ok, contents}` if reading 
-  the given file is successful, or else `{:error, reason}` such as when 
+  or for error handling. `File.read/1` returns `{:ok, contents}` if reading
+  the given file is successful, or else `{:error, reason}` such as when
   the file does not exist.
 
   The functions in this module that add and remove elements from tuples are
   rarely used in practice, as they typically imply tuples are being used as
-  collections. To append to a tuple, it is preferrable to use pattern matching:
+  collections. To append to a tuple, it is preferable to extract the elements
+  from the old tuple with pattern matching, and then create a new tuple:
 
       tuple = {:ok, :example}
 
       # Avoid
-      Tuple.insert_at(tuple, 2, %{})
+      result = Tuple.insert_at(tuple, 2, %{})
 
       # Prefer
       {:ok, atom} = tuple
-      {:ok, atom, %{}}
+      result = {:ok, atom, %{}}
 
   """
 

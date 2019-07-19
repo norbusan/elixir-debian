@@ -123,7 +123,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       Mix.shell().flush
       purge([A, B])
 
-      future = {{2020, 1, 1}, {0, 0, 0}}
+      future = {{2038, 1, 1}, {0, 0, 0}}
       File.touch!("lib/a.ex", future)
       Mix.Tasks.Compile.Elixir.run(["--verbose"])
 
@@ -136,7 +136,6 @@ defmodule Mix.Tasks.Compile.ElixirTest do
         "warning: mtime (modified time) for \"lib/b.ex\" was set to the future, resetting to now"
 
       refute_received {:mix_shell, :error, [^message]}
-
       assert_received {:mix_shell, :info, ["Compiled lib/a.ex"]}
       refute_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
 
@@ -177,7 +176,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       Mix.shell().flush
       purge([A, B])
 
-      future = {{2020, 1, 1}, {0, 0, 0}}
+      future = {{2038, 1, 1}, {0, 0, 0}}
       File.touch!("lib/b.ex", future)
       Mix.Tasks.Compile.Elixir.run(["--verbose"])
 
@@ -226,7 +225,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       purge([A, B])
 
       # Update local existing resource
-      File.touch!("lib/a.eex", {{2030, 1, 1}, {0, 0, 0}})
+      File.touch!("lib/a.eex", {{2038, 1, 1}, {0, 0, 0}})
       assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
       assert_received {:mix_shell, :info, ["Compiled lib/a.ex"]}
       refute_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
@@ -238,7 +237,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       purge([A, B])
 
       # Update external existing resource
-      File.touch!(tmp, {{2030, 1, 1}, {0, 0, 0}})
+      File.touch!(tmp, {{2038, 1, 1}, {0, 0, 0}})
       assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
       assert_received {:mix_shell, :info, ["Compiled lib/a.ex"]}
       refute_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
@@ -328,7 +327,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       assert_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
       purge([A, B])
 
-      future = {{2020, 1, 1}, {0, 0, 0}}
+      future = {{2038, 1, 1}, {0, 0, 0}}
       File.touch!("lib/a.ex", future)
 
       assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
@@ -433,7 +432,7 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       Mix.shell().flush
       purge([A, B])
 
-      future = {{2020, 1, 1}, {0, 0, 0}}
+      future = {{2038, 1, 1}, {0, 0, 0}}
       File.touch!("lib/a.ex", future)
       Mix.Tasks.Compile.Elixir.run(["--verbose"])
 
@@ -453,15 +452,13 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       # First compilation should print unused variable warning
       import ExUnit.CaptureIO
 
-      output =
-        capture_io(:standard_error, fn ->
-          Mix.Tasks.Compile.Elixir.run([]) == :ok
-        end)
+      assert capture_io(:standard_error, fn ->
+               Mix.Tasks.Compile.Elixir.run([]) == :ok
+             end) =~ "variable \"unused\" is unused"
 
-      # Should also print warning
       assert capture_io(:standard_error, fn ->
                Mix.Tasks.Compile.Elixir.run(["--all-warnings"])
-             end) == output
+             end) =~ "variable \"unused\" is unused"
 
       # Should not print warning once fixed
       File.write!("lib/a.ex", """
@@ -488,8 +485,9 @@ defmodule Mix.Tasks.Compile.ElixirTest do
         file: Path.absname("lib/a.ex"),
         severity: :warning,
         position: 2,
-        message: "variable \"unused\" is unused",
-        compiler_name: "Elixir"
+        compiler_name: "Elixir",
+        message:
+          "variable \"unused\" is unused (if the variable is not meant to be used, prefix it with an underscore)"
       }
 
       ExUnit.CaptureIO.capture_io(:standard_error, fn ->
@@ -502,8 +500,10 @@ defmodule Mix.Tasks.Compile.ElixirTest do
     end)
   end
 
-  test "returns error diagnostics" do
-    in_fixture("no_mixfile", fn ->
+  test "returns error diagnostics", context do
+    in_tmp(context.test, fn ->
+      File.mkdir_p!("lib")
+
       File.write!("lib/a.ex", """
       defmodule A do
         def my_fn(), do: $$$

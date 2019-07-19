@@ -27,7 +27,6 @@ defmodule Mix.Tasks.Profile.Fprof do
     * `--callers` - prints detailed information about immediate callers and called functions
     * `--details` - includes profile data for each profiled process
     * `--sort key` - sorts the output by given key: `acc` (default) or `own`
-    * `--config`, `-c`  - loads the given configuration file
     * `--eval`, `-e` - evaluates the given code
     * `--require`, `-r` - requires pattern before running the command
     * `--parallel`, `-p` - makes all requires parallel
@@ -128,6 +127,7 @@ defmodule Mix.Tasks.Profile.Fprof do
 
   @aliases [r: :require, p: :parallel, e: :eval, c: :config]
 
+  @impl true
   def run(args) do
     {opts, head} = OptionParser.parse_head!(args, aliases: @aliases, strict: @switches)
     Mix.Task.reenable("profile.fprof")
@@ -164,7 +164,7 @@ defmodule Mix.Tasks.Profile.Fprof do
   defp parse_opt(other), do: other
 
   @doc """
-  Allows to programatically run the `fprof` profiler on expression in `fun`.
+  Allows to programmatically run the `fprof` profiler on expression in `fun`.
 
   ## Options
 

@@ -1,7 +1,7 @@
 defmodule Kernel.ParallelRequire do
-  # TODO: Deprecate on Elixir v1.8
   @moduledoc false
 
+  @deprecated "Use Kernel.ParallelCompiler.require/2 instead"
   def files(files, callbacks \\ [])
 
   def files(files, callback) when is_function(callback, 1) do

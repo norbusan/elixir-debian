@@ -24,7 +24,7 @@ defmodule PathHelpers do
   end
 
   def elixir(args) do
-    runcmd(elixir_executable(), args)
+    run_cmd(elixir_executable(), args)
   end
 
   def elixir_executable do
@@ -32,7 +32,7 @@ defmodule PathHelpers do
   end
 
   def elixirc(args) do
-    runcmd(elixirc_executable(), args)
+    run_cmd(elixirc_executable(), args)
   end
 
   def elixirc_executable do
@@ -46,12 +46,10 @@ defmodule PathHelpers do
     res
   end
 
-  defp runcmd(executable, args) do
-    :os.cmd(
-      :binary.bin_to_list(
-        "#{executable} #{IO.chardata_to_string(args)}#{redirect_std_err_on_win()}"
-      )
-    )
+  defp run_cmd(executable, args) do
+    '#{executable} #{IO.chardata_to_string(args)}#{redirect_std_err_on_win()}'
+    |> :os.cmd()
+    |> :binary.list_to_bin()
   end
 
   defp executable_path(name) do
@@ -86,10 +84,11 @@ defmodule CodeFormatterHelpers do
 end
 
 assert_timeout = String.to_integer(System.get_env("ELIXIR_ASSERT_TIMEOUT") || "500")
-exclude = if PathHelpers.windows?(), do: [unix: true], else: [windows: true]
+epmd_exclude = if match?({_, 0}, System.cmd("epmd", ["-daemon"])), do: [], else: [epmd: true]
+os_exclude = if PathHelpers.windows?(), do: [unix: true], else: [windows: true]
 
 ExUnit.start(
   trace: "--trace" in System.argv(),
   assert_receive_timeout: assert_timeout,
-  exclude: exclude
+  exclude: epmd_exclude ++ os_exclude
 )

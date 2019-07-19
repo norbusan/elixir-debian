@@ -1,6 +1,4 @@
 defmodule GenEvent do
-  # TODO: Remove by 2.0
-
   # Functions from this module are deprecated in elixir_dispatch.
 
   @moduledoc """
@@ -90,12 +88,10 @@ defmodule GenEvent do
   @deprecated message
   @doc false
   defmacro __using__(_) do
-    %{file: file, line: line} = __CALLER__
-
     deprecation_message =
       "the GenEvent module is deprecated, see its documentation for alternatives"
 
-    :elixir_errors.warn(line, file, deprecation_message)
+    IO.warn(deprecation_message, Macro.Env.stacktrace(__CALLER__))
 
     quote location: :keep do
       @behaviour :gen_event
@@ -328,14 +324,7 @@ defmodule GenEvent do
 
   def init_it(starter, parent, name, _mod, _args, options) do
     Process.put(:"$initial_call", {__MODULE__, :init_it, 6})
-
-    debug =
-      if function_exported?(:gen, :debug_options, 2) do
-        :gen.debug_options(name, options)
-      else
-        :gen.debug_options(options)
-      end
-
+    debug = :gen.debug_options(name, options)
     :proc_lib.init_ack(starter, {:ok, self()})
     loop(parent, name(name), [], debug, false)
   end

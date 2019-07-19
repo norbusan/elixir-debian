@@ -7,7 +7,7 @@ defmodule Regex do
   in the [`:re` module documentation](http://www.erlang.org/doc/man/re.html).
 
   Regular expressions in Elixir can be created using the sigils
-  [`~r`](`Kernel.sigil_r/2`) or [`~R`](`Kernel.sigil_R/2`):
+  `~r` (see `Kernel.sigil_r/2`) or `~R` (see `Kernel.sigil_R/2`):
 
       # A simple regular expression that matches foo anywhere in the string
       ~r/foo/
@@ -33,19 +33,6 @@ defmodule Regex do
 
       ~r/(?<foo>.)(?<bar>.)/.source == ~r/(?<foo>.)(?<bar>.)/.source
 
-  ## Precompilation
-
-  Regular expressions built with sigil are precompiled and stored in `.beam`
-  files. This may be a problem if you are precompiling Elixir to run in
-  different OTP releases, as OTP releases may update the underlying regular
-  expression engine at any time.
-
-  For such reasons, we always recommend precompiling Elixir projects using
-  the Erlang/OTP version meant to run in production. In case cross-compilation is
-  really necessary, you can manually invoke `Regex.recompile/1` or
-  `Regex.recompile!/1` to perform a runtime version check and recompile the
-  regex if necessary.
-
   ## Modifiers
 
   The modifiers available when creating a Regex are:
@@ -58,7 +45,7 @@ defmodule Regex do
 
     * `dotall` (s) - causes dot to match newlines and also set newline to
       anycrlf; the new line setting can be overridden by setting `(*CR)` or
-      `(*LF)` or `(*CRLF)` or `(*ANY)` according to re documentation
+      `(*LF)` or `(*CRLF)` or `(*ANY)` according to `:re` documentation
 
     * `multiline` (m) - causes `^` and `$` to mark the beginning and end of
       each line; use `\A` and `\z` to match the end or beginning of the string
@@ -79,7 +66,7 @@ defmodule Regex do
     * `no_auto_capture` - not available, use `?:` instead
     * `newline` - not available, use `(*CR)` or `(*LF)` or `(*CRLF)` or
       `(*ANYCRLF)` or `(*ANY)` at the beginning of the regexp according to the
-      re documentation
+      `:re` documentation
 
   ## Captures
 
@@ -103,6 +90,56 @@ defmodule Regex do
 
     * `list(binary)` - a list of named captures to capture
 
+  ## Character classes
+
+  Regex supports several built in named character classes. These are used by
+  enclosing the class name in `[: :]` inside a group. For example:
+
+      iex> String.match?("123", ~r/^[[:alnum:]]+$/)
+      true
+      iex> String.match?("123 456", ~r/^[[:alnum:][:blank:]]+$/)
+      true
+
+  The supported class names are:
+
+    * alnum - Letters and digits
+    * alpha - Letters
+    * ascii - Character codes 0-127
+    * blank - Space or tab only
+    * cntrl - Control characters
+    * digit - Decimal digits (same as \\d)
+    * graph - Printing characters, excluding space
+    * lower - Lowercase letters
+    * print - Printing characters, including space
+    * punct - Printing characters, excluding letters, digits, and space
+    * space - Whitespace (the same as \s from PCRE 8.34)
+    * upper - Uppercase letters
+    * word  - "Word" characters (same as \w)
+    * xdigit - Hexadecimal digits
+
+  Note the behaviour of those classes may change according to the Unicode
+  and other modifiers:
+
+      iex> String.match?("josé", ~r/^[[:lower:]]+$/)
+      false
+      iex> String.match?("josé", ~r/^[[:lower:]]+$/u)
+      true
+
+  ## Precompilation
+
+  Regular expressions built with sigil are precompiled and stored in `.beam`
+  files. Precompiled regexes will be checked in runtime and may work slower
+  between operating systems and OTP releases. This is rarely a problem, as most Elixir code
+  shared during development is compiled on the target (such as dependencies,
+  archives, and escripts) and, when running in production, the code must either
+  be compiled on the target (via `mix compile` or similar) or released on the
+  host (via `mix releases` or similar) with a matching OTP, OS and architecture
+  as as the target.
+
+  If you know you are running on a different system that the current one and
+  you are doing multiple matches with the regex, you can manually invoke
+  `Regex.recompile/1` or `Regex.recompile!/1` to perform a runtime version
+  check and recompile the regex if necessary.
   """
 
   defstruct re_pattern: nil, source: "", opts: "", re_version: ""
@@ -118,7 +155,7 @@ defmodule Regex do
 
   The given options can either be a binary with the characters
   representing the same regex options given to the
-  [`~r`](`Kernel.sigil_r/2`) sigil, or a list of options, as
+  `~r` (see `Kernel.sigil_r/2`) sigil, or a list of options, as
   expected by the Erlang's `:re` module.
 
   It returns `{:ok, regex}` in case of success,
@@ -134,7 +171,7 @@ defmodule Regex do
 
   """
   @spec compile(binary, binary | [term]) :: {:ok, t} | {:error, any}
-  def compile(source, options \\ "") do
+  def compile(source, options \\ "") when is_binary(source) do
     compile(source, options, version())
   end
 
@@ -152,7 +189,7 @@ defmodule Regex do
     compile(source, options, "", version)
   end
 
-  defp compile(source, opts, doc_opts, version) when is_binary(source) do
+  defp compile(source, opts, doc_opts, version) do
     case :re.compile(source, opts) do
       {:ok, re_pattern} ->
         {:ok, %Regex{re_pattern: re_pattern, re_version: version, source: source, opts: doc_opts}}
@@ -166,7 +203,7 @@ defmodule Regex do
   Compiles the regular expression and raises `Regex.CompileError` in case of errors.
   """
   @spec compile!(binary, binary | [term]) :: t
-  def compile!(source, options \\ "") do
+  def compile!(source, options \\ "") when is_binary(source) do
     case compile(source, options) do
       {:ok, regex} -> regex
       {:error, {reason, at}} -> raise Regex.CompileError, "#{reason} at position #{at}"
@@ -211,13 +248,8 @@ defmodule Regex do
   """
   @doc since: "1.4.0"
   @spec version :: term()
-  # TODO: No longer check for function_exported? on OTP 20+.
   def version do
-    if function_exported?(:re, :version, 0) do
-      {:re.version(), :erlang.system_info(:endian)}
-    else
-      {"8.33 2013-05-29", :erlang.system_info(:endian)}
-    end
+    {:re.version(), :erlang.system_info(:endian)}
   end
 
   @doc """
@@ -233,8 +265,8 @@ defmodule Regex do
 
   """
   @spec match?(t, String.t()) :: boolean
-  def match?(%Regex{re_pattern: compiled}, string) when is_binary(string) do
-    :re.run(string, compiled, [{:capture, :none}]) == :match
+  def match?(%Regex{} = regex, string) when is_binary(string) do
+    safe_run(regex, string, [{:capture, :none}]) == :match
   end
 
   @doc """
@@ -281,11 +313,11 @@ defmodule Regex do
   @spec run(t, binary, [term]) :: nil | [binary] | [{integer, integer}]
   def run(regex, string, options \\ [])
 
-  def run(%Regex{re_pattern: compiled}, string, options) when is_binary(string) do
+  def run(%Regex{} = regex, string, options) when is_binary(string) do
     return = Keyword.get(options, :return, :binary)
     captures = Keyword.get(options, :capture, :all)
 
-    case :re.run(string, compiled, [{:capture, captures, return}]) do
+    case safe_run(regex, string, [{:capture, captures, return}]) do
       :nomatch -> nil
       :match -> []
       {:match, results} -> results
@@ -366,7 +398,17 @@ defmodule Regex do
 
   """
   @spec names(t) :: [String.t()]
-  def names(%Regex{re_pattern: re_pattern}) do
+  def names(%Regex{re_pattern: compiled, re_version: version, source: source}) do
+    re_pattern =
+      case version() do
+        ^version ->
+          compiled
+
+        _ ->
+          {:ok, recompiled} = :re.compile(source)
+          recompiled
+      end
+
     {:namelist, names} = :re.inspect(re_pattern, :namelist)
     names
   end
@@ -406,15 +448,26 @@ defmodule Regex do
   @spec scan(t, String.t(), [term]) :: [[String.t()]]
   def scan(regex, string, options \\ [])
 
-  def scan(%Regex{re_pattern: compiled}, string, options) when is_binary(string) do
+  def scan(%Regex{} = regex, string, options) when is_binary(string) do
     return = Keyword.get(options, :return, :binary)
     captures = Keyword.get(options, :capture, :all)
     options = [{:capture, captures, return}, :global]
 
-    case :re.run(string, compiled, options) do
+    case safe_run(regex, string, options) do
       :match -> []
       :nomatch -> []
       {:match, results} -> results
+    end
+  end
+
+  defp safe_run(
+         %Regex{re_pattern: compiled, source: source, re_version: version},
+         string,
+         options
+       ) do
+    case version() do
+      ^version -> :re.run(string, compiled, options)
+      _ -> :re.run(string, source, options)
     end
   end
 
@@ -477,11 +530,11 @@ defmodule Regex do
     end
   end
 
-  def split(%Regex{re_pattern: compiled}, string, opts)
+  def split(%Regex{} = regex, string, opts)
       when is_binary(string) and is_list(opts) do
     on = Keyword.get(opts, :on, :first)
 
-    case :re.run(string, compiled, [:global, capture: on]) do
+    case safe_run(regex, string, [:global, capture: on]) do
       {:match, matches} ->
         index = parts_to_index(Keyword.get(opts, :parts, :infinity))
         trim = Keyword.get(opts, :trim, false)
@@ -603,11 +656,11 @@ defmodule Regex do
     do_replace(regex, string, {replacement, arity}, options)
   end
 
-  defp do_replace(%Regex{re_pattern: compiled}, string, replacement, options) do
+  defp do_replace(%Regex{} = regex, string, replacement, options) do
     opts = if Keyword.get(options, :global) != false, do: [:global], else: []
     opts = [{:capture, :all, :index} | opts]
 
-    case :re.run(string, compiled, opts) do
+    case safe_run(regex, string, opts) do
       :nomatch ->
         string
 
@@ -791,7 +844,6 @@ defmodule Regex do
 
   defp translate_options(<<?m, t::binary>>, acc), do: translate_options(t, [:multiline | acc])
 
-  # TODO: Remove on 2.0
   defp translate_options(<<?r, t::binary>>, acc) do
     IO.warn("the /r modifier in regular expressions is deprecated, please use /U instead")
     translate_options(t, [:ungreedy | acc])

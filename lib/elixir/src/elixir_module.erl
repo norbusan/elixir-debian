@@ -1,10 +1,9 @@
 -module(elixir_module).
 -export([file/1, data_tables/1, is_open/1, delete_definition_attributes/6,
          compile/4, expand_callback/6, format_error/1, compiler_modules/0,
-         write_cache/3, read_cache/2]).
+         write_cache/3, read_cache/2, next_counter/1]).
 -include("elixir.hrl").
-
--define(lexical_attr, {elixir, lexical_tracker}).
+-define(counter_attr, {elixir, counter}).
 
 %% Stores modules currently being defined by the compiler
 
@@ -28,7 +27,7 @@ data_tables(Module) ->
   ets:lookup_element(elixir_modules, Module, 2).
 
 is_open(Module) ->
-  ets:lookup(elixir_modules, Module) /= [].
+  ets:member(elixir_modules, Module).
 
 delete_definition_attributes(#{module := Module}, _, _, _, _, _) ->
   {DataSet, _} = data_tables(Module),
@@ -44,8 +43,19 @@ read_cache(Module, Key) ->
   {DataSet, _} = data_tables(Module),
   ets:lookup_element(DataSet, {cache, Key}, 2).
 
+next_counter(nil) -> erlang:unique_integer();
+next_counter(Module) ->
+  try
+    {DataSet, _} = data_tables(Module),
+    {Module, ets:update_counter(DataSet, ?counter_attr, 1)}
+  catch
+    _:_ -> erlang:unique_integer()
+  end.
+
 %% Compilation hook
 
+compile(Module, _Block, _Vars, #{line := Line, file := File}) when Module == nil; is_boolean(Module) ->
+  elixir_errors:form_error([{line, Line}], File, ?MODULE, {invalid_module, Module});
 compile(Module, Block, Vars, #{line := Line} = Env) when is_atom(Module) ->
   %% In case we are generating a module from inside a function,
   %% we get rid of the lexical tracker information as, at this
@@ -71,7 +81,7 @@ compile(Line, Module, Block, Vars, E) ->
   check_module_availability(Line, File, Module),
 
   CompilerModules = compiler_modules(),
-  {Tables, Ref} = build(Line, File, Module, ?key(E, lexical_tracker)),
+  {Tables, Ref} = build(Line, File, Module),
   {DataSet, DataBag} = Tables,
 
   try
@@ -92,10 +102,14 @@ compile(Line, Module, Block, Vars, E) ->
     RawCompileOpts = bag_lookup_element(DataBag, {accumulate, compile}, 2),
     CompileOpts = validate_compile_opts(RawCompileOpts, AllDefinitions, Unreachable, File, Line),
 
+    OnLoadAttribute = lists:keyfind(on_load, 1, Attributes),
+    validate_on_load_attribute(OnLoadAttribute, AllDefinitions, File, Line),
+
     ModuleMap = #{
       module => Module,
       line => Line,
       file => File,
+      relative_file => elixir_utils:relative_to_cwd(File),
       attributes => Attributes,
       definitions => AllDefinitions,
       unreachable => Unreachable,
@@ -110,8 +124,8 @@ compile(Line, Module, Block, Vars, E) ->
     make_module_available(Module, Binary),
     {module, Module, Binary, Result}
   catch
-    error:undef ->
-      case erlang:get_stacktrace() of
+    ?WITH_STACKTRACE(error, undef, Stacktrace)
+      case Stacktrace of
         [{Module, Fun, Args, _Info} | _] = Stack when is_list(Args) ->
           compile_undef(Module, Fun, length(Args), Stack);
         [{Module, Fun, Arity, _Info} | _] = Stack ->
@@ -129,7 +143,7 @@ compile(Line, Module, Block, Vars, E) ->
 validate_compile_opts(Opts, Defs, Unreachable, File, Line) ->
   lists:flatmap(fun (Opt) -> validate_compile_opt(Opt, Defs, Unreachable, File, Line) end, Opts).
 
-%% TODO: Make this an error and skip parse transform processing on 2.0.
+%% TODO: Make this an error on v2.0
 validate_compile_opt({parse_transform, Module} = Opt, _Defs, _Unreachable, File, Line) ->
   elixir_errors:form_warn([{line, Line}], File, ?MODULE, {parse_transform, Module}),
   [Opt];
@@ -155,18 +169,28 @@ validate_inlines([Inline | Inlines], Defs, Unreachable, Acc) ->
   end;
 validate_inlines([], _Defs, _Unreachable, Acc) -> {ok, Acc}.
 
+validate_on_load_attribute({on_load, Def}, Defs, File, Line) ->
+  case lists:keyfind(Def, 1, Defs) of
+    false ->
+      elixir_errors:form_error([{line, Line}], File, ?MODULE, {undefined_on_load, Def});
+    {_, def, _, _} ->
+      ok;
+    {_, WrongKind, _, _} ->
+      elixir_errors:form_error([{line, Line}], File, ?MODULE, {wrong_kind_on_load, Def, WrongKind})
+  end;
+validate_on_load_attribute(false, _Defs, _File, _Line) -> ok.
+
 %% An undef error for a function in the module being compiled might result in an
 %% exception message suggesting the current module is not loaded. This is
 %% misleading so use a custom reason.
 compile_undef(Module, Fun, Arity, Stack) ->
-  ExMod = 'Elixir.UndefinedFunctionError',
-  case code:ensure_loaded(ExMod) of
-    {module, _} ->
+  case elixir_config:get(bootstrap) of
+    false ->
       Opts = [{module, Module}, {function, Fun}, {arity, Arity},
               {reason, 'function not available'}],
       Exception = 'Elixir.UndefinedFunctionError':exception(Opts),
       erlang:raise(error, Exception, Stack);
-    {_, _} ->
+    true ->
       erlang:raise(error, undef, Stack)
   end.
 
@@ -195,7 +219,7 @@ check_module_availability(Line, File, Module) ->
 
 %% Hook that builds both attribute and functions and set up common hooks.
 
-build(Line, File, Module, Lexical) ->
+build(Line, File, Module) ->
   %% In the set table we store:
   %%
   %% * {Attribute, Value, AccumulateOrReadOrUnreadline}
@@ -205,7 +229,8 @@ build(Line, File, Module, Lexical) ->
   %% * {{type, Tuple}, ...}, {{opaque, Tuple}, ...}
   %% * {{callback, Tuple}, ...}, {{macrocallback, Tuple}, ...}
   %% * {{def, Tuple}, ...} (from elixir_def)
-  %% * {{import, Tuple}, ...} (from_elixir_locals)
+  %% * {{import, Tuple}, ...} (from elixir_locals)
+  %% * {{overridable, Tuple}, ...} (from elixir_overridable)
   %%
   DataSet = ets:new(Module, [set, public]),
 
@@ -217,10 +242,11 @@ build(Line, File, Module, Lexical) ->
   %% * {deprecated, ...}
   %% * {persisted_attributes, ...}
   %% * {defs, ...} (from elixir_def)
+  %% * {overridables, ...} (from elixir_overridable)
   %% * {{default, Name}, ...} (from elixir_def)
   %% * {{clauses, Tuple}, ...} (from elixir_def)
-  %% * {reattach, ...} (from elixir_local)
-  %% * {{local, Tuple}, ...} (from elixir_local)
+  %% * {reattach, ...} (from elixir_locals)
+  %% * {{local, Tuple}, ...} (from elixir_locals)
   %%
   DataBag = ets:new(Module, [duplicate_bag, public]),
 
@@ -243,11 +269,10 @@ build(Line, File, Module, Lexical) ->
     {spec, [], accumulate},
     {callback, [], accumulate},
     {macrocallback, [], accumulate},
-    {on_load, [], accumulate},
     {optional_callbacks, [], accumulate},
 
     % Others
-    {?lexical_attr, Lexical}
+    {?counter_attr, 0}
   ]),
 
   Persisted = [behaviour, on_load, external_resource, dialyzer, vsn],
@@ -264,7 +289,6 @@ build(Line, File, Module, Lexical) ->
   Tables = {DataSet, DataBag},
   elixir_def:setup(Tables),
   elixir_locals:setup(Tables),
-  elixir_overridable:setup(Tables),
   Tuple = {Module, Tables, Line, File},
 
   Ref =
@@ -284,10 +308,10 @@ build(Line, File, Module, Lexical) ->
 
 eval_form(Line, Module, DataBag, Block, Vars, E) ->
   {Value, EE} = elixir_compiler:eval_forms(Block, Vars, E),
-  elixir_overridable:store_pending(Module),
+  elixir_overridable:store_not_overriden(Module),
   EV = elixir_env:linify({Line, elixir_env:reset_vars(EE)}),
   EC = eval_callbacks(Line, DataBag, before_compile, [EV], EV),
-  elixir_overridable:store_pending(Module),
+  elixir_overridable:store_not_overriden(Module),
   {Value, EC}.
 
 eval_callbacks(Line, DataBag, Name, Args, E) ->
@@ -313,8 +337,7 @@ expand_callback(Line, M, F, Args, E, Fun) ->
         {_Value, _Binding, EF, _S} = elixir:eval_forms(EE, [], ET),
         EF
       catch
-        Kind:Reason ->
-          Stacktrace = erlang:get_stacktrace(),
+        ?WITH_STACKTRACE(Kind, Reason, Stacktrace)
           Info = {M, F, length(Args), location(Line, E)},
           erlang:raise(Kind, Reason, prune_stacktrace(Info, Stacktrace))
       end
@@ -336,7 +359,7 @@ warn_unused_attributes(File, DataSet, DataBag, PersistedAttrs) ->
   StoredAttrs = bag_lookup_element(DataBag, attributes, 2),
   %% This is the same list as in Module.put_attribute
   %% without moduledoc which are never warned on.
-  Attrs = [doc, typedoc, impl, deprecated | StoredAttrs -- [since | PersistedAttrs]],
+  Attrs = [doc, typedoc, impl, deprecated | StoredAttrs -- PersistedAttrs],
   Query = [{{Attr, '_', '$1'}, [{is_integer, '$1'}], [[Attr, '$1']]} || Attr <- Attrs],
   [elixir_errors:form_warn([{line, Line}], File, ?MODULE, {unused_attribute, Key})
    || [Key, Line] <- ets:select(DataSet, Query)].
@@ -431,6 +454,11 @@ format_error({module_in_definition, Module, File, Line}) ->
     [elixir_aliases:inspect(Module), elixir_utils:relative_to_cwd(File), Line]);
 format_error({bad_inline, {Name, Arity}}) ->
   io_lib:format("inlined function ~ts/~B undefined", [Name, Arity]);
+format_error({undefined_on_load, {Name, Arity}}) ->
+  io_lib:format("@on_load function ~ts/~B is undefined", [Name, Arity]);
+format_error({wrong_kind_on_load, {Name, Arity}, WrongKind}) ->
+  io_lib:format("expected @on_load function ~ts/~B to be defined as \"def\", got \"~ts\"",
+                [Name, Arity, WrongKind]);
 format_error({parse_transform, Module}) ->
   io_lib:format("@compile {:parse_transform, ~ts} is deprecated. Elixir will no longer support "
                 "Erlang-based transforms in future versions", [elixir_aliases:inspect(Module)]).

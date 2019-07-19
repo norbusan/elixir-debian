@@ -42,6 +42,7 @@ defmodule Mix.Tasks.Local.Rebar do
 
   @switches [force: :boolean, sha512: :string]
 
+  @impl true
   def run(argv) do
     {opts, argv, _} = OptionParser.parse(argv, switches: @switches)
 
@@ -67,7 +68,7 @@ defmodule Mix.Tasks.Local.Rebar do
   defp install_from_path(manager, path, opts) do
     local = Mix.Rebar.local_rebar_path(manager)
 
-    if opts[:force] || Mix.Utils.can_write?(local) do
+    if opts[:force] || Mix.Generator.overwrite?(local) do
       case Mix.Utils.read_path(path, opts) do
         {:ok, binary} ->
           File.mkdir_p!(Path.dirname(local))

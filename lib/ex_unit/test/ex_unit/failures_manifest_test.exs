@@ -26,7 +26,7 @@ defmodule ExUnit.FailuresManifestTest do
   end
 
   describe "failed_test_ids/1" do
-    test "returns the set of failed test ids" do
+    test "returns the set of failed test IDs" do
       manifest =
         new()
         |> put_test(failed_1 = new_test(@failed))
@@ -97,7 +97,7 @@ defmodule ExUnit.FailuresManifestTest do
   @manifest_path "example.manifest"
 
   describe "write!/2" do
-    test "stores a manifest that can later be read with `read/1`", context do
+    test "stores a manifest that can later be read with read/1", context do
       manifest = non_blank_manifest(context)
 
       in_tmp(context.test, fn ->

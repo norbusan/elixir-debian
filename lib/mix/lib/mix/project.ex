@@ -67,8 +67,12 @@ defmodule Mix.Project do
     * `:preferred_cli_env` - a keyword list of `{task, env}` tuples where `task`
       is the task name as an atom (for example, `:"deps.get"`) and `env` is the
       preferred environment (for example, `:test`). This option overrides what
-      specified by the tasks with the `@preferred_cli_env` attribute (see the
+      is specified by the tasks with the `@preferred_cli_env` attribute (see the
       docs for `Mix.Task`). Defaults to `[]`.
+
+    * `:preferred_cli_target` - a keyword list of `{task, target}` tuples where
+      `task` is the task name as an atom (for example, `:test`) and `target`
+      is the preferred target (for example, `:host`). Defaults to `[]`.
 
   For more options, keep an eye on the documentation for single Mix tasks; good
   examples are the `Mix.Tasks.Compile` task and all the specific compiler tasks
@@ -167,7 +171,7 @@ defmodule Mix.Project do
   function raises a `Mix.NoProjectError` exception in
   case no project is available.
   """
-  @spec get!() :: module | no_return
+  @spec get!() :: module
   def get! do
     get() || raise Mix.NoProjectError, []
   end
@@ -202,12 +206,12 @@ defmodule Mix.Project do
   a full recompilation whenever such configuration files change.
 
   It returns the `mix.exs` file, the lock manifest, and all config
-  files in the `config` directory that do not start with a trailing
+  files in the `config` directory that do not start with a leading
   period (for example, `.my_config.exs`).
   """
   @spec config_files() :: [Path.t()]
   def config_files do
-    [Mix.Dep.Lock.manifest() | Mix.ProjectStack.config_files()]
+    [Mix.Tasks.WillRecompile.manifest() | Mix.ProjectStack.config_files()]
   end
 
   @doc """
@@ -220,7 +224,7 @@ defmodule Mix.Project do
   @doc since: "1.7.0"
   @spec config_mtime() :: posix_mtime when posix_mtime: integer()
   def config_mtime do
-    Mix.Dep.Lock.manifest()
+    Mix.Tasks.WillRecompile.manifest()
     |> Mix.Utils.last_modified()
     |> max(Mix.ProjectStack.config_mtime())
   end
@@ -231,7 +235,7 @@ defmodule Mix.Project do
   When called with no arguments, tells whether the current project is
   an umbrella project.
   """
-  @spec umbrella?() :: boolean
+  @spec umbrella?(keyword) :: boolean
   def umbrella?(config \\ config()) do
     config[:apps_path] != nil
   end
@@ -255,7 +259,7 @@ defmodule Mix.Project do
 
   """
   @doc since: "1.4.0"
-  @spec apps_paths() :: %{optional(atom) => Path.t()} | nil
+  @spec apps_paths(keyword) :: %{optional(atom) => Path.t()} | nil
   def apps_paths(config \\ config()) do
     if apps_path = config[:apps_path] do
       key = {:apps_paths, Mix.Project.get!()}
@@ -326,7 +330,7 @@ defmodule Mix.Project do
   ## Examples
 
       Mix.Project.in_project(:my_app, "/path/to/my_app", fn module ->
-        "Mix project is: #{inspect module}"
+        "Mix project is: #{inspect(module)}"
       end)
       #=> "Mix project is: MyApp.MixProject"
 
@@ -378,17 +382,59 @@ defmodule Mix.Project do
   @doc """
   Returns the full path of all dependencies as a map.
 
+  ## Options
+
+    * `:depth` - only returns dependencies to the depth level,
+      a depth of 1 will only return top-level dependencies
+    * `:parents` - starts the dependency traversal from the
+      given parents instead of the application root
+
   ## Examples
 
       Mix.Project.deps_paths()
       #=> %{foo: "deps/foo", bar: "custom/path/dep"}
 
   """
-  @spec deps_paths() :: %{optional(atom) => Path.t()}
-  def deps_paths do
-    Enum.reduce(Mix.Dep.cached(), %{}, fn %{app: app, opts: opts}, acc ->
-      Map.put(acc, app, opts[:dest])
-    end)
+  @spec deps_paths(keyword) :: %{optional(atom) => Path.t()}
+  def deps_paths(opts \\ []) do
+    all_deps = Mix.Dep.cached()
+    parents = opts[:parents]
+    depth = opts[:depth]
+
+    if parents || depth do
+      parent_filter = if parents, do: &(&1.app in parents), else: & &1.top_level
+
+      all_deps
+      |> Enum.filter(parent_filter)
+      |> deps_to_paths_map()
+      |> deps_paths_depth(all_deps, 1, depth || :infinity)
+    else
+      deps_to_paths_map(all_deps)
+    end
+  end
+
+  defp deps_to_paths_map(deps) do
+    for %{app: app, opts: opts} <- deps,
+        do: {app, opts[:dest]},
+        into: %{}
+  end
+
+  defp deps_paths_depth(deps, _all_deps, depth, depth) do
+    deps
+  end
+
+  defp deps_paths_depth(parents, all_deps, depth, target_depth) do
+    children =
+      for parent_dep <- all_deps,
+          Map.has_key?(parents, parent_dep.app),
+          %{app: app, opts: opts} <- parent_dep.deps,
+          do: {app, opts[:dest]},
+          into: %{}
+
+    case Map.merge(parents, children) do
+      ^parents -> parents
+      new_parents -> deps_paths_depth(new_parents, all_deps, depth + 1, target_depth)
+    end
   end
 
   @doc """
@@ -430,14 +476,25 @@ defmodule Mix.Project do
   end
 
   defp env_path(config) do
-    build = config[:build_path] || "_build"
+    dir = config[:build_path] || "_build"
+    subdir = build_target() <> build_per_environment(config)
+    Path.expand(dir <> "/" <> subdir)
+  end
 
+  defp build_target do
+    case Mix.target() do
+      :host -> ""
+      other -> "#{other}_"
+    end
+  end
+
+  defp build_per_environment(config) do
     case config[:build_per_environment] do
       true ->
-        Path.expand("#{build}/#{Mix.env()}")
+        Atom.to_string(Mix.env())
 
       false ->
-        Path.expand("#{build}/shared")
+        "shared"
 
       other ->
         Mix.raise("The :build_per_environment option should be a boolean, got: #{inspect(other)}")
@@ -537,6 +594,7 @@ defmodule Mix.Project do
       #=> "/path/to/project/_build/dev/consolidated"
 
   """
+  @spec consolidation_path(keyword) :: Path.t()
   def consolidation_path(config \\ config()) do
     if umbrella?(config) do
       Path.join(build_path(config), "consolidated")
@@ -612,10 +670,7 @@ defmodule Mix.Project do
     end
   end
 
-  @doc """
-  Returns all load paths for the given project.
-  """
-  @spec load_paths(keyword) :: [Path.t()]
+  @deprecated "Use Mix.Project.compile_path/1 instead"
   def load_paths(config \\ config()) do
     if umbrella?(config) do
       []

@@ -17,15 +17,17 @@ These are the reserved words in the Elixir language. They are detailed throughou
 
 ### Numbers
 
-Integers (`1234`) and floats (`123.4`) in Elixir are represented as a sequence of digits that may be separated by underscore for readability purposes, such as `1_000_000`. Integers never contain a dot (`.`) in their representation. Floats contain a dot and at least one other digit after the dot. Floats also support the scientific format, such as `123.4e10` or `123.4E10`.
+Integers (`1234`) and floats (`123.4`) in Elixir are represented as a sequence of digits that may be separated by underscore for readability purposes, such as `1_000_000`. Integers never contain a dot (`.`) in their representation. Floats contain a dot and at least one other digit after the dot. Floats also support the scientific notation, such as `123.4e10` or `123.4E10`.
 
 ### Atoms
 
-Atoms in Elixir start with a colon (`:`) which must be followed by non-combining Unicode characters and underscore. The atom may continue using a sequence of Unicode characters, including numbers, underscore and `@`. Atoms may end in `!` or `?`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
+Unquoted atoms start with a colon (`:`) which must be immediately followed by an underscore or a Unicode letter. The atom may continue using a sequence of Unicode letters, numbers, underscores, and `@`. Atoms may end in `!` or `?`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Valid unquoted atoms are: `:ok`, `:ISO8601`, and `:integer?`.
 
-All operators in Elixir are also valid atoms. Valid examples are `:foo`, `:FOO`, `:foo_42`, `:foo@bar` and `:++`. Invalid examples are `:@foo` (`@` is not allowed at start), `:123` (numbers are not allowed at start) and `:(*)` (not a valid operator).
+If the colon is immediately followed by a pair of double- or single-quotes surrounding the atom name, the atom is considered quoted. In contrast with an unquoted atom, this one can be made of any Unicode character (not only letters), such as `:'🌢 Elixir'`, `:"++olá++"`, and `:"123"`.
 
-If the colon is followed by a double- or single-quote, the atom can be made of any character, such as `:"++olá++"`.
+Quoted and unquoted atoms with the same name are considered equivalent, so `:atom`, `:"atom"`, and `:'atom'` represent the same atom. The only catch is that the compiler will warn when quotes are used in atoms that do not need to be quoted.
+
+All operators in Elixir are also valid atoms. Valid examples are `:foo`, `:FOO`, `:foo_42`, `:foo@bar`, and `:++`. Invalid examples are `:@foo` (`@` is not allowed at start), `:123` (numbers are not allowed at start), and `:(*)` (not a valid operator).
 
 `true`, `false`, and `nil` are reserved words that are represented by the atoms `:true`, `:false` and `:nil` respectively.
 
@@ -56,11 +58,13 @@ Strings are always represented as themselves in the AST.
 
 ### Charlists
 
-Charlists in Elixir are written in single-quotes, such as `'foo'`. Any single-quote inside the string must be escaped with `\ `. Charlists are a list of integers, each integer representing a Unicode character.
+Charlists in Elixir are written in single-quotes, such as `'foo'`. Any single-quote inside the string must be escaped with `\ `. Charlists are made of non-negative integers, where each integer represents a Unicode code point.
 
-Multi-line charlists are written with three single-quotes (`'''`), the same multi-line strings are.
+Multi-line charlists are written with three single-quotes (`'''`), the same way multi-line strings are.
 
 Charlists are always represented as themselves in the AST.
+
+For more in-depth information, please read the "Charlists" section in the `List` module.
 
 ### Lists, tuples and binaries
 
@@ -80,13 +84,13 @@ Structs built on the map syntax by passing the struct name between `%` and `{`. 
 
 ### Variables
 
-Variables in Elixir must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode characters, including numbers and underscore. Variables may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
+Variables in Elixir must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode letters, numbers, and underscores. Variables may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification.
 
 [Elixir's naming conventions](naming-conventions.html) recommend variables to be in `snake_case` format.
 
 ### Non-qualified calls (local calls)
 
-Non-qualified calls, such as `add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
+Non-qualified calls, such as `add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification.
 
 Parentheses for non-qualified calls are optional, except for zero-arity calls, which would then be ambiguous with variables. If parentheses are used, they must immediately follow the function name *without spaces*. For example, `add (1, 2)` is a syntax error, since `(1, 2)` is treated as an invalid block which is attempted to be given as a single argument to `add`.
 
@@ -98,7 +102,7 @@ As many programming languages, Elixir also support operators as non-qualified ca
 
 ### Qualified calls (remote calls)
 
-Qualified calls, such as `Math.add(1, 2)`, must start with underscore or a non-combining Unicode character that is not in uppercase or titlecase. The call may continue using a sequence of Unicode characters, including numbers and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification. Unicode characters require Erlang/OTP 20.
+Qualified calls, such as `Math.add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscores. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.html) for a formal specification.
 
 [Elixir's naming conventions](naming-conventions.html) recommend calls to be in `snake_case` format.
 
@@ -118,7 +122,7 @@ Blocks are multiple Elixir expressions separated by newlines or semi-colons. A n
 
 ### Left to right arrow
 
-The left to right arrow (`->`) is used to establish a relationship between left and right. The left side may have zero, one or more arguments, the right side is zero, one or more expressions separated by new line. The `->` is always between one of the following terminators: `do`/`end`, `fn`/`end` or `(`/`)`.
+The left to right arrow (`->`) is used to establish a relationship between left and right, commonly referred as clauses. The left side may have zero, one, or more arguments; the right side is zero, one, or more expressions separated by new line. The `->` may appear one or more times between one of the following terminators: `do`/`end`, `fn`/`end` or `(`/`)`. When `->` is used, only other clauses are allowed between those terminators. Mixing clauses and regular expressions is invalid syntax.
 
 It is seen on `case` and `cond` constructs between `do`/`end`:
 
@@ -195,7 +199,7 @@ which is represented as a tuple with three elements:
 {:sum, meta, [1, 2, 3]}
 ```
 
-the first element is an atom (or another tuple), the second element is a list of two-item tuples with metadata (such as line numbers) and the third is a list of arguments.
+the first element is an atom (or another tuple), the second element is a list of two-element tuples with metadata (such as line numbers) and the third is a list of arguments.
 
 We can retrieve the AST for any Elixir expression by calling `quote`:
 
@@ -300,7 +304,7 @@ end
 #=> {:<<>>, [], [1, 2, 3]}
 ```
 
-The same applies to maps where each pairs is treated as a list of tuples with two elements:
+The same applies to maps where each pair is treated as a list of tuples with two elements:
 
 ```elixir
 quote do
@@ -374,7 +378,7 @@ end
 
 All of the constructs above are part of Elixir's syntax and have their own representation as part of the Elixir AST. This section will discuss the remaining constructs that "desugar" to one of the constructs explored above. In other words, the constructs below can be represented in more than one way in your Elixir code and retain AST equivalence.
 
-### Integers in other bases and Unicode codepoints
+### Integers in other bases and Unicode code points
 
 Elixir allows integers to contain `_` to separate digits and provides conveniences to represent integers in other bases:
 
@@ -392,7 +396,7 @@ Elixir allows integers to contain `_` to separate digits and provides convenienc
 #=> 170 (Binary base)
 
 ?é
-#=> 233 (Unicode codepoint)
+#=> 233 (Unicode code point)
 ```
 
 Those constructs exist only at the syntax level. All of the examples above are represented as their underlying integers in the AST.
@@ -437,7 +441,7 @@ However Elixir introduces a syntax sugar where the keywords above may be written
 [foo: 1, bar: 2]
 ```
 
-Atoms with foreign characters in their name, such as whitespace, must be wrapped in quotes. This rule applies to keywords as well:
+Atoms with foreign characters, such as whitespace, must be wrapped in quotes. This rule applies to keywords as well:
 
 ```elixir
 [{:"foo bar", 1}, {:"bar baz", 2}] == ["foo bar": 1, "bar baz": 2]
@@ -447,7 +451,7 @@ Remember that, because lists and two-element tuples are quoted literals, by defi
 
 ### Keywords as last arguments
 
-Elixir also supports a syntax where if the last argument of a call is a keyword then the square brackets can be skipped. This means that the following:
+Elixir also supports a syntax where if the last argument of a call is a keyword list then the square brackets can be skipped. This means that the following:
 
 ```elixir
 if(condition, do: this, else: that)

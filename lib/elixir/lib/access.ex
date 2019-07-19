@@ -2,46 +2,12 @@ defmodule Access do
   @moduledoc """
   Key-based access to data structures.
 
-  Elixir supports three main key-value constructs: keywords,
-  maps, and structs. It also supports two mechanisms to access those keys:
-  by brackets (via `data[key]`) and by dot-syntax (via `data.field`).
+  The `Access` module defines a behaviour for dynamically accessing
+  keys of any type in a data structure via the `data[key]` syntax.
 
-  In the next section we will briefly recap the key-value constructs and then
-  discuss the access mechanisms.
-
-  ## Key-value constructs
-
-  Elixir provides three main key-value constructs, summarized below:
-
-    * keyword lists - they are lists of two-element tuples where
-      the first element is an atom. Commonly written in the
-      `[key: value]` syntax, they support only atom keys. Keyword
-      lists are used almost exclusively to pass options to functions
-      and macros. They keep the user ordering and allow duplicate
-      keys. See the `Keyword` module.
-
-    * maps - they are the "go to" key-value data structure in Elixir.
-      They are capable of supporting billions of keys of any type. They are
-      written using the `%{key => value}` syntax and also support the
-      `%{key: value}` syntax when the keys are atoms. They do not
-      have any specified ordering and do not allow duplicate keys.
-      See the `Map` module.
-
-    * structs - they are named maps with a pre-determined set of keys.
-      They are defined with `defstruct/1` and written using the
-      `%StructName{key: value}` syntax.
-
-  ## Key-based accessors
-
-  Elixir provides two mechanisms to access data structures by key,
-  described next.
-
-  ### Bracket-based access
-
-  The `data[key]` syntax is used to access data structures with a
-  dynamic number of keys, such as keywords and maps. The key can
-  be of any type. The bracket-based access syntax returns `nil`
-  if the key does not exist:
+  `Access` supports keyword lists (`Keyword`) and maps (`Map`) out
+  of the box. The key can be of any type and it returns `nil` if
+  the key does not exist:
 
       iex> keywords = [a: 1, b: 2]
       iex> keywords[:a]
@@ -59,89 +25,72 @@ defmodule Access do
 
   This syntax is very convenient as it can be nested arbitrarily:
 
-      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
-      iex> put_in(users["john"][:age], 28)
-      %{"john" => %{age: 28}, "meg" => %{age: 23}}
-
-  Furthermore, the bracket-based access syntax transparently ignores
-  `nil` values. When trying to access anything on a `nil` value, `nil`
-  is returned:
-
       iex> keywords = [a: 1, b: 2]
       iex> keywords[:c][:unknown]
       nil
 
+  This works because accessing anything on a `nil` value, returns
+  `nil` itself:
+
       iex> nil[:a]
       nil
 
-  Internally, `data[key]` translates  to `Access.get(term, key, nil)`.
-  Developers interested in implementing their own key-value data
-  structures can implement the `Access` behaviour to provide the
-  bracket-based access syntax. `Access` requires the key comparison
-  to be implemented using the `===/2` operator.
+  The access syntax can also be used with the `Kernel.put_in/2`,
+  `Kernel.update_in/2` and `Kernel.get_and_update_in/2` macros
+  to allow values to be set in nested data structures:
 
-  ### Dot-based syntax
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> put_in(users["john"][:age], 28)
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
 
-  The `data.field` syntax is used exclusively to access atom fields
-  in maps and structs. If the accessed field does not exist, an error is
-  raised. This is a deliberate decision: since all of the
-  fields in a struct are pre-determined, structs support only the
-  dot-based syntax and not the access one.
-
-  Imagine a struct named `User` with a `:name` field. The following would raise:
-
-      user = %User{name: "John"}
-      user[:name]
-      # ** (UndefinedFunctionError) undefined function User.fetch/2 (User does not implement the Access behaviour)
-
-  Instead we should use the `user.name` syntax to access fields:
-
-      user.name
-      #=> "John"
-
-  Differently from `user[:name]`, `user.name` is not extensible via
-  a behaviour and is restricted only to structs and atom keys in maps.
-
-  ### Summing up
-
-  The bracket-based syntax, `user[:name]`, is used by dynamic structures,
-  is extensible and returns nil on misisng keys.
-
-  The dot-based syntax, `user.name`, is used exclusively to access atom
-  keys in maps and structs, and it raises on missing keys.
+  > Attention! While the access syntax is allowed in maps via
+  > `map[key]`, if your map is made of predefined atom keys,
+  > you should prefer to access those atom keys with `map.key`
+  > instead of `map[key]`, as `map.key` will raise if the key
+  > is missing. This is important because, if a map has a predefined
+  > set of keys and a key is missing, it is most likely a bug
+  > in your software or a typo on the key name. For this reason,
+  > because structs are predefined in nature, they only allow
+  > the `struct.key` syntax and they do not allow the `struct[key]`
+  > access syntax. See the `Map` module for more information.
 
   ## Nested data structures
 
   Both key-based access syntaxes can be used with the nested update
-  functions and macros in `Kernel`, such as `Kernel.get_in/2`, `Kernel.put_in/3`,
-  `Kernel.update_in/3`, `Kernel.pop_in/2`, and `Kernel.get_and_update_in/3`.
+  functions and macros in `Kernel`, such as `Kernel.get_in/2`,
+  `Kernel.put_in/3`, `Kernel.update_in/3`, `Kernel.pop_in/2`, and
+  `Kernel.get_and_update_in/3`.
 
   For example, to update a map inside another map:
 
-     iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
-     iex> put_in(users["john"].age, 28)
-     %{"john" => %{age: 28}, "meg" => %{age: 23}}
+      iex> users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
+      iex> put_in(users["john"].age, 28)
+      %{"john" => %{age: 28}, "meg" => %{age: 23}}
 
   This module provides convenience functions for traversing other
   structures, like tuples and lists. These functions can be used
   in all the `Access`-related functions and macros in `Kernel`.
 
-  For instance, given a user map with the `:name` and `:languages` keys,
-  here is how to deeply traverse the map and convert all language names
-  to uppercase:
+  For instance, given a user map with the `:name` and `:languages`
+  keys, here is how to deeply traverse the map and convert all
+  language names to uppercase:
 
       iex> languages = [
       ...>   %{name: "elixir", type: :functional},
-      ...>   %{name: "c", type: :procedural},
+      ...>   %{name: "c", type: :procedural}
       ...> ]
       iex> user = %{name: "john", languages: languages}
       iex> update_in(user, [:languages, Access.all(), :name], &String.upcase/1)
-      %{name: "john",
-        languages: [%{name: "ELIXIR", type: :functional},
-                    %{name: "C", type: :procedural}]}
+      %{
+        name: "john",
+        languages: [
+          %{name: "ELIXIR", type: :functional},
+          %{name: "C", type: :procedural}
+        ]
+      }
 
-  See the functions `key/1`, `key!/1`, `elem/1`, and `all/0` for some of the
-  available accessors.
+  See the functions `key/1`, `key!/1`, `elem/1`, and `all/0` for
+  some of the available accessors.
   """
 
   @type container :: keyword | struct | map
@@ -611,7 +560,7 @@ defmodule Access do
   numbers and multiplying odd numbers by 2:
 
       iex> require Integer
-      iex> get_and_update_in([1, 2, 3, 4, 5], [Access.all], fn num ->
+      iex> get_and_update_in([1, 2, 3, 4, 5], [Access.all()], fn num ->
       ...>   if Integer.is_even(num), do: :pop, else: {num, num * 2}
       ...> end)
       {[1, 2, 3, 4, 5], [2, 6, 10]}
@@ -661,10 +610,16 @@ defmodule Access do
       iex> list = [%{name: "john"}, %{name: "mary"}]
       iex> get_in(list, [Access.at(1), :name])
       "mary"
+      iex> get_in(list, [Access.at(-1), :name])
+      "mary"
       iex> get_and_update_in(list, [Access.at(0), :name], fn prev ->
       ...>   {prev, String.upcase(prev)}
       ...> end)
       {"john", [%{name: "JOHN"}, %{name: "mary"}]}
+      iex> get_and_update_in(list, [Access.at(-1), :name], fn prev ->
+      ...>   {prev, String.upcase(prev)}
+      ...> end)
+      {"mary", [%{name: "john"}, %{name: "MARY"}]}
 
   `at/1` can also be used to pop elements out of a list or
   a key inside of a list:
@@ -685,19 +640,14 @@ defmodule Access do
       ...> end)
       {nil, [%{name: "john"}, %{name: "mary"}]}
 
-  An error is raised for negative indexes:
-
-      iex> get_in([], [Access.at(-1)])
-      ** (FunctionClauseError) no function clause matching in Access.at/1
-
   An error is raised if the accessed structure is not a list:
 
       iex> get_in(%{}, [Access.at(1)])
       ** (RuntimeError) Access.at/1 expected a list, got: %{}
 
   """
-  @spec at(non_neg_integer) :: access_fun(data :: list, get_value :: term)
-  def at(index) when is_integer(index) and index >= 0 do
+  @spec at(integer) :: access_fun(data :: list, get_value :: term)
+  def at(index) when is_integer(index) do
     fn op, data, next -> at(op, data, index, next) end
   end
 
@@ -720,7 +670,17 @@ defmodule Access do
     end
   end
 
-  defp get_and_update_at([head | rest], index, next, updates) do
+  defp get_and_update_at(list, index, next, updates) when index < 0 do
+    list_length = length(list)
+
+    if list_length + index >= 0 do
+      get_and_update_at(list, list_length + index, next, updates)
+    else
+      {nil, list}
+    end
+  end
+
+  defp get_and_update_at([head | rest], index, next, updates) when index > 0 do
     get_and_update_at(rest, index - 1, next, [head | updates])
   end
 

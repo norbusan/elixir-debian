@@ -63,21 +63,29 @@ defmodule List do
       iex> list ++ [4] # slow
       [1, 2, 3, 4]
 
-  Additonally, getting a list's length and accessing it by index are
-  linear time operations. Negative indexes are also supported but
-  they imply the list will be iterated twice, once to calculate the
-  proper index and another time to perform the operation.
+  Most of the functions in this module work in linear time. This means that,
+  that the time it takes to perform an operation grows at the same rate as the
+  length of the list. For example `length/1` and `last/1` will run in linear
+  time because they need to iterate through every element of the list, but
+  `first/1` will run in constant time because it only needs the first element.
 
   ## Charlists
 
-  If a list is made of non-negative integers, it can also be called
-  a charlist. Elixir uses single quotes to define charlists:
+  If a list is made of non-negative integers, where each integer represents a
+  Unicode code point, the list can also be called a charlist. These integers
+  must:
+
+    * be within the range `0..0x10FFFF` (`0..1_114_111`);
+    * and be out of the range `0xD800..0xDFFF` (`55_296..57_343`), which is
+      reserved in Unicode for UTF-16 surrogate pairs.
+
+  Elixir uses single quotes to define charlists:
 
       iex> 'héllo'
       [104, 233, 108, 108, 111]
 
-  In particular, charlists may be printed back in single
-  quotes if they contain only ASCII-printable codepoints:
+  In particular, charlists will be printed back by default in single
+  quotes if they contain only printable ASCII characters:
 
       iex> 'abc'
       'abc'
@@ -87,24 +95,28 @@ defmodule List do
   instead of Elixir strings. One example of such functions
   is `Application.loaded_applications/0`:
 
-      Application.loaded_applications
-      #=>  [{:stdlib, 'ERTS  CXC 138 10', '2.6'},
-      #=>   {:compiler, 'ERTS  CXC 138 10', '6.0.1'},
-      #=>   {:elixir, 'elixir', '1.0.0'},
-      #=>   {:kernel, 'ERTS  CXC 138 10', '4.1'},
-      #=>   {:logger, 'logger', '1.0.0'}]
+      Application.loaded_applications()
+      #=>  [
+      #=>    {:stdlib, 'ERTS  CXC 138 10', '2.6'},
+      #=>    {:compiler, 'ERTS  CXC 138 10', '6.0.1'},
+      #=>    {:elixir, 'elixir', '1.0.0'},
+      #=>    {:kernel, 'ERTS  CXC 138 10', '4.1'},
+      #=>    {:logger, 'logger', '1.0.0'}
+      #=>  ]
 
-  A list can be checked if it is made of printable ascii
-  codepoints with `ascii_printable?/2`.
+  A list can be checked if it is made of only printable ASCII
+  characters with `ascii_printable?/2`.
+
+  Improper lists are never deemed as charlists.
   """
 
   @compile :inline_list_funcs
 
   @doc """
-  Deletes the given `item` from the `list`. Returns a new list without
-  the item.
+  Deletes the given `element` from the `list`. Returns a new list without
+  the element.
 
-  If the `item` occurs more than once in the `list`, just
+  If the `element` occurs more than once in the `list`, just
   the first occurrence is removed.
 
   ## Examples
@@ -112,29 +124,47 @@ defmodule List do
       iex> List.delete([:a, :b, :c], :a)
       [:b, :c]
 
+      iex> List.delete([:a, :b, :c], :d)
+      [:a, :b, :c]
+
       iex> List.delete([:a, :b, :b, :c], :b)
       [:a, :b, :c]
 
+      iex> List.delete([], :b)
+      []
+
   """
-  @spec delete(list, any) :: list
-  def delete(list, item)
-  def delete([item | list], item), do: list
-  def delete([other | list], item), do: [other | delete(list, item)]
-  def delete([], _item), do: []
+  @spec delete([], any) :: []
+  @spec delete([...], any) :: list
+  def delete(list, element)
+  def delete([element | list], element), do: list
+  def delete([other | list], element), do: [other | delete(list, element)]
+  def delete([], _element), do: []
 
   @doc """
   Duplicates the given element `n` times in a list.
 
+  `n` is an integer greater than or equal to `0`.
+
+  If `n` is `0`, an empty list is returned.
+
   ## Examples
 
-      iex> List.duplicate("hello", 3)
-      ["hello", "hello", "hello"]
+      iex> List.duplicate("hello", 0)
+      []
 
-      iex> List.duplicate([1, 2], 2)
-      [[1, 2], [1, 2]]
+      iex> List.duplicate("hi", 1)
+      ["hi"]
+
+      iex> List.duplicate("bye", 2)
+      ["bye", "bye"]
+
+      iex> List.duplicate([1, 2], 3)
+      [[1, 2], [1, 2], [1, 2]]
 
   """
-  @spec duplicate(elem, non_neg_integer) :: [elem] when elem: var
+  @spec duplicate(any, 0) :: []
+  @spec duplicate(elem, pos_integer) :: [elem, ...] when elem: var
   def duplicate(elem, n) do
     :lists.duplicate(n, elem)
   end
@@ -142,10 +172,15 @@ defmodule List do
   @doc """
   Flattens the given `list` of nested lists.
 
+  Empty list elements are discarded.
+
   ## Examples
 
       iex> List.flatten([1, [[2], 3]])
       [1, 2, 3]
+
+      iex> List.flatten([[], [[], []]])
+      []
 
   """
   @spec flatten(deep_list) :: list when deep_list: [any | deep_list]
@@ -158,10 +193,16 @@ defmodule List do
   The list `tail` will be added at the end of
   the flattened list.
 
+  Empty list elements from `list` are discarded,
+  but not the ones from `tail`.
+
   ## Examples
 
       iex> List.flatten([1, [[2], 3]], [4, 5])
       [1, 2, 3, 4, 5]
+
+      iex> List.flatten([1, [], 2], [3, [], 4])
+      [1, 2, 3, [], 4]
 
   """
   @spec flatten(deep_list, [elem]) :: [elem] when elem: var, deep_list: [elem | deep_list]
@@ -217,7 +258,8 @@ defmodule List do
       1
 
   """
-  @spec first([elem]) :: nil | elem when elem: var
+  @spec first([]) :: nil
+  @spec first([elem, ...]) :: elem when elem: var
   def first([]), do: nil
   def first([head | _]), do: head
 
@@ -236,15 +278,18 @@ defmodule List do
       3
 
   """
-  @spec last([elem]) :: nil | elem when elem: var
+  @spec last([]) :: nil
+  @spec last([elem, ...]) :: elem when elem: var
   def last([]), do: nil
   def last([head]), do: head
   def last([_ | tail]), do: last(tail)
 
   @doc """
   Receives a list of tuples and returns the first tuple
-  where the item at `position` in the tuple matches the
+  where the element at `position` in the tuple matches the
   given `key`.
+
+  If no matching tuple is found, `default` is returned.
 
   ## Examples
 
@@ -265,7 +310,7 @@ defmodule List do
 
   @doc """
   Receives a list of tuples and returns `true` if there is
-  a tuple where the item at `position` in the tuple matches
+  a tuple where the element at `position` in the tuple matches
   the given `key`.
 
   ## Examples
@@ -286,13 +331,16 @@ defmodule List do
   end
 
   @doc """
-  Receives a list of tuples and replaces the item
-  identified by `key` at `position` if it exists.
+  Receives a list of tuples and if the identified element by `key` at `position`
+  exists, it is replaced with `new_tuple`.
 
   ## Examples
 
       iex> List.keyreplace([a: 1, b: 2], :a, 0, {:a, 3})
       [a: 3, b: 2]
+
+      iex> List.keyreplace([a: 1, b: 2], :a, 1, {:a, 3})
+      [a: 1, b: 2]
 
   """
   @spec keyreplace([tuple], any, non_neg_integer, tuple) :: [tuple]
@@ -301,7 +349,7 @@ defmodule List do
   end
 
   @doc """
-  Receives a list of tuples and sorts the items
+  Receives a list of tuples and sorts the elements
   at `position` of the tuples. The sort is stable.
 
   ## Examples
@@ -319,10 +367,10 @@ defmodule List do
   end
 
   @doc """
-  Receives a `list` of tuples and replaces the item
-  identified by `key` at `position`.
+  Receives a `list` of tuples and replaces the element
+  identified by `key` at `position` with `new_tuple`.
 
-  If the item does not exist, it is added to the end of the `list`.
+  If the element does not exist, it is added to the end of the `list`.
 
   ## Examples
 
@@ -340,7 +388,7 @@ defmodule List do
 
   @doc """
   Receives a `list` of tuples and deletes the first tuple
-  where the item at `position` matches the
+  where the element at `position` matches the
   given `key`. Returns the new list.
 
   ## Examples
@@ -382,7 +430,7 @@ defmodule List do
   @spec keytake([tuple], any, non_neg_integer) :: {tuple, [tuple]} | nil
   def keytake(list, key, position) do
     case :lists.keytake(key, position + 1, list) do
-      {:value, item, list} -> {item, list}
+      {:value, element, list} -> {element, list}
       false -> nil
     end
   end
@@ -405,9 +453,7 @@ defmodule List do
       []
 
   """
-  @spec wrap(nil) :: []
-  @spec wrap(list) :: list when list: maybe_improper_list()
-  @spec wrap(term) :: nonempty_list(term) when term: any()
+  @spec wrap(term) :: maybe_improper_list()
   def wrap(term)
 
   def wrap(list) when is_list(list) do
@@ -443,13 +489,27 @@ defmodule List do
     do_zip(list_of_lists, [])
   end
 
-  @doc """
-  Checks if a list is a charlist made only of printable ASCII characters.
-
-  A printable charlist in Elixir contains only ASCII characters.
+  @doc ~S"""
+  Checks if `list` is a charlist made only of printable ASCII characters.
 
   Takes an optional `limit` as a second argument. `ascii_printable?/2` only
   checks the printability of the list up to the `limit`.
+
+  A printable charlist in Elixir contains only the printable characters in the
+  standard seven-bit ASCII character encoding, which are characters ranging from
+  32 to 126 in decimal notation, plus the following control characters:
+
+    * `?\a` - Bell
+    * `?\b` - Backspace
+    * `?\t` - Horizontal tab
+    * `?\n` - Line feed
+    * `?\v` - Vertical tab
+    * `?\f` - Form feed
+    * `?\r` - Carriage return
+    * `?\e` - Escape
+
+  For more information read the [Character groups](https://en.wikipedia.org/wiki/ASCII#Character_groups)
+  section in the Wikipedia article of the [ASCII](https://en.wikipedia.org/wiki/ASCII) standard.
 
   ## Examples
 
@@ -462,62 +522,57 @@ defmodule List do
       iex> List.ascii_printable?('abc' ++ [0], 2)
       true
 
-  Improper lists are not printable, even if made only of ascii characters:
+  Improper lists are not printable, even if made only of ASCII characters:
 
       iex> List.ascii_printable?('abc' ++ ?d)
       false
 
   """
   @doc since: "1.6.0"
-  def ascii_printable?(list, counter \\ :infinity)
+  @spec ascii_printable?(list, 0) :: true
+  @spec ascii_printable?([], limit) :: true
+        when limit: :infinity | pos_integer
+  @spec ascii_printable?([...], limit) :: boolean
+        when limit: :infinity | pos_integer
+  def ascii_printable?(list, limit \\ :infinity)
+      when is_list(list) and (limit == :infinity or (is_integer(limit) and limit >= 0)) do
+    ascii_printable_guarded?(list, limit)
+  end
 
-  def ascii_printable?(_, 0) do
+  defp ascii_printable_guarded?(_, 0) do
     true
   end
 
-  def ascii_printable?([char | rest], counter)
-      when is_integer(char) and char >= 32 and char <= 126 do
-    ascii_printable?(rest, decrement(counter))
+  defp ascii_printable_guarded?([char | rest], counter)
+       # 7..13 is the range '\a\b\t\n\v\f\r'. 32..126 are ASCII printables.
+       when is_integer(char) and
+              ((char >= 7 and char <= 13) or char == ?\e or (char >= 32 and char <= 126)) do
+    ascii_printable_guarded?(rest, decrement(counter))
   end
 
-  def ascii_printable?([?\n | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\r | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\t | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\v | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\b | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\f | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\e | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([?\a | rest], counter) do
-    ascii_printable?(rest, decrement(counter))
-  end
-
-  def ascii_printable?([], _counter), do: true
-  def ascii_printable?(_, _counter), do: false
+  defp ascii_printable_guarded?([], _counter), do: true
+  defp ascii_printable_guarded?(_, _counter), do: false
 
   @compile {:inline, decrement: 1}
   defp decrement(:infinity), do: :infinity
   defp decrement(counter), do: counter - 1
+
+  @doc """
+  Returns `true` if `list` is an improper list. Otherwise returns `false`.
+
+  ## Examples
+
+      iex> List.improper?([1, 2 | 3])
+      true
+
+      iex> List.improper?([1, 2, 3])
+      false
+
+  """
+  @doc since: "1.8.0"
+  @spec improper?(maybe_improper_list) :: boolean
+  def improper?(list) when is_list(list) and length(list) >= 0, do: false
+  def improper?(list) when is_list(list), do: true
 
   @doc """
   Returns a list with `value` inserted at the specified `index`.
@@ -541,11 +596,19 @@ defmodule List do
 
   """
   @spec insert_at(list, integer, any) :: list
-  def insert_at(list, index, value) when is_integer(index) do
-    if index < 0 do
-      do_insert_at(list, length(list) + index + 1, value)
-    else
-      do_insert_at(list, index, value)
+  def insert_at(list, index, value) when is_list(list) and is_integer(index) do
+    case index do
+      -1 ->
+        list ++ [value]
+
+      _ when index < 0 ->
+        case length(list) + index + 1 do
+          index when index < 0 -> [value | list]
+          index -> do_insert_at(list, index, value)
+        end
+
+      _ ->
+        do_insert_at(list, index, value)
     end
   end
 
@@ -571,9 +634,12 @@ defmodule List do
 
   """
   @spec replace_at(list, integer, any) :: list
-  def replace_at(list, index, value) when is_integer(index) do
+  def replace_at(list, index, value) when is_list(list) and is_integer(index) do
     if index < 0 do
-      do_replace_at(list, length(list) + index, value)
+      case length(list) + index do
+        index when index < 0 -> list
+        index -> do_replace_at(list, index, value)
+      end
     else
       do_replace_at(list, index, value)
     end
@@ -601,9 +667,12 @@ defmodule List do
 
   """
   @spec update_at([elem], integer, (elem -> any)) :: list when elem: var
-  def update_at(list, index, fun) when is_function(fun, 1) and is_integer(index) do
+  def update_at(list, index, fun) when is_list(list) and is_function(fun) and is_integer(index) do
     if index < 0 do
-      do_update_at(list, length(list) + index, fun)
+      case length(list) + index do
+        index when index < 0 -> list
+        index -> do_update_at(list, index, fun)
+      end
     else
       do_update_at(list, index, fun)
     end
@@ -681,7 +750,7 @@ defmodule List do
 
   """
   @doc since: "1.5.0"
-  @spec starts_with?(list, list) :: boolean
+  @spec starts_with?(nonempty_list, nonempty_list) :: boolean
   @spec starts_with?(list, []) :: true
   @spec starts_with?([], nonempty_list) :: false
   def starts_with?(list, prefix)
@@ -693,15 +762,18 @@ defmodule List do
   @doc """
   Converts a charlist to an atom.
 
-  Currently Elixir does not support conversions from charlists
-  which contains Unicode codepoints greater than 0xFF.
+  Elixir supports conversions from charlists which contains any Unicode
+  code point.
 
   Inlined by the compiler.
 
   ## Examples
 
-      iex> List.to_atom('elixir')
-      :elixir
+      iex> List.to_atom('Elixir')
+      :Elixir
+
+      iex> List.to_atom('🌢 Elixir')
+      :"🌢 Elixir"
 
   """
   @spec to_atom(charlist) :: atom
@@ -713,8 +785,8 @@ defmodule List do
   Converts a charlist to an existing atom. Raises an `ArgumentError`
   if the atom does not exist.
 
-  Currently Elixir does not support conversions from charlists
-  which contains Unicode codepoints greater than 0xFF.
+  Elixir supports conversions from charlists which contains any Unicode
+  code point.
 
   Inlined by the compiler.
 
@@ -723,6 +795,10 @@ defmodule List do
       iex> _ = :my_atom
       iex> List.to_existing_atom('my_atom')
       :my_atom
+
+      iex> _ = :"🌢 Elixir"
+      iex> List.to_existing_atom('🌢 Elixir')
+      :"🌢 Elixir"
 
       iex> List.to_existing_atom('this_atom_will_never_exist')
       ** (ArgumentError) argument error
@@ -798,11 +874,18 @@ defmodule List do
   end
 
   @doc """
-  Converts a list of integers representing codepoints, lists or
+  Converts a list of integers representing code points, lists or
   strings into a string.
 
+  To be converted to a string, a list must either be empty or only
+  contain the following elements:
+
+    * strings
+    * integers representing Unicode code points
+    * a list containing one of these three elements
+
   Notice that this function expects a list of integers representing
-  UTF-8 codepoints. If you have a list of bytes, you must instead use
+  UTF-8 code points. If you have a list of bytes, you must instead use
   the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
 
   ## Examples
@@ -816,6 +899,9 @@ defmodule List do
       iex> List.to_string([0x0064, "ee", ['p']])
       "deep"
 
+      iex> List.to_string([])
+      ""
+
   """
   @spec to_string(:unicode.charlist()) :: String.t()
   def to_string(list) when is_list(list) do
@@ -826,11 +912,12 @@ defmodule List do
         raise ArgumentError, """
         cannot convert the given list to a string.
 
-        To be converted to a string, a list must contain only:
+        To be converted to a string, a list must either be empty or only
+        contain the following elements:
 
           * strings
-          * integers representing Unicode codepoints
-          * or a list containing one of these three elements
+          * integers representing Unicode code points
+          * a list containing one of these three elements
 
         Please check the given list or call inspect/1 to get the list representation, got:
 
@@ -838,6 +925,58 @@ defmodule List do
         """
     else
       result when is_binary(result) ->
+        result
+
+      {:error, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :invalid
+
+      {:incomplete, encoded, rest} ->
+        raise UnicodeConversionError, encoded: encoded, rest: rest, kind: :incomplete
+    end
+  end
+
+  @doc """
+  Converts a list of integers representing code points, lists or
+  strings into a charlist.
+
+  Notice that this function expects a list of integers representing
+  UTF-8 code points. If you have a list of bytes, you must instead use
+  the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+
+  ## Examples
+
+      iex> List.to_charlist([0x00E6, 0x00DF])
+      'æß'
+
+      iex> List.to_charlist([0x0061, "bc"])
+      'abc'
+
+      iex> List.to_charlist([0x0064, "ee", ['p']])
+      'deep'
+
+  """
+  @doc since: "1.8.0"
+  @spec to_charlist(:unicode.charlist()) :: charlist()
+  def to_charlist(list) when is_list(list) do
+    try do
+      :unicode.characters_to_list(list)
+    rescue
+      ArgumentError ->
+        raise ArgumentError, """
+        cannot convert the given list to a charlist.
+
+        To be converted to a charlist, a list must contain only:
+
+          * strings
+          * integers representing Unicode code points
+          * or a list containing one of these three elements
+
+        Please check the given list or call inspect/1 to get the list representation, got:
+
+        #{inspect(list)}
+        """
+    else
+      result when is_list(result) ->
         result
 
       {:error, encoded, rest} ->
@@ -861,6 +1000,8 @@ defmodule List do
   corresponding key is `:del`), or left alone (if the corresponding key is
   `:eq`) in `list1` in order to be closer to `list2`.
 
+  See `myers_difference/3` if you want to handle nesting in the diff scripts.
+
   ## Examples
 
       iex> List.myers_difference([1, 4, 2, 3], [1, 2, 3, 4])
@@ -870,18 +1011,48 @@ defmodule List do
   @doc since: "1.4.0"
   @spec myers_difference(list, list) :: [{:eq | :ins | :del, list}]
   def myers_difference(list1, list2) when is_list(list1) and is_list(list2) do
-    path = {0, list1, list2, []}
-    find_script(0, length(list1) + length(list2), [path])
+    myers_difference_with_diff_script(list1, list2, nil)
   end
 
-  defp find_script(envelope, max, paths) do
-    case each_diagonal(-envelope, envelope, paths, []) do
+  @doc """
+  Returns a keyword list that represents an *edit script* with nested diffs.
+
+  This is an extension of `myers_difference/2` where a `diff_script` function
+  can be given in case it is desired to compute nested differences. The function
+  may return a list with the inner edit script or `nil` in case there is no
+  such script. The returned inner edit script will be under the `:diff` key.
+
+  ## Examples
+
+      iex> List.myers_difference(["a", "db", "c"], ["a", "bc"], &String.myers_difference/2)
+      [eq: ["a"], diff: [del: "d", eq: "b", ins: "c"], del: ["c"]]
+
+  """
+  @doc since: "1.8.0"
+  @spec myers_difference(list, list, (term, term -> script | nil)) :: script
+        when script: [{:eq | :ins | :del | :diff, list}]
+  def myers_difference(list1, list2, diff_script)
+      when is_list(list1) and is_list(list2) and is_function(diff_script) do
+    myers_difference_with_diff_script(list1, list2, diff_script)
+  end
+
+  defp myers_difference_with_diff_script(list1, list2, diff_script) do
+    path = {0, list1, list2, []}
+    find_script(0, length(list1) + length(list2), [path], diff_script)
+  end
+
+  defp find_script(envelope, max, paths, diff_script) do
+    case each_diagonal(-envelope, envelope, paths, [], diff_script) do
       {:done, edits} -> compact_reverse(edits, [])
-      {:next, paths} -> find_script(envelope + 1, max, paths)
+      {:next, paths} -> find_script(envelope + 1, max, paths, diff_script)
     end
   end
 
   defp compact_reverse([], acc), do: acc
+
+  defp compact_reverse([{:diff, _} = fragment | rest], acc) do
+    compact_reverse(rest, [fragment | acc])
+  end
 
   defp compact_reverse([{kind, elem} | rest], [{kind, result} | acc]) do
     compact_reverse(rest, [{kind, [elem | result]} | acc])
@@ -895,50 +1066,68 @@ defmodule List do
     compact_reverse(rest, [{kind, [elem]} | acc])
   end
 
-  defp each_diagonal(diag, limit, _paths, next_paths) when diag > limit do
+  defp each_diagonal(diag, limit, _paths, next_paths, _diff_script) when diag > limit do
     {:next, :lists.reverse(next_paths)}
   end
 
-  defp each_diagonal(diag, limit, paths, next_paths) do
-    {path, rest} = proceed_path(diag, limit, paths)
+  defp each_diagonal(diag, limit, paths, next_paths, diff_script) do
+    {path, rest} = proceed_path(diag, limit, paths, diff_script)
 
     case follow_snake(path) do
-      {:cont, path} -> each_diagonal(diag + 2, limit, rest, [path | next_paths])
+      {:cont, path} -> each_diagonal(diag + 2, limit, rest, [path | next_paths], diff_script)
       {:done, edits} -> {:done, edits}
     end
   end
 
-  defp proceed_path(0, 0, [path]), do: {path, []}
+  defp proceed_path(0, 0, [path], _diff_script), do: {path, []}
 
-  defp proceed_path(diag, limit, [path | _] = paths) when diag == -limit do
-    {move_down(path), paths}
+  defp proceed_path(diag, limit, [path | _] = paths, diff_script) when diag == -limit do
+    {move_down(path, diff_script), paths}
   end
 
-  defp proceed_path(diag, limit, [path]) when diag == limit do
-    {move_right(path), []}
+  defp proceed_path(diag, limit, [path], diff_script) when diag == limit do
+    {move_right(path, diff_script), []}
   end
 
-  defp proceed_path(_diag, _limit, [path1, path2 | rest]) do
+  defp proceed_path(_diag, _limit, [path1, path2 | rest], diff_script) do
     if elem(path1, 0) > elem(path2, 0) do
-      {move_right(path1), [path2 | rest]}
+      {move_right(path1, diff_script), [path2 | rest]}
     else
-      {move_down(path2), [path2 | rest]}
+      {move_down(path2, diff_script), [path2 | rest]}
     end
   end
 
-  defp move_right({y, list1, [elem | rest], edits}) do
+  defp move_right({y, [elem1 | rest1] = list1, [elem2 | rest2], edits}, diff_script)
+       when diff_script != nil do
+    if diff = diff_script.(elem1, elem2) do
+      {y + 1, rest1, rest2, [{:diff, diff} | edits]}
+    else
+      {y, list1, rest2, [{:ins, elem2} | edits]}
+    end
+  end
+
+  defp move_right({y, list1, [elem | rest], edits}, _diff_script) do
     {y, list1, rest, [{:ins, elem} | edits]}
   end
 
-  defp move_right({y, list1, [], edits}) do
+  defp move_right({y, list1, [], edits}, _diff_script) do
     {y, list1, [], edits}
   end
 
-  defp move_down({y, [elem | rest], list2, edits}) do
+  defp move_down({y, [elem1 | rest1], [elem2 | rest2] = list2, edits}, diff_script)
+       when diff_script != nil do
+    if diff = diff_script.(elem1, elem2) do
+      {y + 1, rest1, rest2, [{:diff, diff} | edits]}
+    else
+      {y + 1, rest1, list2, [{:del, elem1} | edits]}
+    end
+  end
+
+  defp move_down({y, [elem | rest], list2, edits}, _diff_script) do
     {y + 1, rest, list2, [{:del, elem} | edits]}
   end
 
-  defp move_down({y, [], list2, edits}) do
+  defp move_down({y, [], list2, edits}, _diff_script) do
     {y + 1, [], list2, edits}
   end
 
@@ -962,10 +1151,6 @@ defmodule List do
     []
   end
 
-  defp do_replace_at(list, index, _value) when index < 0 do
-    list
-  end
-
   defp do_replace_at([_old | rest], 0, value) do
     [value | rest]
   end
@@ -980,7 +1165,7 @@ defmodule List do
     [value]
   end
 
-  defp do_insert_at(list, index, value) when index <= 0 do
+  defp do_insert_at(list, 0, value) do
     [value | list]
   end
 
@@ -992,10 +1177,6 @@ defmodule List do
 
   defp do_update_at([value | list], 0, fun) do
     [fun.(value) | list]
-  end
-
-  defp do_update_at(list, index, _fun) when index < 0 do
-    list
   end
 
   defp do_update_at([head | tail], index, fun) do
@@ -1010,10 +1191,6 @@ defmodule List do
 
   defp do_pop_at([], _index, default, acc) do
     {default, :lists.reverse(acc)}
-  end
-
-  defp do_pop_at(list, index, default, []) when index < 0 do
-    {default, list}
   end
 
   defp do_pop_at([head | tail], 0, _default, acc) do

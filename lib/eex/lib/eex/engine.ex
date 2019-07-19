@@ -2,58 +2,70 @@ defmodule EEx.Engine do
   @moduledoc ~S"""
   Basic EEx engine that ships with Elixir.
 
-  An engine needs to implement six functions:
+  An engine needs to implement all callbacks below.
 
-    * `init(opts)` - called at the beginning of every text
-      and it must return the initial state.
-
-    * `handle_body(state)` - receives the state of the document
-      and it must return a quoted expression.
-
-    * `handle_text(state, text)` - it receives the state,
-      the text and must return a new quoted expression.
-
-    * `handle_expr(state, marker, expr)` - it receives the state,
-      the marker, the expr and must return a new state.
-
-    * `handle_begin(state)` - called every time there a new state
-      is needed with an empty buffer. Typically called for do/end
-      blocks, case expressions, anonymous functions, etc
-
-    * `handle_end(state)` - opposite of `handle_begin(state)` and
-      it must return quoted expression
-
-      The marker is what follows exactly after `<%`. For example,
-      `<% foo %>` has an empty marker, but `<%= foo %>` has `"="`
-      as marker. The allowed markers so far are: 
-
-        * `""`
-        * `"="`
-        * `"/"`
-        * `"|"`
-
-      Markers `"/"` and `"|"` are only for use in custom EEx engines
-      and are not implemented by default. Using them without the
-      implementation raises `EEx.SyntaxError`.
-
-      If your engine does not implement all markers, please ensure that
-      `handle_expr/3` falls back to `EEx.Engine.handle_expr/3` 
-      to raise the proper error message.
-
-      Read `handle_expr/3` below for more information about the markers
-      implemented by default by this engine.
-
-  `EEx.Engine` can be used directly if one desires to use the
-  default implementations for the functions above.
+  An engine may also `use EEx.Engine` to get the default behaviour
+  but this is not advised. In such cases, if any of the callbacks
+  are overridden, they must call `super()` to delegate to the
+  underlying `EEx.Engine`.
   """
 
   @type state :: term
 
+  @doc """
+  Called at the beginning of every template.
+
+  It must return the initial state.
+  """
   @callback init(opts :: keyword) :: state
+
+  @doc """
+  Called at the end of every template.
+
+  It must return Elixir's quoted expressions for the template.
+  """
   @callback handle_body(state) :: Macro.t()
+
+  @doc """
+  Called for the text/static parts of a template.
+
+  It must return the updated state.
+  """
   @callback handle_text(state, text :: String.t()) :: state
+
+  @doc """
+  Called for the dynamic/code parts of a template.
+
+  The marker is what follows exactly after `<%`. For example,
+  `<% foo %>` has an empty marker, but `<%= foo %>` has `"="`
+  as marker. The allowed markers so far are:
+
+    * `""`
+    * `"="`
+    * `"/"`
+    * `"|"`
+
+  Markers `"/"` and `"|"` are only for use in custom EEx engines
+  and are not implemented by default. Using them without an
+  appropriate implementation raises `EEx.SyntaxError`.
+
+  It must return the updated state.
+  """
   @callback handle_expr(state, marker :: String.t(), expr :: Macro.t()) :: state
+
+  @doc """
+  Invoked at the beginning of every nesting.
+
+  It must return a new state that is used only inside the nesting.
+  Once the nesting terminates, the current `state` is resumed.
+  """
   @callback handle_begin(state) :: state
+
+  @doc """
+  Invokes at the end of a nesting.
+
+  It must return Elixir's quoted expressions for the nesting.
+  """
   @callback handle_end(state) :: Macro.t()
 
   @doc false
@@ -65,24 +77,24 @@ defmodule EEx.Engine do
         EEx.Engine.init(opts)
       end
 
-      def handle_body(quoted) do
-        EEx.Engine.handle_body(quoted)
+      def handle_body(state) do
+        EEx.Engine.handle_body(state)
       end
 
-      def handle_begin(quoted) do
-        EEx.Engine.handle_begin(quoted)
+      def handle_begin(state) do
+        EEx.Engine.handle_begin(state)
       end
 
-      def handle_end(quoted) do
-        EEx.Engine.handle_end(quoted)
+      def handle_end(state) do
+        EEx.Engine.handle_end(state)
       end
 
-      def handle_text(buffer, text) do
-        EEx.Engine.handle_text(buffer, text)
+      def handle_text(state, text) do
+        EEx.Engine.handle_text(state, text)
       end
 
-      def handle_expr(buffer, marker, expr) do
-        EEx.Engine.handle_expr(buffer, marker, expr)
+      def handle_expr(state, marker, expr) do
+        EEx.Engine.handle_expr(state, marker, expr)
       end
 
       defoverridable EEx.Engine
@@ -98,9 +110,9 @@ defmodule EEx.Engine do
   This can be added to any custom engine by invoking
   `handle_assign/1` with `Macro.prewalk/2`:
 
-      def handle_expr(buffer, token, expr) do
+      def handle_expr(state, token, expr) do
         expr = Macro.prewalk(expr, &EEx.Engine.handle_assign/1)
-        EEx.Engine.handle_expr(buffer, token, expr)
+        super(state, token, expr)
       end
 
   """
@@ -115,7 +127,7 @@ defmodule EEx.Engine do
   end
 
   @doc false
-  # TODO: Raise on 2.0
+  # TODO: Raise on v2.0
   @spec fetch_assign!(Access.t(), Access.key()) :: term | nil
   def fetch_assign!(assigns, key) do
     case Access.fetch(assigns, key) do
@@ -135,68 +147,73 @@ defmodule EEx.Engine do
     end
   end
 
-  @doc """
-  Returns an empty string as initial buffer.
-  """
+  @doc false
   def init(_opts) do
-    ""
+    %{
+      binary: [],
+      dynamic: [],
+      vars_count: 0
+    }
   end
 
-  @doc """
-  Returns an empty string as the new buffer.
-  """
-  def handle_begin(_previous) do
-    ""
+  @doc false
+  def handle_begin(state) do
+    check_state!(state)
+    %{state | binary: [], dynamic: []}
   end
 
-  @doc """
-  End of the new buffer.
-  """
+  @doc false
   def handle_end(quoted) do
-    quoted
+    handle_body(quoted)
   end
 
-  @doc """
-  The default implementation simply returns the given expression.
-  """
-  def handle_body(quoted) do
-    quoted
+  @doc false
+  def handle_body(state) do
+    check_state!(state)
+    %{binary: binary, dynamic: dynamic} = state
+    binary = {:<<>>, [], Enum.reverse(binary)}
+    dynamic = [binary | dynamic]
+    {:__block__, [], Enum.reverse(dynamic)}
   end
 
-  @doc """
-  The default implementation simply concatenates text to the buffer.
-  """
-  def handle_text(buffer, text) do
-    quote(do: unquote(buffer) <> unquote(text))
+  @doc false
+  def handle_text(state, text) do
+    %{binary: binary} = state
+    %{state | binary: [text | binary]}
   end
 
-  @doc """
-  Implements expressions according to the markers.
+  @doc false
+  def handle_expr(state, "=", ast) do
+    %{binary: binary, dynamic: dynamic, vars_count: vars_count} = state
+    var = Macro.var(:"arg#{vars_count}", __MODULE__)
 
-      <% Elixir expression - inline with output %>
-      <%= Elixir expression - replace with result %>
-      <%/ Elixir expression - raise EEx.SyntaxError, to be implemented by custom engines %>
-      <%| Elixir expression - raise EEx.SyntaxError, to be implemented by custom engines %>
+    ast =
+      quote do
+        unquote(var) = String.Chars.to_string(unquote(ast))
+      end
 
-  All other markers are not implemented by this engine.
-  """
-  def handle_expr(buffer, "=", expr) do
-    quote do
-      tmp1 = unquote(buffer)
-      tmp1 <> String.Chars.to_string(unquote(expr))
-    end
+    segment =
+      quote do
+        unquote(var) :: binary
+      end
+
+    %{state | dynamic: [ast | dynamic], binary: [segment | binary], vars_count: vars_count + 1}
   end
 
-  def handle_expr(buffer, "", expr) do
-    quote do
-      tmp2 = unquote(buffer)
-      unquote(expr)
-      tmp2
-    end
+  def handle_expr(state, "", ast) do
+    %{dynamic: dynamic} = state
+    %{state | dynamic: [ast | dynamic]}
   end
 
-  def handle_expr(_buffer, marker, _expr) when marker in ["/", "|"] do
+  def handle_expr(_state, marker, _ast) when marker in ["/", "|"] do
     raise EEx.SyntaxError,
           "unsupported EEx syntax <%#{marker} %> (the syntax is valid but not supported by the current EEx engine)"
+  end
+
+  defp check_state!(%{binary: _, dynamic: _, vars_count: _}), do: :ok
+
+  defp check_state!(state) do
+    raise "unexpected EEx.Engine state: #{inspect(state)}. " <>
+            "This typically means a bug or an outdated EEx.Engine or tool"
   end
 end

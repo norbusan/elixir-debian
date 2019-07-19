@@ -18,8 +18,6 @@ defmodule Dict do
   message =
     "Use the Map module for working with maps or the Keyword module for working with keyword lists"
 
-  # TODO: Remove by 2.0
-
   @deprecated message
   defmacro __using__(_) do
     # Use this import to guarantee proper code expansion
@@ -295,7 +293,7 @@ defmodule Dict do
   end
 
   @deprecated message
-  @spec fetch!(t, key) :: value | no_return
+  @spec fetch!(t, key) :: value
   def fetch!(dict, key) do
     target(dict).fetch!(dict, key)
   end

@@ -21,9 +21,9 @@ defprotocol Collectable do
   shape where just the range limits are stored.
 
   The `Collectable` module was designed to fill the gap left by the
-  `Enumerable` protocol. `into/1` can be seen as the opposite of
-  `Enumerable.reduce/3`. If `Enumerable` is about taking values out,
-  `Collectable.into/1` is about collecting those values into a structure.
+  `Enumerable` protocol. `Collectable.into/1` can be seen as the opposite of
+  `Enumerable.reduce/3`. If the functions in `Enumerable` are about taking values out,
+  then `Collectable.into/1` is about collecting those values into a structure.
 
   ## Examples
 
@@ -41,7 +41,7 @@ defprotocol Collectable do
   implementation for `MapSet`. In this implementation "collecting" elements
   simply means inserting them in the set through `MapSet.put/2`.
 
-      defimpl Collectable do
+      defimpl Collectable, for: MapSet do
         def into(original) do
           collector_fun = fn
             set, {:cont, elem} -> MapSet.put(set, elem)
@@ -79,6 +79,16 @@ end
 
 defimpl Collectable, for: List do
   def into(original) do
+    if original != [] do
+      IO.warn(
+        "the Collectable protocol is deprecated for non-empty lists. The behaviour of " <>
+          "things like Enum.into/2 or \"for\" comprehensions with an :into option is incorrect " <>
+          "when collecting into non-empty lists. If you're collecting into a non-empty keyword " <>
+          "list, consider using Keyword.merge/2 instead. If you're collecting into a non-empty " <>
+          "list, consider concatenating the two lists with the ++ operator."
+      )
+    end
+
     fun = fn
       list, {:cont, x} -> [x | list]
       list, :done -> original ++ :lists.reverse(list)

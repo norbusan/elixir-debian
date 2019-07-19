@@ -14,21 +14,41 @@ defmodule ExUnit.Filters do
   on the command line) includes a line number filter, and if so returns the
   appropriate ExUnit configuration options.
   """
-  @spec parse_path(String.t()) :: {String.t(), any}
+  @spec parse_path(String.t()) :: {String.t(), Keyword.t()}
   def parse_path(file) do
-    {paths, [line]} = file |> String.split(":") |> Enum.split(-1)
+    case extract_line_numbers(file) do
+      {path, []} -> {path, []}
+      {path, line_numbers} -> {path, exclude: [:test], include: line_numbers}
+    end
+  end
 
-    case Integer.parse(line) do
-      {_, ""} ->
-        {Enum.join(paths, ":"), exclude: [:test], include: [line: line]}
+  defp extract_line_numbers(file) do
+    case String.split(file, ":") do
+      [part] ->
+        {part, []}
 
-      _ ->
-        {file, []}
+      parts ->
+        {reversed_line_numbers, reversed_path_parts} =
+          parts
+          |> Enum.reverse()
+          |> Enum.split_while(&match?({_, ""}, Integer.parse(&1)))
+
+        line_numbers =
+          reversed_line_numbers
+          |> Enum.reverse()
+          |> Enum.map(&{:line, &1})
+
+        path =
+          reversed_path_parts
+          |> Enum.reverse()
+          |> Enum.join(":")
+
+        {path, line_numbers}
     end
   end
 
   @doc """
-  Normalizes include and excludes to remove duplicates
+  Normalizes `include` and `exclude` filters to remove duplicates
   and keep precedence.
 
   ## Examples
@@ -51,6 +71,12 @@ defmodule ExUnit.Filters do
       iex> ExUnit.Filters.normalize([foo: true], [foo: "true"])
       {[foo: true], []}
 
+      iex> ExUnit.Filters.normalize([foo: 1, foo: 1, foo: 2], [])
+      {[foo: 1, foo: 2], []}
+
+      iex> ExUnit.Filters.normalize([], [foo: 1, foo: 1, foo: 2])
+      {[], [foo: 1, foo: 2]}
+
   """
   @spec normalize(t | nil, t | nil) :: {t, t}
   def normalize(include, exclude) do
@@ -60,13 +86,12 @@ defmodule ExUnit.Filters do
     {exclude_atoms, exclude_tags} =
       exclude |> List.wrap() |> Enum.uniq() |> Enum.split_with(&is_atom/1)
 
-    exclude_tags = Map.new(exclude_tags)
+    exclude_tags_map = Map.new(exclude_tags)
 
     exclude_included =
-      for include_tag <- include_tags, key = has_tag(include_tag, exclude_tags), do: key
+      for include_tag <- include_tags, key = has_tag(include_tag, exclude_tags_map), do: key
 
-    exclude_tags =
-      exclude_tags |> Map.drop(include_atoms) |> Map.drop(exclude_included) |> Map.to_list()
+    exclude_tags = exclude_tags |> Keyword.drop(include_atoms) |> Keyword.drop(exclude_included)
 
     {include_atoms ++ include_tags, (exclude_atoms -- include_atoms) ++ exclude_tags}
   end
@@ -96,7 +121,7 @@ defmodule ExUnit.Filters do
 
     * A set of files that contain tests that failed the last time they ran.
       The paths are absolute paths.
-    * A set of test ids that failed the last time they ran
+    * A set of test IDs that failed the last time they ran
 
   """
   @spec failure_info(Path.t()) :: {MapSet.t(Path.t()), MapSet.t(FailuresManifest.test_id())}
@@ -109,12 +134,23 @@ defmodule ExUnit.Filters do
   Evaluates the `include` and `exclude` filters against the given `tags` to
   determine if tests should be skipped or excluded.
 
-  Some filters, like `:line`, may require the whole test collection to
-  find the closest line, that's why it must also be passed as argument.
+  Some filters, like `:line`, may require the whole test `collection` to
+  find the closest line, that's why it must also be passed as an argument.
 
   Filters can either be a regular expression or any data structure
-  that implements to `String.Chars`, which is invoked before comparing
-  the filter with the tag value.
+  that implements the `String.Chars` protocol, which is invoked before comparing
+  the filter with the `:tag` value.
+
+  ## Precedence
+
+  Tests are first excluded, then included, and then skipped (if any left).
+
+  If a `:skip` tag is found in `tags`, `{:skipped, message}` is returned if the test
+  has been left after the `exclude` and `include` filters. Otherwise `{:exclude, message}`
+  is returned.
+
+  The only exception to this rule is that `:skip` is found in the `include` filter,
+  `:ok` is returned regardless of whether the test was excluded or not.
 
   ## Examples
 
@@ -125,25 +161,29 @@ defmodule ExUnit.Filters do
       {:excluded, "due to foo filter"}
 
   """
-  @spec eval(t, t, map, [ExUnit.Test.t()]) :: :ok | {:error, binary}
+  @spec eval(t, t, map, [ExUnit.Test.t()]) ::
+          :ok | {:excluded, String.t()} | {:skipped, String.t()}
   def eval(include, exclude, tags, collection) when is_map(tags) do
-    skip? = not Enum.any?(include, &has_tag(&1, %{skip: true}, collection))
+    excluded = Enum.find_value(exclude, &has_tag(&1, tags, collection))
+    excluded? = excluded != nil
+    included? = Enum.any?(include, &has_tag(&1, tags, collection))
 
-    case Map.fetch(tags, :skip) do
-      {:ok, msg} when is_binary(msg) and skip? ->
-        {:skipped, msg}
+    if included? or not excluded? do
+      skip_tag = %{skip: Map.get(tags, :skip, true)}
+      skip_included_explicitly? = Enum.any?(include, &has_tag(&1, skip_tag, collection))
 
-      {:ok, true} when skip? ->
-        {:skipped, "due to skip tag"}
+      case Map.fetch(tags, :skip) do
+        {:ok, msg} when is_binary(msg) and not skip_included_explicitly? ->
+          {:skipped, msg}
 
-      _ ->
-        excluded = Enum.find_value(exclude, &has_tag(&1, tags, collection))
+        {:ok, true} when not skip_included_explicitly? ->
+          {:skipped, "due to skip tag"}
 
-        if !excluded or Enum.any?(include, &has_tag(&1, tags, collection)) do
+        _ ->
           :ok
-        else
-          {:excluded, "due to #{excluded} filter"}
-        end
+      end
+    else
+      {:excluded, "due to #{excluded} filter"}
     end
   end
 

@@ -9,7 +9,8 @@ defmodule ExUnit.AssertionError do
                right: @no_value,
                message: @no_value,
                expr: @no_value,
-               args: @no_value
+               args: @no_value,
+               doctest: @no_value
 
   @doc """
   Indicates no meaningful value for a field.
@@ -52,7 +53,7 @@ defmodule ExUnit.Assertions do
   `some_fun()` returns `13`):
 
       Comparison (using ==) failed in:
-      code:  some_fun() == 10
+      code:  assert some_fun() == 10
       left:  13
       right: 10
 
@@ -75,7 +76,7 @@ defmodule ExUnit.Assertions do
    will fail with the message:
 
       Assertion with > failed
-      code:  1 + 2 + 3 + 4 > 15
+      code:  assert 1 + 2 + 3 + 4 > 15
       left:  10
       right: 15
 
@@ -87,7 +88,7 @@ defmodule ExUnit.Assertions do
   you'll see:
 
       match (=) failed
-      code:  [1] = [2]
+      code:  assert [1] = [2]
       right: [2]
 
   Keep in mind that `assert` does not change its semantics
@@ -201,7 +202,7 @@ defmodule ExUnit.Assertions do
   The correct way to write the refutation above is to use
   `Kernel.match?/2`:
 
-      refute match? {:ok, _}, some_function_that_returns_error_tuple()
+      refute match?({:ok, _}, some_function_that_returns_error_tuple())
 
   ## Examples
 
@@ -352,7 +353,7 @@ defmodule ExUnit.Assertions do
   ## END HELPERS
 
   @doc """
-  Asserts `value` is `true`, displaying the given `message` otherwise.
+  Asserts `value` is truthy, displaying the given `message` otherwise.
 
   ## Examples
 
@@ -413,10 +414,10 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      send self(), :hello
+      send(self(), :hello)
       assert_received :hello
 
-      send self(), :bye
+      send(self(), :bye)
       assert_received :hello, "Oh No!"
       ** (ExUnit.AssertionError) Oh No!
       Process mailbox:
@@ -424,7 +425,7 @@ defmodule ExUnit.Assertions do
 
   You can also match against specific patterns:
 
-      send self(), {:hello, "world"}
+      send(self(), {:hello, "world"})
       assert_received {:hello, _}
 
   """
@@ -436,10 +437,9 @@ defmodule ExUnit.Assertions do
     binary = Macro.to_string(pattern)
 
     # Expand before extracting metadata
-    caller = Macro.Env.to_match(caller)
-    expanded = expand_pattern(pattern, caller)
-    vars = collect_vars_from_pattern(expanded)
-    pins = collect_pins_from_pattern(expanded, Macro.Env.vars(caller))
+    pattern = expand_pattern(pattern, caller)
+    vars = collect_vars_from_pattern(pattern)
+    pins = collect_pins_from_pattern(pattern, Macro.Env.vars(caller))
 
     pattern =
       case pattern do
@@ -547,7 +547,7 @@ defmodule ExUnit.Assertions do
 
     mailbox =
       messages
-      |> Enum.take(@max_mailbox_length)
+      |> Enum.take(-@max_mailbox_length)
       |> Enum.map_join(@indent, &inspect/1)
 
     mailbox_message(length, @indent <> mailbox)
@@ -557,7 +557,7 @@ defmodule ExUnit.Assertions do
 
   defp mailbox_message(length, mailbox) when length > 10 do
     "\nProcess mailbox:" <>
-      mailbox <> "\nShowing only #{@max_mailbox_length} of #{length} messages."
+      mailbox <> "\nShowing only last #{@max_mailbox_length} of #{length} messages."
   end
 
   defp mailbox_message(_length, mailbox) do
@@ -584,15 +584,17 @@ defmodule ExUnit.Assertions do
   defp collect_vars_from_pattern({:when, _, [left, right]}) do
     pattern = collect_vars_from_pattern(left)
 
-    for {name, _, context} = var <- collect_vars_from_pattern(right),
-        Enum.any?(pattern, &match?({^name, _, ^context}, &1)),
-        into: pattern,
-        do: var
+    vars =
+      for {name, _, context} = var <- collect_vars_from_pattern(right),
+          Enum.any?(pattern, &match?({^name, _, ^context}, &1)),
+          do: var
+
+    pattern ++ vars
   end
 
   defp collect_vars_from_pattern(expr) do
     Macro.prewalk(expr, [], fn
-      {:::, _, [left, _]}, acc ->
+      {:"::", _, [left, _]}, acc ->
         {[left], acc}
 
       {skip, _, [_]}, acc when skip in [:^, :@] ->
@@ -610,13 +612,20 @@ defmodule ExUnit.Assertions do
     |> elem(1)
   end
 
-  defp expand_pattern(expr, caller) do
-    Macro.prewalk(expr, fn
-      {var, _, context} = node when is_atom(var) and is_atom(context) ->
-        node
+  defp expand_pattern({:when, meta, [left, right]}, caller) do
+    left = expand_pattern_except_vars(left, Macro.Env.to_match(caller))
+    right = expand_pattern_except_vars(right, %{caller | context: :guard})
+    {:when, meta, [left, right]}
+  end
 
-      other ->
-        Macro.expand(other, caller)
+  defp expand_pattern(expr, caller) do
+    expand_pattern_except_vars(expr, Macro.Env.to_match(caller))
+  end
+
+  defp expand_pattern_except_vars(expr, caller) do
+    Macro.prewalk(expr, fn
+      {var, _, context} = node when is_atom(var) and is_atom(context) -> node
+      other -> Macro.expand(other, caller)
     end)
   end
 
@@ -629,7 +638,7 @@ defmodule ExUnit.Assertions do
     {name, meta, [expr, [do: clauses]]}
   end
 
-  @doc """
+  @doc ~S"""
   Asserts the `exception` is raised during `function` execution with
   the expected `message`, which can be a `Regex` or an exact `String`.
   Returns the rescued exception, fails otherwise.
@@ -750,7 +759,7 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      assert catch_throw(throw 1) == 1
+      assert catch_throw(throw(1)) == 1
 
   """
   defmacro catch_throw(expression) do
@@ -764,8 +773,8 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      assert catch_exit(exit 1) == 1
-      
+      assert catch_exit(exit(1)) == 1
+
   To assert exits from linked processes started from the test, trap exits
   with `Process.flag/2` and assert the exit message with `assert_received/2`.
 
@@ -785,7 +794,7 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      assert catch_error(error 1) == 1
+      assert catch_error(error(1)) == 1
 
   """
   defmacro catch_error(expression) do
@@ -853,10 +862,10 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      send self(), :hello
+      send(self(), :hello)
       refute_received :bye
 
-      send self(), :hello
+      send(self(), :hello)
       refute_received :hello, "Oh No!"
       ** (ExUnit.AssertionError) Oh No!
       Process mailbox:
@@ -932,7 +941,7 @@ defmodule ExUnit.Assertions do
 
   ## Examples
 
-      flunk "This should raise an error"
+      flunk("This should raise an error")
 
   """
   @spec flunk :: no_return

@@ -141,6 +141,12 @@ defmodule ExUnit.DocTestTest.Invalid do
       iex> 1 + hd(List.flatten([1]))
       3
 
+      iex> a = "This is an egregiously long text string."
+      iex> b = ~r{an egregiously long}
+      iex> c = "a slightly shorter"
+      iex> String.replace(a, b, c)
+      "This is a much shorter text string."
+
       iex> :oops
       #MapSet<[]>
 
@@ -196,6 +202,12 @@ defmodule ExUnit.DocTestTest.Invalid do
   false
   """
   def invalid_utf8, do: :ok
+
+  @doc """
+      iex> {:ok, MapSet.new([1, 2, 3])}
+      {:ok, #MapSet<[1, 2, 3]>}
+  """
+  def misplaced_opaque_type, do: :ok
 end
 |> write_beam
 
@@ -356,7 +368,7 @@ defmodule ExUnit.DocTestTest.Haiku do
         古池や
         蛙飛びこむ
         水の音
-        ― Matsuo Basho
+        -- Matsuo Basho
       >
 
   """
@@ -372,7 +384,7 @@ defmodule ExUnit.DocTestTest.Haiku do
 
   defimpl Inspect do
     def inspect(haiku, _opts) do
-      author = if haiku.author == "", do: "", else: "\n  ― #{haiku.author}"
+      author = if haiku.author == "", do: "", else: "\n  -- #{haiku.author}"
 
       """
       #Haiku<
@@ -418,6 +430,19 @@ defmodule ExUnit.DocTestTest do
     assert capture_io(fn -> ExUnit.run() end) =~ "2 doctests, 1 failure"
   end
 
+  test "empty :only" do
+    defmodule EmptyOnly do
+      use ExUnit.Case
+      doctest ExUnit.DocTestTest.SomewhatGoodModuleWithOnly, only: [], import: true
+    end
+
+    ExUnit.Server.modules_loaded()
+    output = capture_io(fn -> ExUnit.run() end)
+
+    assert output =~ "0 failures"
+    refute output =~ "doctest"
+  end
+
   test "doctest failures" do
     # When adding or removing lines above this line, the tests below will
     # fail because we are explicitly asserting some doctest lines from
@@ -427,7 +452,7 @@ defmodule ExUnit.DocTestTest do
       doctest ExUnit.DocTestTest.Invalid
     end
 
-    doctest_line = 427
+    doctest_line = __ENV__.line - 3
 
     ExUnit.configure(seed: 0, colors: [enabled: false])
     ExUnit.Server.modules_loaded()
@@ -446,6 +471,9 @@ defmodule ExUnit.DocTestTest do
              2) doctest module ExUnit.DocTestTest.Invalid (2) (ExUnit.DocTestTest.ActuallyCompiled)
                 test/ex_unit/doc_test_test.exs:#{doctest_line}
                 Doctest failed
+                doctest:
+                  iex> 1 + hd(List.flatten([1]))
+                  3
                 code:  1 + hd(List.flatten([1])) === 3
                 left:  2
                 right: 3
@@ -457,100 +485,131 @@ defmodule ExUnit.DocTestTest do
              3) doctest module ExUnit.DocTestTest.Invalid (3) (ExUnit.DocTestTest.ActuallyCompiled)
                 test/ex_unit/doc_test_test.exs:#{doctest_line}
                 Doctest failed
-                code:  inspect(:oops) === "#MapSet<[]>"
-                left:  ":oops"
-                right: "#MapSet<[]>"
+                doctest:
+                  iex> a = "This is an egregiously long text string."
+                  iex> b = ~r{an egregiously long}
+                  iex> c = "a slightly shorter"
+                  iex> String.replace(a, b, c)
+                  "This is a much shorter text string."
+                code:  String.replace(a, b, c) === "This is a much shorter text string."
+                left:  "This is a slightly shorter text string."
+                right: "This is a much shorter text string."
                 stacktrace:
                   test/ex_unit/doc_test_test.exs:144: ExUnit.DocTestTest.Invalid (module)
            """
 
-    # The stacktrace points to the cause of the error
     assert output =~ """
              4) doctest module ExUnit.DocTestTest.Invalid (4) (ExUnit.DocTestTest.ActuallyCompiled)
                 test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest failed: got UndefinedFunctionError with message "function Hello.world/0 is undefined (module Hello is not available)"
-                code: Hello.world
-                stacktrace:
-                  Hello.world()
-                  (for doctest at) test/ex_unit/doc_test_test.exs:147: (test)
-           """
-
-    assert output =~ """
-             5) doctest module ExUnit.DocTestTest.Invalid (5) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest failed: expected exception WhatIsThis but got RuntimeError with message "oops"
-                code: raise "oops"
+                Doctest failed
+                doctest:
+                  iex> :oops
+                  "#MapSet<[]>"
+                code:  inspect(:oops) === "#MapSet<[]>"
+                left:  ":oops"
+                right: "#MapSet<[]>"
                 stacktrace:
                   test/ex_unit/doc_test_test.exs:150: ExUnit.DocTestTest.Invalid (module)
            """
 
     assert output =~ """
+             5) doctest module ExUnit.DocTestTest.Invalid (5) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                ** (UndefinedFunctionError) function Hello.world/0 is undefined (module Hello is not available)
+                stacktrace:
+                  Hello.world()
+                  (for doctest at) test/ex_unit/doc_test_test.exs:153: (test)
+           """
+
+    assert output =~ """
              6) doctest module ExUnit.DocTestTest.Invalid (6) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest failed: expected exception WhatIsThis but got RuntimeError with message "oops"
+                doctest:
+                  iex> raise "oops"
+                  ** (WhatIsThis) "oops"
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:156: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+             7) doctest module ExUnit.DocTestTest.Invalid (7) (ExUnit.DocTestTest.ActuallyCompiled)
                 test/ex_unit/doc_test_test.exs:#{doctest_line}
                 Doctest failed: wrong message for RuntimeError
                 expected:
                   "hello"
                 actual:
                   "oops"
-                code: raise "oops"
-                stacktrace:
-                  test/ex_unit/doc_test_test.exs:153: ExUnit.DocTestTest.Invalid (module)
-           """
-
-    assert output =~ """
-             7) doctest ExUnit.DocTestTest.Invalid.a/0 (7) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:159: syntax error before: '*'
-                code: 1 + * 1
+                doctest:
+                  iex> raise "oops"
+                  ** (RuntimeError) "hello"
                 stacktrace:
                   test/ex_unit/doc_test_test.exs:159: ExUnit.DocTestTest.Invalid (module)
            """
 
     assert output =~ """
-             8) doctest ExUnit.DocTestTest.Invalid.dedented_past_fence/0 (8) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:189: unexpected token: "`" (column 5, codepoint U+0060)
-                code: 3
-                          ```
-                stacktrace:
-                  test/ex_unit/doc_test_test.exs:188: ExUnit.DocTestTest.Invalid (module)
-           """
-
-    assert output =~ """
-             9) doctest ExUnit.DocTestTest.Invalid.indented_not_enough/0 (9) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:173: unexpected token: "`" (column 1, codepoint U+0060)
-                code: 3
-                      `
-                stacktrace:
-                  test/ex_unit/doc_test_test.exs:172: ExUnit.DocTestTest.Invalid (module)
-           """
-
-    assert output =~ """
-            10) doctest ExUnit.DocTestTest.Invalid.indented_too_much/0 (10) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:181: unexpected token: "`" (column 3, codepoint U+0060)
-                code: 3
-                        ```
-                stacktrace:
-                  test/ex_unit/doc_test_test.exs:180: ExUnit.DocTestTest.Invalid (module)
-           """
-
-    assert output =~ """
-            11) doctest ExUnit.DocTestTest.Invalid.invalid_utf8/0 (11) (ExUnit.DocTestTest.ActuallyCompiled)
-                test/ex_unit/doc_test_test.exs:#{doctest_line}
-                Doctest did not compile, got: (UnicodeConversionError) invalid encoding starting at <<255, 34, 41>>
-                stacktrace:
-                  test/ex_unit/doc_test_test.exs:195: ExUnit.DocTestTest.Invalid (module)
-           """
-
-    assert output =~ """
-            12) doctest ExUnit.DocTestTest.Invalid.b/0 (12) (ExUnit.DocTestTest.ActuallyCompiled)
+             8) doctest ExUnit.DocTestTest.Invalid.a/0 (8) (ExUnit.DocTestTest.ActuallyCompiled)
                 test/ex_unit/doc_test_test.exs:#{doctest_line}
                 Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:165: syntax error before: '*'
                 code: 1 + * 1
                 stacktrace:
                   test/ex_unit/doc_test_test.exs:165: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+             9) doctest ExUnit.DocTestTest.Invalid.dedented_past_fence/0 (9) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:195: unexpected token: "`" (column 5, code point U+0060)
+                code: 3
+                          ```
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:194: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+            10) doctest ExUnit.DocTestTest.Invalid.indented_not_enough/0 (10) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:179: unexpected token: "`" (column 1, code point U+0060)
+                code: 3
+                      `
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:178: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+            11) doctest ExUnit.DocTestTest.Invalid.indented_too_much/0 (11) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:187: unexpected token: "`" (column 3, code point U+0060)
+                code: 3
+                        ```
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:186: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+            12) doctest ExUnit.DocTestTest.Invalid.invalid_utf8/0 (12) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (UnicodeConversionError) invalid encoding starting at <<255, 34, 41>>
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:201: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+            13) doctest ExUnit.DocTestTest.Invalid.misplaced_opaque_type/0 (13) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (TokenMissingError) test/ex_unit/doc_test_test.exs:207: missing terminator: } (for "{" starting at line 207). If you are planning to assert on the result of an iex> expression which contains a value inspected as #Name<...>, please make sure the inspected value is placed at the beginning of the expression; otherwise Elixir will treat it as a comment due to the leading sign #.
+                code: {:ok, #MapSet<[1, 2, 3]>}
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:207: ExUnit.DocTestTest.Invalid (module)
+           """
+
+    assert output =~ """
+            14) doctest ExUnit.DocTestTest.Invalid.b/0 (14) (ExUnit.DocTestTest.ActuallyCompiled)
+                test/ex_unit/doc_test_test.exs:#{doctest_line}
+                Doctest did not compile, got: (SyntaxError) test/ex_unit/doc_test_test.exs:171: syntax error before: '*'
+                code: 1 + * 1
+                stacktrace:
+                  test/ex_unit/doc_test_test.exs:171: ExUnit.DocTestTest.Invalid (module)
            """
   end
 
@@ -628,7 +687,7 @@ defmodule ExUnit.DocTestTest do
 
   test "fails in indentation mismatch" do
     message =
-      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch: "   iex> bar = 2", should have been 2 spaces]
+      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch on doctest line: \"   iex> bar = 2\".*is exactly 2 spaces]s
 
     assert_raise ExUnit.DocTest.Error, message, fn ->
       defmodule NeverCompiled do
@@ -638,7 +697,7 @@ defmodule ExUnit.DocTestTest do
     end
 
     message =
-      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch: "    3", should have been 2 spaces]
+      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch on doctest line: \"    3\".*is exactly 2 spaces]s
 
     assert_raise ExUnit.DocTest.Error, message, fn ->
       defmodule NeverCompiled do
@@ -648,7 +707,7 @@ defmodule ExUnit.DocTestTest do
     end
 
     message =
-      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch: \"  3\", should have been 4 spaces]
+      ~r[test/ex_unit/doc_test_test\.exs:\d+: indentation level mismatch on doctest line: \"  3\".*is exactly 4 spaces]s
 
     assert_raise ExUnit.DocTest.Error, message, fn ->
       defmodule NeverCompiled do

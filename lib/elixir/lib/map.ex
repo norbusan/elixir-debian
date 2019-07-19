@@ -91,6 +91,12 @@ defmodule Map do
       iex> %{map | three: 3}
       ** (KeyError) key :three not found
 
+  The functions in this module that need to find a specific key work in logarithmic time.
+  This means that the time it takes to find keys grows as the map grows, but it's not
+  directly proportional to the map size. In comparison to finding an element in a list,
+  it performs better because lists have a linear time complexity. Some functions,
+  such as `keys/1` and `values/1`, run in linear time because they need to get to every
+  element in the map.
   """
 
   @type key :: any
@@ -165,7 +171,7 @@ defmodule Map do
 
       iex> Map.new([{:b, 1}, {:a, 2}])
       %{a: 2, b: 1}
-      iex> Map.new([a: 1, a: 2, a: 3])
+      iex> Map.new(a: 1, a: 2, a: 3)
       %{a: 3}
 
   """
@@ -206,8 +212,8 @@ defmodule Map do
     |> :maps.from_list()
   end
 
-  defp new_transform([item | rest], fun, acc) do
-    new_transform(rest, fun, [fun.(item) | acc])
+  defp new_transform([element | rest], fun, acc) do
+    new_transform(rest, fun, [fun.(element) | acc])
   end
 
   @doc """
@@ -262,7 +268,7 @@ defmodule Map do
       ** (KeyError) key :b not found in: %{a: 1}
 
   """
-  @spec fetch!(map, key) :: value | no_return
+  @spec fetch!(map, key) :: value
   def fetch!(map, key) do
     :maps.get(key, map)
   end
@@ -378,13 +384,20 @@ defmodule Map do
       %{a: 1, c: 3}
 
   """
-  @spec take(map, Enumerable.t()) :: map
+  @spec take(map, [key]) :: map
   def take(map, keys)
 
+  def take(map, keys) when is_map(map) and is_list(keys) do
+    take(keys, map, _acc = [])
+  end
+
   def take(map, keys) when is_map(map) do
-    keys
-    |> Enum.to_list()
-    |> take(map, [])
+    IO.warn(
+      "Map.take/2 with an Enumerable of keys that is not a list is deprecated. " <>
+        " Use a list of keys instead."
+    )
+
+    take(map, Enum.to_list(keys))
   end
 
   def take(non_map, _keys) do
@@ -409,8 +422,9 @@ defmodule Map do
   Gets the value for a specific `key` in `map`.
 
   If `key` is present in `map` with value `value`, then `value` is
-  returned. Otherwise, `default` is returned (which is `nil` unless
-  specified otherwise).
+  returned. Otherwise, `default` is returned.
+
+  If `default` is not provided, `nil` is used.
 
   ## Examples
 
@@ -670,23 +684,30 @@ defmodule Map do
       %{a: 1, c: 3}
 
   """
-  @spec drop(map, Enumerable.t()) :: map
+  @spec drop(map, [key]) :: map
   def drop(map, keys)
 
+  def drop(map, keys) when is_map(map) and is_list(keys) do
+    drop_keys(keys, map)
+  end
+
   def drop(map, keys) when is_map(map) do
-    keys
-    |> Enum.to_list()
-    |> drop_list(map)
+    IO.warn(
+      "Map.drop/2 with an Enumerable of keys that is not a list is deprecated. " <>
+        " Use a list of keys instead."
+    )
+
+    drop(map, Enum.to_list(keys))
   end
 
   def drop(non_map, keys) do
     :erlang.error({:badmap, non_map}, [non_map, keys])
   end
 
-  defp drop_list([], acc), do: acc
+  defp drop_keys([], acc), do: acc
 
-  defp drop_list([key | rest], acc) do
-    drop_list(rest, delete(acc, key))
+  defp drop_keys([key | rest], acc) do
+    drop_keys(rest, delete(acc, key))
   end
 
   @doc """
@@ -703,13 +724,20 @@ defmodule Map do
       {%{a: 1, c: 3}, %{b: 2}}
 
   """
-  @spec split(map, Enumerable.t()) :: {map, map}
+  @spec split(map, [key]) :: {map, map}
   def split(map, keys)
 
+  def split(map, keys) when is_map(map) and is_list(keys) do
+    split(keys, [], map)
+  end
+
   def split(map, keys) when is_map(map) do
-    keys
-    |> Enum.to_list()
-    |> split([], map)
+    IO.warn(
+      "Map.split/2 with an Enumerable of keys that is not a list is deprecated. " <>
+        " Use a list of keys instead."
+    )
+
+    split(map, Enum.to_list(keys))
   end
 
   def split(non_map, keys) do
@@ -824,7 +852,7 @@ defmodule Map do
       {1, %{}}
 
   """
-  @spec get_and_update!(map, key, (value -> {get, value} | :pop)) :: {get, map} | no_return
+  @spec get_and_update!(map, key, (value -> {get, value} | :pop)) :: {get, map}
         when get: term
   def get_and_update!(map, key, fun) when is_function(fun, 1) do
     value = fetch!(map, key)
@@ -892,7 +920,6 @@ defmodule Map do
   def equal?(term, other), do: :erlang.error({:badmap, term}, [term, other])
 
   @doc false
-  # TODO: Remove on 2.0
   @deprecated "Use Kernel.map_size/1 instead"
   def size(map) do
     map_size(map)

@@ -29,20 +29,26 @@ defmodule Mix.Tasks.Deps.Update do
 
     * `--all` - updates all dependencies
     * `--only` - only fetches dependencies for given environment
+    * `--target` - only fetches dependencies for given target
     * `--no-archives-check` - does not check archives before fetching deps
 
   """
 
+  @impl true
   def run(args) do
     unless "--no-archives-check" in args do
       Mix.Task.run("archive.check", args)
     end
 
     Mix.Project.get!()
-    {opts, rest, _} = OptionParser.parse(args, switches: [all: :boolean, only: :string])
 
-    # Fetch all deps by default unless --only is given
-    fetch_opts = if only = opts[:only], do: [env: :"#{only}"], else: []
+    {opts, rest, _} =
+      OptionParser.parse(args, switches: [all: :boolean, only: :string, target: :string])
+
+    fetch_opts =
+      for {switch, key} <- [only: :env, target: :target],
+          value = opts[switch],
+          do: {key, :"#{value}"}
 
     cond do
       opts[:all] ->

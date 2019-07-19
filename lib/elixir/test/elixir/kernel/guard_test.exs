@@ -3,7 +3,7 @@ Code.require_file("../test_helper.exs", __DIR__)
 defmodule Kernel.GuardTest do
   use ExUnit.Case, async: true
 
-  describe "Kernel.defguard(p) usage" do
+  describe "defguard(p) usage" do
     defmodule GuardsInMacros do
       defguard is_foo(atom) when atom == :foo
 
@@ -152,7 +152,7 @@ defmodule Kernel.GuardTest do
       refute IntegerPrivateGuards.is_even_and_small?(102)
       refute IntegerPrivateGuards.is_even_and_small?(103)
 
-      assert_raise CompileError, ~r"cannot invoke local is_even/1 inside guard", fn ->
+      assert_raise CompileError, ~r"cannot find or invoke local is_even/1", fn ->
         defmodule IntegerPrivateGuardUtils do
           import IntegerPrivateGuards
 
@@ -184,42 +184,42 @@ defmodule Kernel.GuardTest do
 
     test "handles overriding appropriately" do
       assert_raise CompileError, ~r"defmacro (.*?) already defined as def", fn ->
-        defmodule OverridenFunUsage do
+        defmodule OverriddenFunUsage do
           def foo(bar), do: bar
           defguard foo(bar) when bar
         end
       end
 
       assert_raise CompileError, ~r"defmacro (.*?) already defined as defp", fn ->
-        defmodule OverridenPrivateFunUsage do
+        defmodule OverriddenPrivateFunUsage do
           defp foo(bar), do: bar
           defguard foo(bar) when bar
         end
       end
 
       assert_raise CompileError, ~r"defmacro (.*?) already defined as defmacrop", fn ->
-        defmodule OverridenPrivateFunUsage do
+        defmodule OverriddenPrivateFunUsage do
           defmacrop foo(bar), do: bar
           defguard foo(bar) when bar
         end
       end
 
       assert_raise CompileError, ~r"defmacrop (.*?) already defined as def", fn ->
-        defmodule OverridenFunUsage do
+        defmodule OverriddenFunUsage do
           def foo(bar), do: bar
           defguardp foo(bar) when bar
         end
       end
 
       assert_raise CompileError, ~r"defmacrop (.*?) already defined as defp", fn ->
-        defmodule OverridenPrivateFunUsage do
+        defmodule OverriddenPrivateFunUsage do
           defp foo(bar), do: bar
           defguardp foo(bar) when bar
         end
       end
 
       assert_raise CompileError, ~r"defmacrop (.*?) already defined as defmacro", fn ->
-        defmodule OverridenPrivateFunUsage do
+        defmodule OverriddenPrivateFunUsage do
           defmacro foo(bar), do: bar
           defguardp foo(bar) when bar
         end
@@ -258,9 +258,9 @@ defmodule Kernel.GuardTest do
     end
   end
 
-  describe "Kernel.defguard compilation" do
-    test "refuses to compile non-sensical code" do
-      assert_raise CompileError, ~r"cannot invoke local undefined/1 inside guard", fn ->
+  describe "defguard(p) compilation" do
+    test "refuses to compile nonsensical code" do
+      assert_raise CompileError, ~r"cannot find or invoke local undefined/1", fn ->
         defmodule UndefinedUsage do
           defguard foo(function) when undefined(function)
         end
@@ -270,7 +270,7 @@ defmodule Kernel.GuardTest do
     test "fails on expressions not allowed in guards" do
       # Slightly unique errors
 
-      assert_raise ArgumentError, ~r{invalid args for operator "in"}, fn ->
+      assert_raise ArgumentError, ~r{invalid right argument for operator "in"}, fn ->
         defmodule RuntimeListUsage do
           defguard foo(bar, baz) when bar in baz
         end
@@ -382,75 +382,46 @@ defmodule Kernel.GuardTest do
     end
   end
 
-  describe "Kernel.Utils.defguard/2" do
-    test "generates unquoted variables based on context" do
-      args = quote(do: [foo, bar, baz])
-      expr = quote(do: foo + bar + baz)
-
-      {:ok, goal} =
-        Code.string_to_quoted("""
-        case Macro.Env.in_guard? __CALLER__ do
-          true -> quote do
-            :erlang.+(:erlang.+(unquote(foo), unquote(bar)), unquote(baz))
-          end
-          false -> quote do
-            {foo, bar, baz} = {unquote(foo), unquote(bar), unquote(baz)}
-            :erlang.+(:erlang.+(foo, bar), baz)
-          end
-        end
-        """)
-
-      assert expand_defguard_to_string(args, expr) == Macro.to_string(goal)
-    end
+  describe "defguard(p) expansion" do
+    defguard with_unused_vars(foo, bar, _baz) when foo + bar
 
     test "doesn't obscure unused variables" do
-      args = quote(do: [foo, bar, baz])
-      expr = quote(do: foo + bar)
+      args = quote(do: [1 + 1, 2 + 2, 3 + 3])
 
-      {:ok, goal} =
-        Code.string_to_quoted("""
-        case Macro.Env.in_guard? __CALLER__ do
-          true -> quote do
-            :erlang.+(unquote(foo), unquote(bar))
-          end
-          false -> quote do
-            {foo, bar} = {unquote(foo), unquote(bar)}
-            :erlang.+(foo, bar)
-          end
-        end
-        """)
+      assert expand_defguard_to_string(:with_unused_vars, args, :guard) == """
+             :erlang.+(1 + 1, 2 + 2)
+             """
 
-      assert expand_defguard_to_string(args, expr) == Macro.to_string(goal)
+      assert expand_defguard_to_string(:with_unused_vars, args, nil) == """
+             (
+               {arg0, arg1} = {1 + 1, 2 + 2}
+               :erlang.+(arg0, arg1)
+             )
+             """
     end
+
+    defguard with_reused_vars(foo, bar, baz) when foo + foo + bar + baz
 
     test "handles re-used variables" do
-      args = quote(do: [foo, bar, baz])
-      expr = quote(do: foo + foo + bar + baz)
+      args = quote(do: [1 + 1, 2 + 2, 3 + 3])
 
-      {:ok, goal} =
-        Code.string_to_quoted("""
-        case(Macro.Env.in_guard?(__CALLER__)) do
-          true ->
-            quote() do
-              :erlang.+(:erlang.+(:erlang.+(unquote(foo), unquote(foo)), unquote(bar)), unquote(baz))
-            end
-          false ->
-            quote() do
-              {foo, bar, baz} = {unquote(foo), unquote(bar), unquote(baz)}
-              :erlang.+(:erlang.+(:erlang.+(foo, foo), bar), baz)
-            end
-        end
-        """)
+      assert expand_defguard_to_string(:with_reused_vars, args, :guard) == """
+             :erlang.+(:erlang.+(:erlang.+(1 + 1, 1 + 1), 2 + 2), 3 + 3)
+             """
 
-      assert expand_defguard_to_string(args, expr) == Macro.to_string(goal)
+      assert expand_defguard_to_string(:with_reused_vars, args, nil) == """
+             (
+               {arg0, arg1, arg2} = {1 + 1, 2 + 2, 3 + 3}
+               :erlang.+(:erlang.+(:erlang.+(arg0, arg0), arg1), arg2)
+             )
+             """
     end
 
-    defp expand_defguard_to_string(args, expr) do
-      require Kernel.Utils
-
-      quote(do: Kernel.Utils.defguard(unquote(args), unquote(expr)))
-      |> Macro.expand(__ENV__)
+    defp expand_defguard_to_string(fun, args, context) do
+      {{:., [], [__MODULE__, fun]}, [], args}
+      |> Macro.expand(%{__ENV__ | context: context})
       |> Macro.to_string()
+      |> Kernel.<>("\n")
     end
   end
 end

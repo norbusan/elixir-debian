@@ -491,6 +491,32 @@ defmodule Mix.Tasks.XrefTest do
     assert_warnings(files, warning)
   end
 
+  test "warnings: hints exclude deprecated functions" do
+    files = %{
+      "lib/a.ex" => """
+      defmodule A do
+        def to_charlist(a), do: a
+
+        @deprecated "Use String.to_charlist/1 instead"
+        def to_char_list(a), do: a
+
+        def c(a), do: A.to_list(a)
+      end
+      """
+    }
+
+    warning = """
+    warning: function A.to_list/1 is undefined or private. Did you mean one of:
+
+          * to_charlist/1
+
+      lib/a.ex:7
+
+    """
+
+    assert_warnings(files, warning)
+  end
+
   test "warnings: imports" do
     files = %{
       "lib/a.ex" => """
@@ -600,6 +626,28 @@ defmodule Mix.Tasks.XrefTest do
     assert_unreachable(code, warning)
   end
 
+  test "unreachable: reports missing entries from multiple Module.create" do
+    # This checks we pass the lexical tracker forward if it is still alive
+    code = """
+    Module.create(Module1, quote do
+      def foo, do: Unknown1.dep()
+    end, __ENV__)
+
+    Module.create(Module2, quote do
+      def foo, do: Unknown2.dep()
+    end, __ENV__)
+    """
+
+    warning = """
+    Compiling 2 files (.ex)
+    Generated sample app
+    lib/a.ex:3: Unknown1.dep/0
+    lib/a.ex:7: Unknown2.dep/0
+    """
+
+    assert_unreachable(code, warning)
+  end
+
   test "unreachable: aborts if any" do
     code = """
     defmodule A do
@@ -646,6 +694,26 @@ defmodule Mix.Tasks.XrefTest do
     Compiling 2 files (.ex)
     Generated sample app
     lib/a.ex:3: A.a/0
+    """
+
+    assert_deprecated(code, warning)
+  end
+
+  test "deprecated: reports deprecated structs" do
+    code = """
+    defmodule A do
+      @deprecated "oops"
+      defstruct [:x, :y]
+      def match(%A{}), do: :ok
+      def build(:ok), do: %A{}
+    end
+    """
+
+    warning = """
+    Compiling 2 files (.ex)
+    Generated sample app
+    lib/a.ex:4: A.__struct__/0
+    lib/a.ex:5: A.__struct__/0
     """
 
     assert_deprecated(code, warning)
@@ -1095,6 +1163,7 @@ defmodule Mix.Tasks.XrefTest do
       assert File.read!("xref_graph.dot") === """
              digraph "xref graph" {
                "lib/a.ex"
+               "lib/a.ex" -> "lib/b.ex" [label="(compile)"]
                "lib/b.ex"
              }
              """

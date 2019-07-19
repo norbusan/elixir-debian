@@ -148,7 +148,6 @@ defmodule RegistryTest do
 
         Registry.unregister_match(registry, :_, :foo)
         assert Registry.lookup(registry, :_) == []
-
         assert Registry.keys(registry, self()) |> Enum.sort() == ["hello"]
       end
 
@@ -181,7 +180,7 @@ defmodule RegistryTest do
         assert_received {:dispatch, :value}
       end
 
-      test "allows process unregistering", %{registry: registry} do
+      test "unregisters process by key", %{registry: registry} do
         :ok = Registry.unregister(registry, "hello")
 
         {:ok, _} = Registry.register(registry, "hello", :value)
@@ -195,8 +194,17 @@ defmodule RegistryTest do
         assert Registry.keys(registry, self()) == []
       end
 
-      test "allows unregistering with no entries", %{registry: registry} do
+      test "unregisters with no entries", %{registry: registry} do
         assert Registry.unregister(registry, "hello") == :ok
+      end
+
+      test "unregisters with tricky keys", %{registry: registry} do
+        {:ok, _} = Registry.register(registry, :_, :foo)
+        {:ok, _} = Registry.register(registry, "hello", "b")
+
+        Registry.unregister(registry, :_)
+        assert Registry.lookup(registry, :_) == []
+        assert Registry.keys(registry, self()) |> Enum.sort() == ["hello"]
       end
 
       @tag listener: :"unique_listener_#{partitions}"
@@ -254,6 +262,148 @@ defmodule RegistryTest do
 
         # errors
         assert {:error, {:already_started, ^pid}} = Agent.start(fn -> 0 end, name: name)
+      end
+
+      test "uses value provided in via", %{registry: registry} do
+        name = {:via, Registry, {registry, "hello", :value}}
+        {:ok, pid} = Agent.start_link(fn -> 0 end, name: name)
+        assert Registry.lookup(registry, "hello") == [{pid, :value}]
+      end
+
+      test "empty list for empty registry", %{registry: registry} do
+        assert Registry.select(registry, [{{:_, :_, :_}, [], [:"$_"]}]) == []
+      end
+
+      test "select all", %{registry: registry} do
+        name = {:via, Registry, {registry, "hello"}}
+        {:ok, pid} = Agent.start_link(fn -> 0 end, name: name)
+        {:ok, _} = Registry.register(registry, "world", :value)
+
+        assert Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+               |> Enum.sort() ==
+                 [{"hello", pid, nil}, {"world", self(), :value}]
+      end
+
+      test "select supports full match specs", %{registry: registry} do
+        value = {1, :atom, 1}
+        {:ok, _} = Registry.register(registry, "hello", value)
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{"hello", :"$2", :"$3"}, [], [{{"hello", :"$2", :"$3"}}]}
+                 ])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", self(), :"$3"}, [], [{{:"$1", self(), :"$3"}}]}
+                 ])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", value}, [], [{{:"$1", :"$2", {value}}}]}
+                 ])
+
+        assert [] ==
+                 Registry.select(registry, [
+                   {{"world", :"$2", :"$3"}, [], [{{"world", :"$2", :"$3"}}]}
+                 ])
+
+        assert [] == Registry.select(registry, [{{:"$1", :"$2", {1.0, :_, :_}}, [], [:"$_"]}])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :atom, :"$4"}}, [],
+                    [{{:"$1", :"$2", {{:"$3", :atom, :"$4"}}}}]}
+                 ])
+
+        assert [{"hello", self(), {1, :atom, 1}}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :"$4", :"$3"}}, [],
+                    [{{:"$1", :"$2", {{:"$3", :"$4", :"$3"}}}}]}
+                 ])
+
+        value2 = %{a: "a", b: "b"}
+        {:ok, _} = Registry.register(registry, "world", value2)
+
+        assert [:match] ==
+                 Registry.select(registry, [{{"world", self(), %{b: "b"}}, [], [:match]}])
+
+        assert ["hello", "world"] ==
+                 Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}]) |> Enum.sort()
+      end
+
+      test "select supports guard conditions", %{registry: registry} do
+        value = {1, :atom, 2}
+        {:ok, _} = Registry.register(registry, "hello", value)
+
+        assert [{"hello", self(), {1, :atom, 2}}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :"$4", :"$5"}}, [{:>, :"$5", 1}],
+                    [{{:"$1", :"$2", {{:"$3", :"$4", :"$5"}}}}]}
+                 ])
+
+        assert [] ==
+                 Registry.select(registry, [
+                   {{:_, :_, {:_, :_, :"$1"}}, [{:>, :"$1", 2}], [:"$_"]}
+                 ])
+
+        assert ["hello"] ==
+                 Registry.select(registry, [
+                   {{:"$1", :_, {:_, :"$2", :_}}, [{:is_atom, :"$2"}], [:"$1"]}
+                 ])
+      end
+
+      test "select allows multiple specs", %{registry: registry} do
+        {:ok, _} = Registry.register(registry, "hello", :value)
+        {:ok, _} = Registry.register(registry, "world", :value)
+
+        assert ["hello", "world"] ==
+                 Registry.select(registry, [
+                   {{"hello", :_, :_}, [], [{:element, 1, :"$_"}]},
+                   {{"world", :_, :_}, [], [{:element, 1, :"$_"}]}
+                 ])
+                 |> Enum.sort()
+      end
+
+      test "raises on incorrect shape of match spec", %{registry: registry} do
+        assert_raise ArgumentError, fn ->
+          Registry.select(registry, [{:_, [], []}])
+        end
+      end
+
+      test "doesn't grow ets on already_registered",
+           %{registry: registry, partitions: partitions} do
+        assert sum_pid_entries(registry, partitions) == 0
+
+        {:ok, pid} = Registry.register(registry, "hello", :value)
+        assert is_pid(pid)
+        assert sum_pid_entries(registry, partitions) == 1
+
+        {:ok, pid} = Registry.register(registry, "world", :value)
+        assert is_pid(pid)
+        assert sum_pid_entries(registry, partitions) == 2
+
+        assert {:error, {:already_registered, pid}} = Registry.register(registry, "hello", :value)
+        assert sum_pid_entries(registry, partitions) == 2
+      end
+
+      test "doesn't grow ets on already_registered across processes",
+           %{registry: registry, partitions: partitions} do
+        assert sum_pid_entries(registry, partitions) == 0
+
+        {_, task} = register_task(registry, "hello", :value)
+        Process.link(Process.whereis(registry))
+
+        assert sum_pid_entries(registry, partitions) == 1
+
+        {:ok, pid} = Registry.register(registry, "world", :value)
+        assert is_pid(pid)
+        assert sum_pid_entries(registry, partitions) == 2
+
+        assert {:error, {:already_registered, ^task}} =
+                 Registry.register(registry, "hello", :recent)
+
+        assert sum_pid_entries(registry, partitions) == 2
       end
     end
   end
@@ -380,7 +530,7 @@ defmodule RegistryTest do
         refute_received {:EXIT, _, _}
       end
 
-      test "allows process unregistering", %{registry: registry} do
+      test "unregisters by key", %{registry: registry} do
         {:ok, _} = Registry.register(registry, "hello", :value)
         {:ok, _} = Registry.register(registry, "hello", :value)
         {:ok, _} = Registry.register(registry, "world", :value)
@@ -393,8 +543,18 @@ defmodule RegistryTest do
         assert Registry.keys(registry, self()) == []
       end
 
-      test "allows unregistering with no entries", %{registry: registry} do
+      test "unregistes with no entries", %{registry: registry} do
         assert Registry.unregister(registry, "hello") == :ok
+      end
+
+      test "unregisters with tricky keys", %{registry: registry} do
+        {:ok, _} = Registry.register(registry, :_, :foo)
+        {:ok, _} = Registry.register(registry, :_, :bar)
+        {:ok, _} = Registry.register(registry, "hello", "a")
+        {:ok, _} = Registry.register(registry, "hello", "b")
+
+        Registry.unregister(registry, :_)
+        assert Registry.keys(registry, self()) |> Enum.sort() == ["hello", "hello"]
       end
 
       test "supports match patterns", %{registry: registry} do
@@ -544,6 +704,100 @@ defmodule RegistryTest do
           Agent.start_link(fn -> 0 end, name: name)
         end
       end
+
+      test "empty list for empty registry", %{registry: registry} do
+        assert Registry.select(registry, [{{:_, :_, :_}, [], [:"$_"]}]) == []
+      end
+
+      test "select all", %{registry: registry} do
+        {:ok, _} = Registry.register(registry, "hello", :value)
+        {:ok, _} = Registry.register(registry, "hello", :value)
+
+        assert Registry.select(registry, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+               |> Enum.sort() ==
+                 [{"hello", self(), :value}, {"hello", self(), :value}]
+      end
+
+      test "select supports full match specs", %{registry: registry} do
+        value = {1, :atom, 1}
+        {:ok, _} = Registry.register(registry, "hello", value)
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{"hello", :"$2", :"$3"}, [], [{{"hello", :"$2", :"$3"}}]}
+                 ])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", self(), :"$3"}, [], [{{:"$1", self(), :"$3"}}]}
+                 ])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", value}, [], [{{:"$1", :"$2", {value}}}]}
+                 ])
+
+        assert [] ==
+                 Registry.select(registry, [
+                   {{"world", :"$2", :"$3"}, [], [{{"world", :"$2", :"$3"}}]}
+                 ])
+
+        assert [] == Registry.select(registry, [{{:"$1", :"$2", {1.0, :_, :_}}, [], [:"$_"]}])
+
+        assert [{"hello", self(), value}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :atom, :"$4"}}, [],
+                    [{{:"$1", :"$2", {{:"$3", :atom, :"$4"}}}}]}
+                 ])
+
+        assert [{"hello", self(), {1, :atom, 1}}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :"$4", :"$3"}}, [],
+                    [{{:"$1", :"$2", {{:"$3", :"$4", :"$3"}}}}]}
+                 ])
+
+        value2 = %{a: "a", b: "b"}
+        {:ok, _} = Registry.register(registry, "world", value2)
+
+        assert [:match] ==
+                 Registry.select(registry, [{{"world", self(), %{b: "b"}}, [], [:match]}])
+
+        assert ["hello", "world"] ==
+                 Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}]) |> Enum.sort()
+      end
+
+      test "select supports guard conditions", %{registry: registry} do
+        value = {1, :atom, 2}
+        {:ok, _} = Registry.register(registry, "hello", value)
+
+        assert [{"hello", self(), {1, :atom, 2}}] ==
+                 Registry.select(registry, [
+                   {{:"$1", :"$2", {:"$3", :"$4", :"$5"}}, [{:>, :"$5", 1}],
+                    [{{:"$1", :"$2", {{:"$3", :"$4", :"$5"}}}}]}
+                 ])
+
+        assert [] ==
+                 Registry.select(registry, [
+                   {{:_, :_, {:_, :_, :"$1"}}, [{:>, :"$1", 2}], [:"$_"]}
+                 ])
+
+        assert ["hello"] ==
+                 Registry.select(registry, [
+                   {{:"$1", :_, {:_, :"$2", :_}}, [{:is_atom, :"$2"}], [:"$1"]}
+                 ])
+      end
+
+      test "select allows multiple specs", %{registry: registry} do
+        {:ok, _} = Registry.register(registry, "hello", :value)
+        {:ok, _} = Registry.register(registry, "world", :value)
+
+        assert ["hello", "world"] ==
+                 Registry.select(registry, [
+                   {{"hello", :_, :_}, [], [{:element, 1, :"$_"}]},
+                   {{"world", :_, :_}, [], [{:element, 1, :"$_"}]}
+                 ])
+                 |> Enum.sort()
+      end
     end
   end
 
@@ -561,7 +815,7 @@ defmodule RegistryTest do
         kill_and_assert_down(task2)
 
         # pid might be in different partition to key so need to sync with all
-        # partitions before checking ets tables are empty.
+        # partitions before checking ETS tables are empty.
         for i <- 0..7 do
           [{_, _, {partition, _}}] = :ets.lookup(registry, i)
           GenServer.call(partition, :sync)
@@ -595,6 +849,18 @@ defmodule RegistryTest do
     assert %{id: Registry} = Registry.child_spec([])
   end
 
+  test "raises if :name is missing" do
+    assert_raise ArgumentError, ~r/expected :name option to be present/, fn ->
+      Registry.start_link(keys: :unique)
+    end
+  end
+
+  test "raises if :name is not an atom" do
+    assert_raise ArgumentError, ~r/expected :name to be an atom, got/, fn ->
+      Registry.start_link(keys: :unique, name: [])
+    end
+  end
+
   defp register_task(registry, key, value) do
     parent = self()
 
@@ -612,5 +878,21 @@ defmodule RegistryTest do
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, _, _, _}
+  end
+
+  defp sum_pid_entries(registry, partitions) do
+    Enum.map(0..(partitions - 1), &Module.concat(registry, "PIDPartition#{&1}"))
+    |> sum_ets_entries()
+  end
+
+  defp sum_ets_entries(table_names) do
+    table_names
+    |> Enum.map(&ets_entries/1)
+    |> Enum.sum()
+  end
+
+  defp ets_entries(table_name) do
+    :ets.all()
+    |> Enum.find_value(fn id -> :ets.info(id, :name) == table_name and :ets.info(id, :size) end)
   end
 end

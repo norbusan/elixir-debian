@@ -33,7 +33,7 @@ linify(#{} = Env) ->
   Env.
 
 with_vars(Env, Vars) ->
-  CurrentVars = maps:from_list([{Var, {0, term}} || Var <- Vars]),
+  CurrentVars = maps:from_list([{Var, 0} || Var <- Vars]),
   Env#{vars := Vars, current_vars := CurrentVars}.
 
 env_to_scope(#{context := Context}) ->
@@ -52,27 +52,52 @@ reset_vars(Env) ->
 
 %% Receives two scopes and return a new scope based on the second
 %% with their variables merged.
-mergev(#{vars := V1, unused_vars := U1, current_vars := C1},
-       #{vars := V2, unused_vars := U2, current_vars := C2} = E2) ->
-  E2#{
-    vars := ordsets:union(V1, V2),
-    unused_vars := merge_vars(U1, U2),
-    current_vars := merge_vars(C1, C2)
-  }.
+%% Unrolled for performance reasons.
+mergev(#{unused_vars := U1, current_vars := C1},
+       #{unused_vars := U2, current_vars := C2} = E2) ->
+  if
+    C1 =/= C2 ->
+      if
+        U1 =/= U2 ->
+          C = merge_vars(C1, C2),
+          E2#{vars := maps:keys(C), unused_vars := merge_vars(U1, U2), current_vars := C};
+        true ->
+          C = merge_vars(C1, C2),
+          E2#{vars := maps:keys(C), current_vars := C}
+      end;
+
+    U1 =/= U2 ->
+      E2#{unused_vars := merge_vars(U1, U2)};
+
+    true ->
+      E2
+  end.
 
 %% Receives two scopes and return the later scope
 %% keeping the variables from the first (imports
 %% and everything else are passed forward).
+%% Unrolled for performance reasons.
+mergea(#{unused_vars := U1, current_vars := C1, vars := V1},
+       #{unused_vars := U2, current_vars := C2} = E2) ->
+  if
+    C1 =/= C2 ->
+      if
+        U1 =/= U2 ->
+          E2#{vars := V1, unused_vars := U1, current_vars := C1};
+        true ->
+          E2#{vars := V1, current_vars := C1}
+      end;
+    U1 =/= U2 ->
+      E2#{unused_vars := U1};
+    true ->
+      E2
+  end.
 
-mergea(#{vars := V1, unused_vars := U1, current_vars := C1}, E2) ->
-  E2#{vars := V1, unused_vars := U1, current_vars := C1}.
-
-merge_vars(V, V) -> V;
 merge_vars(V1, V2) ->
   maps:fold(fun(K, M2, Acc) ->
     case Acc of
       #{K := M1} when M1 >= M2 -> Acc;
-      _ -> maps:put(K, M2, Acc)
+      _ -> Acc#{K => M2}
     end
   end, V1, V2).
 
@@ -80,7 +105,7 @@ merge_vars(V1, V2) ->
 %% UNUSED VARS
 
 check_unused_vars(#{unused_vars := Unused} = E) ->
-  [elixir_errors:form_warn([{line, Line}], ?key(E, file), ?MODULE, {unused_var, Name, false}) ||
+  [elixir_errors:form_warn([{line, Line}], E, ?MODULE, {unused_var, Name}) ||
     {{{Name, _}, _}, Line} <- maps:to_list(Unused), Line /= false, not_underscored(Name)],
   E.
 
@@ -111,13 +136,12 @@ merge_and_check_unused_vars(Unused, ClauseUnused, E) ->
 
           %% Otherwise we must warn
           _ ->
-            {{Name, _} = Pair, _} = Key,
+            {{Name, _}, _} = Key,
 
             case not_underscored(Name) of
               true ->
-                IsShadowing = maps:is_key(Pair, ?key(E, current_vars)),
-                Warn = {unused_var, Name, IsShadowing},
-                elixir_errors:form_warn([{line, ClauseValue}], ?key(E, file), ?MODULE, Warn);
+                Warn = {unused_var, Name},
+                elixir_errors:form_warn([{line, ClauseValue}], E, ?MODULE, Warn);
 
               false ->
                 ok
@@ -134,24 +158,5 @@ not_underscored(Name) ->
     _ -> true
   end.
 
-format_error({unused_var, Name, false}) ->
-  io_lib:format("variable \"~ts\" is unused", [Name]);
-
-format_error({unused_var, Name, true}) ->
-  io_lib:format("variable \"~ts\" is unused\n\n"
-                "Note variables defined inside case, cond, fn, if and similar do not leak. "
-                "If you want to conditionally override an existing variable \"~ts\", "
-                "you will have to explicitly return the variable. For example:\n\n"
-                "    if some_condition? do\n"
-                "      atom = :one\n"
-                "    else\n"
-                "      atom = :two\n"
-                "    end\n\n"
-                "should be written as\n\n"
-                "    atom =\n"
-                "      if some_condition? do\n"
-                "        :one\n"
-                "      else\n"
-                "        :two\n"
-                "      end\n\n"
-                "Unused variable found at:", [Name, Name]).
+format_error({unused_var, Name}) ->
+  io_lib:format("variable \"~ts\" is unused (if the variable is not meant to be used, prefix it with an underscore)", [Name]).

@@ -84,6 +84,18 @@ defmodule EExTest do
       assert_eval(expected, string, [], trim: true)
     end
 
+    test "trim mode with multiple lines" do
+      string = """
+      <%= "First line" %>
+      <%= "Second line" %>
+      <%= "Third line" %>
+      <%= "Fourth line" %>
+      """
+
+      expected = "First lineSecond lineThird lineFourth line"
+      assert_eval(expected, string, [], trim: true)
+    end
+
     test "embedded code" do
       assert_eval("foo bar", "foo <%= :bar %>")
     end
@@ -98,6 +110,12 @@ defmodule EExTest do
 
     test "embedded code with do end when false" do
       assert_eval("foo ", "foo <%= if false do %>bar<% end %>")
+    end
+
+    test "embedded code with do preceeded by bracket" do
+      assert_eval("foo bar", "foo <%= if {true}do %>bar<% end %>")
+      assert_eval("foo bar", "foo <%= if (true)do %>bar<% end %>")
+      assert_eval("foo bar", "foo <%= if [true]do %>bar<% end %>")
     end
 
     test "embedded code with do end and expression" do
@@ -132,7 +150,27 @@ defmodule EExTest do
       )
     end
 
-    test "embedded code with parentheses after end in end token" do
+    test "embedded code with end followed by bracket" do
+      assert_eval(
+        " 101  102  103 ",
+        "<%= Enum.map([1, 2, 3], fn x -> %> <%= 100 + x %> <% end) %>"
+      )
+
+      assert_eval(
+        " 101  102  103 ",
+        "<%= apply Enum, :map, [[1, 2, 3], fn x -> %> <%= 100 + x %> <% end] %>"
+      )
+
+      assert_eval(
+        " 101  102  103 ",
+        "<%= #{__MODULE__}.tuple_map {[1, 2, 3], fn x -> %> <%= 100 + x %> <% end} %>"
+      )
+
+      assert_eval(
+        " 101  102  103 ",
+        "<%= apply(Enum, :map, [[1, 2, 3], fn x -> %> <%= 100 + x %> <% end]) %>"
+      )
+
       assert_eval(
         " 101  102  103 ",
         "<%= Enum.map([1, 2, 3], (fn x -> %> <%= 100 + x %> <% end) ) %>"
@@ -213,6 +251,20 @@ defmodule EExTest do
 
       assert_raise EEx.SyntaxError, msg, fn ->
         EEx.compile_string("<%| true %>")
+      end
+    end
+  end
+
+  describe "error messages" do
+    test "honor line numbers" do
+      assert_raise EEx.SyntaxError, "nofile:99: missing token '%>'", fn ->
+        EEx.compile_string("foo <%= bar", line: 99)
+      end
+    end
+
+    test "honor file names" do
+      assert_raise EEx.SyntaxError, "my_file.eex:1: missing token '%>'", fn ->
+        EEx.compile_string("foo <%= bar", file: "my_file.eex")
       end
     end
   end
@@ -336,6 +388,52 @@ defmodule EExTest do
       string = """
       <%= Enum.map [1, 2, 3], fn x -> %>
       Number <%= x %>
+      <% end %>
+      """
+
+      assert_eval(expected, string)
+    end
+
+    test "inside multiple functions" do
+      expected = """
+
+      A 1
+
+      B 2
+
+      A 3
+
+      """
+
+      string = """
+      <%= #{__MODULE__}.switching_map [1, 2, 3], fn x -> %>
+      A <%= x %>
+      <% end, fn x -> %>
+      B <%= x %>
+      <% end %>
+      """
+
+      assert_eval(expected, string)
+    end
+
+    test "inside callback and do block" do
+      expected = """
+
+
+      A 1
+
+      B 2
+
+      A 3
+
+      """
+
+      string = """
+      <% require #{__MODULE__} %>
+      <%= #{__MODULE__}.switching_macro [1, 2, 3], fn x -> %>
+      A <%= x %>
+      <% end do %>
+      B <%= x %>
       <% end %>
       """
 
@@ -501,7 +599,7 @@ defmodule EExTest do
 
     test "begin/end" do
       assert_eval(
-        ~s[BODY(INIT:TEXT(foo):EQUAL(if() do\n  "BEGIN:TEXT(this):END"\nelse\n  "BEGIN:TEXT(that):END"\nend))],
+        ~s[BODY(INIT:TEXT(foo):EQUAL(if do\n  "BEGIN:TEXT(this):END"\nelse\n  "BEGIN:TEXT(that):END"\nend))],
         "foo <%= if do %>this<% else %>that<% end %>",
         [],
         engine: TestEngine
@@ -519,12 +617,35 @@ defmodule EExTest do
   end
 
   defp assert_eval(expected, actual, binding \\ [], opts \\ []) do
-    opts = Enum.into([file: __ENV__.file, engine: opts[:engine] || EEx.Engine], opts)
+    opts = Keyword.merge([file: __ENV__.file, engine: opts[:engine] || EEx.Engine], opts)
     result = EEx.eval_string(actual, binding, opts)
     assert result == expected
   end
 
   defp assert_normalized_newline_equal(expected, actual) do
     assert String.replace(expected, "\r\n", "\n") == String.replace(actual, "\r\n", "\n")
+  end
+
+  def tuple_map({list, callback}) do
+    Enum.map(list, callback)
+  end
+
+  def switching_map(list, a, b) do
+    list
+    |> Enum.with_index()
+    |> Enum.map(fn
+      {element, index} when rem(index, 2) == 0 -> a.(element)
+      {element, index} when rem(index, 2) == 1 -> b.(element)
+    end)
+  end
+
+  defmacro switching_macro(list, a, do: block) do
+    quote do
+      b = fn var!(x) ->
+        unquote(block)
+      end
+
+      unquote(__MODULE__).switching_map(unquote(list), unquote(a), b)
+    end
   end
 end

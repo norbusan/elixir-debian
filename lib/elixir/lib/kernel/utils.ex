@@ -25,7 +25,7 @@ defmodule Kernel.Utils do
   Callback for defdelegate.
   """
   def defdelegate(fun, opts) when is_list(opts) do
-    # TODO: Remove by 2.0
+    # TODO: Remove on v2.0
     append_first? = Keyword.get(opts, :append_first, false)
 
     {name, args} =
@@ -114,7 +114,7 @@ defmodule Kernel.Utils do
   def announce_struct(module) do
     case :erlang.get(:elixir_compiler_pid) do
       :undefined -> :ok
-      pid -> send(pid, {:struct_available, module})
+      pid -> send(pid, {:available, :struct, module})
     end
   end
 
@@ -157,27 +157,32 @@ defmodule Kernel.Utils do
   macro.
 
   Secondly, if the expression is being used outside of a guard, we want to unquote
-  `value`––but only once, and then re-use the unquoted form throughout the expression.
+  `value`, but only once, and then re-use the unquoted form throughout the expression.
 
   This helper does exactly that: takes the AST for an expression and a list of
   variable references it should be aware of, and rewrites it into a new expression
   that checks for its presence in a guard, then unquotes the variable references as
   appropriate.
 
-  The resulting transformation looks something like this:
+  The following code
 
-      > expression = quote do: is_integer(value) and rem(value, 2) == 0
-      > variable_references = [value: Elixir]
-      > Kernel.Utils.defguard(expression, variable_references) |> Macro.to_string |> IO.puts
+      expression = quote do: is_integer(value) and rem(value, 2) == 0
+      variable_references = [value: Elixir]
+      Kernel.Utils.defguard(expression, variable_references) |> Macro.to_string() |> IO.puts()
 
-      case Macro.Env.in_guard? __CALLER__ do
-        true -> quote do
-          is_integer(unquote(value)) and rem(unquote(value), 2) == 0
-        end
-        false -> quote do
-          value = unquote(value)
-          is_integer(value) and rem(value, 2) == 0
-        end
+  would print a code similar to:
+
+      case Macro.Env.in_guard?(__CALLER__) do
+        true ->
+          quote do
+            is_integer(unquote(value)) and rem(unquote(value), 2) == 0
+          end
+
+        false ->
+          quote do
+            value = unquote(value)
+            is_integer(value) and rem(value, 2) == 0
+          end
       end
 
   """
@@ -225,25 +230,36 @@ defmodule Kernel.Utils do
 
   # Prefaces `guard` with unquoted versions of `refs`.
   defp unquote_refs_once(guard, refs) do
-    {_, used_refs} =
-      Macro.postwalk(guard, [], fn
+    {guard, used_refs} =
+      Macro.postwalk(guard, %{}, fn
         {ref, meta, context} = var, acc when is_atom(ref) and is_atom(context) ->
           pair = {ref, var_context(meta, context)}
 
-          case pair in refs and pair not in acc do
-            true -> {var, [pair | acc]}
-            false -> {var, acc}
+          case pair in refs do
+            true ->
+              case acc do
+                %{^pair => {new_var, _}} ->
+                  {new_var, acc}
+
+                %{} ->
+                  generated = String.to_atom("arg" <> Integer.to_string(map_size(acc)))
+                  new_var = Macro.var(generated, Elixir)
+                  {new_var, Map.put(acc, pair, {new_var, var})}
+              end
+
+            false ->
+              {var, acc}
           end
 
         node, acc ->
           {node, acc}
       end)
 
-    vars = for {ref, context} <- :lists.reverse(used_refs), do: context_to_var(ref, context)
-    exprs = for var <- vars, do: literal_unquote(var)
+    all_used = for ref <- :lists.reverse(refs), used = :maps.get(ref, used_refs, nil), do: used
+    {vars, exprs} = :lists.unzip(all_used)
 
     quote do
-      {unquote_splicing(vars)} = {unquote_splicing(exprs)}
+      {unquote_splicing(vars)} = {unquote_splicing(Enum.map(exprs, &literal_unquote/1))}
       unquote(guard)
     end
   end
@@ -255,9 +271,6 @@ defmodule Kernel.Utils do
   defp literal_unquote(ast) do
     {:unquote, [], List.wrap(ast)}
   end
-
-  defp context_to_var(ref, ctx) when is_atom(ctx), do: {ref, [], ctx}
-  defp context_to_var(ref, ctx) when is_integer(ctx), do: {ref, [counter: ctx], nil}
 
   defp var_context(meta, kind) do
     case :lists.keyfind(:counter, 1, meta) do

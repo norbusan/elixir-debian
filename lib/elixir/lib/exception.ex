@@ -150,7 +150,7 @@ defmodule Exception do
   Attaches information to exceptions for extra debugging.
 
   This operation is potentially expensive, as it reads data
-  from the filesystem, parses beam files, evaluates code and
+  from the file system, parses beam files, evaluates code and
   so on.
 
   If the exception module implements the optional `c:blame/2`
@@ -186,8 +186,6 @@ defmodule Exception do
 
   This function returns either `{:ok, definition, clauses}` or `:error`.
   Where `definition` is `:def`, `:defp`, `:defmacro` or `:defmacrop`.
-  Note this functionality requires Erlang/OTP 20, otherwise `:error`
-  is always returned.
   """
   @doc since: "1.5.0"
   @spec blame_mfa(module, function, args :: [term]) ::
@@ -790,6 +788,10 @@ defmodule BadFunctionError do
   defexception [:term]
 
   @impl true
+  def message(%{term: term}) when is_function(term) do
+    "function #{inspect(term)} is invalid, likely because it points to an old version of the code"
+  end
+
   def message(exception) do
     "expected a function, got: #{inspect(exception.term)}"
   end
@@ -854,7 +856,7 @@ defmodule CondClauseError do
 
   @impl true
   def message(_exception) do
-    "no cond clause evaluated to a true value"
+    "no cond clause evaluated to a truthy value"
   end
 end
 
@@ -944,7 +946,8 @@ defmodule UndefinedFunctionError do
   end
 
   defp hint(module, function, arity, true) do
-    hint_for_loaded_module(module, function, arity, nil)
+    behaviour_hint(module, function, arity) <>
+      hint_for_loaded_module(module, function, arity, nil)
   end
 
   defp hint(_module, _function, _arity, _loaded?) do
@@ -970,9 +973,10 @@ defmodule UndefinedFunctionError do
     result =
       case Keyword.take(exports, [function]) do
         [] ->
+          candidates = exports -- deprecated_functions_for(module)
           base = Atom.to_string(function)
 
-          for {key, val} <- exports,
+          for {key, val} <- candidates,
               dist = String.jaro_distance(base, Atom.to_string(key)),
               dist >= @function_threshold,
               do: {dist, key, val}
@@ -994,11 +998,50 @@ defmodule UndefinedFunctionError do
     ["      * ", Code.Identifier.inspect_as_function(fun), ?/, Integer.to_string(arity), ?\n]
   end
 
+  defp behaviour_hint(module, function, arity) do
+    case behaviours_for(module) do
+      [] ->
+        ""
+
+      behaviours ->
+        case Enum.find(behaviours, &expects_callback?(&1, function, arity)) do
+          nil -> ""
+          behaviour -> ", but the behaviour #{inspect(behaviour)} expects it to be present"
+        end
+    end
+  rescue
+    # In case the module was removed while we are computing this
+    UndefinedFunctionError -> ""
+  end
+
+  defp behaviours_for(module) do
+    :attributes
+    |> module.module_info()
+    |> Keyword.get(:behaviour, [])
+  end
+
+  defp expects_callback?(behaviour, function, arity) do
+    callbacks = behaviour.behaviour_info(:callbacks)
+    Enum.member?(callbacks, {function, arity})
+  end
+
   defp exports_for(module) do
     if function_exported?(module, :__info__, 1) do
       module.__info__(:macros) ++ module.__info__(:functions)
     else
       module.module_info(:exports)
+    end
+  rescue
+    # In case the module was removed while we are computing this
+    UndefinedFunctionError ->
+      []
+  end
+
+  defp deprecated_functions_for(module) do
+    if function_exported?(module, :__info__, 1) do
+      for {name_arity, _message} <- module.__info__(:deprecated), do: name_arity
+    else
+      []
     end
   rescue
     # In case the module was removed while we are computing this
@@ -1105,9 +1148,22 @@ defmodule Protocol.UndefinedError do
 
   @impl true
   def message(%{protocol: protocol, value: value, description: description}) do
-    "protocol #{inspect(protocol)} not implemented for #{inspect(value)}" <>
-      maybe_description(description) <> maybe_available(protocol)
+    "protocol #{inspect(protocol)} not implemented for #{inspect(value)} of type " <>
+      value_type(value) <> maybe_description(description) <> maybe_available(protocol)
   end
+
+  defp value_type(%{__struct__: struct}), do: "#{inspect(struct)} (a struct)"
+  defp value_type(value) when is_atom(value), do: "Atom"
+  defp value_type(value) when is_bitstring(value), do: "BitString"
+  defp value_type(value) when is_float(value), do: "Float"
+  defp value_type(value) when is_function(value), do: "Function"
+  defp value_type(value) when is_integer(value), do: "Integer"
+  defp value_type(value) when is_list(value), do: "List"
+  defp value_type(value) when is_map(value), do: "Map"
+  defp value_type(value) when is_pid(value), do: "PID"
+  defp value_type(value) when is_port(value), do: "Port"
+  defp value_type(value) when is_reference(value), do: "Reference"
+  defp value_type(value) when is_tuple(value), do: "Tuple"
 
   defp maybe_description(""), do: ""
   defp maybe_description(description), do: ", " <> description
@@ -1118,7 +1174,8 @@ defmodule Protocol.UndefinedError do
         ". There are no implementations for this protocol."
 
       {:consolidated, types} ->
-        ". This protocol is implemented for: #{Enum.map_join(types, ", ", &inspect/1)}"
+        ". This protocol is implemented for the following type(s): " <>
+          Enum.map_join(types, ", ", &inspect/1)
 
       :not_consolidated ->
         ""
@@ -1133,7 +1190,7 @@ defmodule KeyError do
   def message(exception = %{message: nil}), do: message(exception.key, exception.term)
   def message(%{message: message}), do: message
 
-  def message(key, term) do
+  defp message(key, term) do
     message = "key #{inspect(key)} not found"
 
     if term != nil do
@@ -1245,6 +1302,24 @@ defmodule File.Error do
 end
 
 defmodule File.CopyError do
+  defexception [:reason, :source, :destination, on: "", action: ""]
+
+  @impl true
+  def message(exception) do
+    formatted = IO.iodata_to_binary(:file.format_error(exception.reason))
+
+    location =
+      case exception.on() do
+        "" -> ""
+        on -> ". #{on}"
+      end
+
+    "could not #{exception.action} from #{inspect(exception.source)} to " <>
+      "#{inspect(exception.destination)}#{location}: #{formatted}"
+  end
+end
+
+defmodule File.RenameError do
   defexception [:reason, :source, :destination, on: "", action: ""]
 
   @impl true

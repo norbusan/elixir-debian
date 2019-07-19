@@ -11,10 +11,10 @@ defmodule Mix.Dep do
 
     * `app` - the application name as an atom
 
-    * `requirement` - a binary or regex with the dependency's requirement
+    * `requirement` - a binary or regular expression with the dependency's requirement
 
     * `status` - the current status of the dependency, check
-      `Mix.Dep.format_status/1` for more info
+      `Mix.Dep.format_status/1` for more information
 
     * `opts` - the options given by the developer
 
@@ -89,7 +89,7 @@ defmodule Mix.Dep do
   """
   def cached() do
     if project = Mix.Project.get() do
-      read_cached_deps(project, Mix.env()) || load_and_cache()
+      read_cached_deps(project, {Mix.env(), Mix.target()}) || load_and_cache()
     else
       load_and_cache()
     end
@@ -107,22 +107,27 @@ defmodule Mix.Dep do
   """
   def load_and_cache() do
     env = Mix.env()
+    target = Mix.target()
 
     case Mix.ProjectStack.top_and_bottom() do
       {%{name: top, config: config}, %{name: bottom}} ->
-        write_cached_deps(top, env, load_and_cache(config, top, bottom, env))
+        write_cached_deps(top, {env, target}, load_and_cache(config, top, bottom, env, target))
 
       _ ->
-        converge(env: env)
+        converge(env: env, target: target)
     end
   end
 
-  defp load_and_cache(_config, top, top, env) do
-    converge(env: env)
+  defp load_and_cache(_config, top, top, env, target) do
+    converge(env: env, target: target)
   end
 
-  defp load_and_cache(config, _top, bottom, _env) do
-    {_, deps} = Mix.ProjectStack.read_cache({:cached_deps, bottom})
+  defp load_and_cache(config, _top, bottom, _env, _target) do
+    {_, deps} =
+      Mix.ProjectStack.read_cache({:cached_deps, bottom}) ||
+        raise "cannot retrieve dependencies information because dependencies were not loaded. " <>
+                "Please invoke one of \"deps.loadpaths\", \"loadpaths\", or \"compile\" Mix task"
+
     app = Keyword.fetch!(config, :app)
     seen = populate_seen(MapSet.new(), [app])
     children = get_deps(deps, tl(Enum.uniq(get_children(deps, seen, [app]))))
@@ -147,15 +152,15 @@ defmodule Mix.Dep do
     end)
   end
 
-  defp read_cached_deps(project, env) do
+  defp read_cached_deps(project, env_target) do
     case Mix.ProjectStack.read_cache({:cached_deps, project}) do
-      {^env, deps} -> deps
+      {^env_target, deps} -> deps
       _ -> nil
     end
   end
 
-  defp write_cached_deps(project, env, deps) do
-    Mix.ProjectStack.write_cache({:cached_deps, project}, {env, deps})
+  defp write_cached_deps(project, env_target, deps) do
+    Mix.ProjectStack.write_cache({:cached_deps, project}, {env_target, deps})
     deps
   end
 
@@ -167,13 +172,6 @@ defmodule Mix.Dep do
       key = {:cached_deps, project}
       Mix.ProjectStack.delete_cache(key)
     end
-  end
-
-  # TODO: Remove this on v1.8
-  @doc false
-  @deprecated "Mix.Dep.loaded/1 was private API and you should not use it"
-  def loaded(opts) do
-    load_on_environment(opts)
   end
 
   @doc """
@@ -278,11 +276,19 @@ defmodule Mix.Dep do
     "ok"
   end
 
-  def format_status(%Mix.Dep{status: {:noappfile, path}}) do
+  def format_status(%Mix.Dep{status: {:noappfile, {path, nil}}}) do
     "could not find an app file at #{inspect(Path.relative_to_cwd(path))}. " <>
-      "This may happen if the dependency was not yet compiled, " <>
-      "or you specified the wrong application name in your deps, " <>
+      "This may happen if the dependency was not yet compiled " <>
       "or the dependency indeed has no app file (then you can pass app: false as option)"
+  end
+
+  def format_status(%Mix.Dep{status: {:noappfile, {path, other_path}}}) do
+    other_app = Path.rootname(Path.basename(other_path))
+
+    "could not find an app file at #{inspect(Path.relative_to_cwd(path))}. " <>
+      "Another app file was found in the same directory " <>
+      "#{inspect(Path.relative_to_cwd(other_path))}, " <>
+      "try changing the dependency name to :#{other_app}"
   end
 
   def format_status(%Mix.Dep{status: {:invalidapp, path}}) do
@@ -296,7 +302,7 @@ defmodule Mix.Dep do
   def format_status(%Mix.Dep{status: {:nosemver, vsn}, requirement: req}) do
     "the app file specified a non-Semantic Versioning format: #{inspect(vsn)}. Mix can only match the " <>
       "requirement #{inspect(req)} against semantic versions. Please fix the application version " <>
-      "or use a regex as a requirement to match against any version"
+      "or use a regular expression as a requirement to match against any version"
   end
 
   def format_status(%Mix.Dep{status: {:nomatchvsn, vsn}, requirement: req}) do
@@ -342,16 +348,28 @@ defmodule Mix.Dep do
       dep_status(other) <> "\n  #{recommendation}"
   end
 
+  def format_status(%Mix.Dep{app: app, status: {:divergedtargets, other}} = dep) do
+    recommendation =
+      if Keyword.has_key?(other.opts, :targets) do
+        "Ensure you specify at least the same targets in :targets in your dep"
+      else
+        "Remove the :targets restriction from your dep"
+      end
+
+    "the :targets option for dependency #{app}\n" <>
+      dep_status(dep) <>
+      "\n  does not match the :targets option calculated for\n" <>
+      dep_status(other) <> "\n  #{recommendation}"
+  end
+
   def format_status(%Mix.Dep{app: app, status: {:diverged, other}} = dep) do
     "different specs were given for the #{app} app:\n" <>
-      "#{dep_status(dep)}#{dep_status(other)}" <>
-      "\n  Ensure they match or specify one of the above in your deps and set \"override: true\""
+      "#{dep_status(dep)}#{dep_status(other)}\n  " <> override_diverge_recommendation(dep, other)
   end
 
   def format_status(%Mix.Dep{app: app, status: {:overridden, other}} = dep) do
     "the dependency #{app} in #{Path.relative_to_cwd(dep.from)} is overriding a child dependency:\n" <>
-      "#{dep_status(dep)}#{dep_status(other)}" <>
-      "\n  Ensure they match or specify one of the above in your deps and set \"override: true\""
+      "#{dep_status(dep)}#{dep_status(other)}\n  " <> override_diverge_recommendation(dep, other)
   end
 
   def format_status(%Mix.Dep{status: {:unavailable, _}, scm: scm}) do
@@ -370,11 +388,30 @@ defmodule Mix.Dep do
     "the dependency was built with another SCM, run \"#{mix_env_var()}mix deps.compile\""
   end
 
-  defp dep_status(%Mix.Dep{app: app, requirement: req, manager: manager, opts: opts, from: from}) do
+  defp override_diverge_recommendation(dep, other) do
+    if dep.opts[:from_umbrella] || other.opts[:from_umbrella] do
+      "Please remove the conflicting options from your definition"
+    else
+      "Ensure they match or specify one of the above in your deps and set \"override: true\""
+    end
+  end
+
+  defp dep_status(%Mix.Dep{} = dep) do
+    %{
+      app: app,
+      requirement: req,
+      manager: manager,
+      opts: opts,
+      from: from,
+      system_env: system_env
+    } = dep
+
     opts =
-      opts
-      |> Keyword.drop([:dest, :build, :lock, :manager, :checkout])
+      []
       |> Kernel.++(if manager, do: [manager: manager], else: [])
+      |> Kernel.++(if system_env != [], do: [system_env: system_env], else: [])
+      |> Kernel.++(opts)
+      |> Keyword.drop([:dest, :build, :lock, :manager, :checkout])
 
     info = if req, do: {app, req, opts}, else: {app, opts}
     "\n  > In #{Path.relative_to_cwd(from)}:\n    #{inspect(info)}\n"
@@ -438,13 +475,14 @@ defmodule Mix.Dep do
   def diverged?(%Mix.Dep{status: {:diverged, _}}), do: true
   def diverged?(%Mix.Dep{status: {:divergedreq, _}}), do: true
   def diverged?(%Mix.Dep{status: {:divergedonly, _}}), do: true
+  def diverged?(%Mix.Dep{status: {:divergedtargets, _}}), do: true
   def diverged?(%Mix.Dep{}), do: false
 
   @doc """
   Returns `true` if the dependency is compilable.
   """
   def compilable?(%Mix.Dep{status: {:elixirlock, _}}), do: true
-  def compilable?(%Mix.Dep{status: {:noappfile, _}}), do: true
+  def compilable?(%Mix.Dep{status: {:noappfile, {_, _}}}), do: true
   def compilable?(%Mix.Dep{status: {:scmlock, _}}), do: true
   def compilable?(%Mix.Dep{status: :compile}), do: true
   def compilable?(_), do: false

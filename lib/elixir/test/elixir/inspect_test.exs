@@ -56,6 +56,10 @@ defmodule Inspect.AtomTest do
     assert inspect(:<|>) == ":<|>"
   end
 
+  test "::" do
+    assert inspect(:"::") == ~s[:"::"]
+  end
+
   test "with @" do
     assert inspect(:@) == ":@"
     assert inspect(:foo@bar) == ":foo@bar"
@@ -86,20 +90,14 @@ defmodule Inspect.AtomTest do
     assert inspect(:hello, opts) == ":hello"
   end
 
-  # TODO: Remove this check once we depend only on 20
-  # TODO: Remove String.to_atom/1 calls when we support 20+
-  if :erlang.system_info(:otp_release) >= '20' do
-    test "unicode" do
-      assert inspect(String.to_atom("olá")) == ":olá"
-      assert inspect(String.to_atom("Olá")) == ":Olá"
-      assert inspect(String.to_atom("Ólá")) == ":Ólá"
+  test "unicode" do
+    assert inspect(:olá) == ":olá"
+    assert inspect(:Olá) == ":Olá"
+    assert inspect(:Ólá) == ":Ólá"
+    assert inspect(:こんにちは世界) == ":こんにちは世界"
 
-      hello_world = String.to_atom("こんにちは世界")
-      assert inspect(hello_world) == ":こんにちは世界"
-
-      nfd = :unicode.characters_to_nfd_binary("olá")
-      assert inspect(String.to_atom(nfd)) == ":\"#{nfd}\""
-    end
+    nfd = :unicode.characters_to_nfd_binary("olá")
+    assert inspect(String.to_atom(nfd)) == ":\"#{nfd}\""
   end
 end
 
@@ -287,6 +285,10 @@ defmodule Inspect.ListTest do
 
     assert inspect([foo: [1, 2, 3], baz: [4, 5, 6]], pretty: true, width: 20) ==
              "[\n  foo: [1, 2, 3],\n  baz: [4, 5, 6]\n]"
+  end
+
+  test "keyword operators" do
+    assert inspect("::": 1, +: 2) == ~s(["::": 1, +: 2])
   end
 
   test "opt infer" do
@@ -489,6 +491,81 @@ defmodule Inspect.MapTest do
     assert inspect(%{a: 9999}, opts) ==
              "\e[32m%{\e[36m" <> "\e[31ma:\e[36m " <> "\e[34m9999\e[36m" <> "\e[32m}\e[36m"
   end
+
+  defmodule StructWithoutOptions do
+    @derive Inspect
+    defstruct [:a, :b, :c, :d]
+  end
+
+  test "struct without options" do
+    struct = %StructWithoutOptions{a: 1, b: 2, c: 3, d: 4}
+    assert inspect(struct) == "%Inspect.MapTest.StructWithoutOptions{a: 1, b: 2, c: 3, d: 4}"
+
+    assert inspect(struct, pretty: true, width: 1) ==
+             "%Inspect.MapTest.StructWithoutOptions{\n  a: 1,\n  b: 2,\n  c: 3,\n  d: 4\n}"
+  end
+
+  defmodule StructWithOnlyOption do
+    @derive {Inspect, only: [:b, :c]}
+    defstruct [:a, :b, :c, :d]
+  end
+
+  test "struct with :only option" do
+    struct = %StructWithOnlyOption{a: 1, b: 2, c: 3, d: 4}
+    assert inspect(struct) == "#Inspect.MapTest.StructWithOnlyOption<b: 2, c: 3, ...>"
+
+    assert inspect(struct, pretty: true, width: 1) ==
+             "#Inspect.MapTest.StructWithOnlyOption<\n  b: 2,\n  c: 3,\n  ...\n>"
+  end
+
+  defmodule StructWithEmptyOnlyOption do
+    @derive {Inspect, only: []}
+    defstruct [:a, :b, :c, :d]
+  end
+
+  test "struct with empty :only option" do
+    struct = %StructWithEmptyOnlyOption{a: 1, b: 2, c: 3, d: 4}
+    assert inspect(struct) == "#Inspect.MapTest.StructWithEmptyOnlyOption<...>"
+  end
+
+  defmodule StructWithAllFieldsInOnlyOption do
+    @derive {Inspect, only: [:a, :b]}
+    defstruct [:a, :b]
+  end
+
+  test "struct with all fields in the :only option" do
+    struct = %StructWithAllFieldsInOnlyOption{a: 1, b: 2}
+    assert inspect(struct) == "%Inspect.MapTest.StructWithAllFieldsInOnlyOption{a: 1, b: 2}"
+
+    assert inspect(struct, pretty: true, width: 1) ==
+             "%Inspect.MapTest.StructWithAllFieldsInOnlyOption{\n  a: 1,\n  b: 2\n}"
+  end
+
+  defmodule StructWithExceptOption do
+    @derive {Inspect, except: [:b, :c]}
+    defstruct [:a, :b, :c, :d]
+  end
+
+  test "struct with :except option" do
+    struct = %StructWithExceptOption{a: 1, b: 2, c: 3, d: 4}
+    assert inspect(struct) == "#Inspect.MapTest.StructWithExceptOption<a: 1, d: 4, ...>"
+
+    assert inspect(struct, pretty: true, width: 1) ==
+             "#Inspect.MapTest.StructWithExceptOption<\n  a: 1,\n  d: 4,\n  ...\n>"
+  end
+
+  defmodule StructWithBothOnlyAndExceptOptions do
+    @derive {Inspect, only: [:a, :b], except: [:b, :c]}
+    defstruct [:a, :b, :c, :d]
+  end
+
+  test "struct with both :only and :except options" do
+    struct = %StructWithBothOnlyAndExceptOptions{a: 1, b: 2, c: 3, d: 4}
+    assert inspect(struct) == "#Inspect.MapTest.StructWithBothOnlyAndExceptOptions<a: 1, ...>"
+
+    assert inspect(struct, pretty: true, width: 1) ==
+             "#Inspect.MapTest.StructWithBothOnlyAndExceptOptions<\n  a: 1,\n  ...\n>"
+  end
 end
 
 defmodule Inspect.OthersTest do
@@ -571,11 +648,61 @@ defmodule Inspect.OthersTest do
   test "regex" do
     assert inspect(~r(foo)m) == "~r/foo/m"
 
+    assert inspect(Regex.compile!("a\\/b")) == "~r/a\\/b/"
+
     assert inspect(Regex.compile!("\a\b\d\e\f\n\r\s\t\v/")) ==
              "~r/\\a\\x08\\x7F\\x1B\\f\\n\\r \\t\\v\\//"
 
     assert inspect(~r<\a\b\d\e\f\n\r\s\t\v/>) == "~r/\\a\\b\\d\\e\\f\\n\\r\\s\\t\\v\\//"
     assert inspect(~r" \\/ ") == "~r/ \\\\\\/ /"
     assert inspect(~r/hi/, syntax_colors: [regex: :red]) == "\e[31m~r/hi/\e[0m"
+  end
+
+  test "inspect_fun" do
+    fun = fn
+      integer, _opts when is_integer(integer) ->
+        "<#{integer}>"
+
+      %URI{} = uri, _opts ->
+        "#URI<#{uri}>"
+
+      term, opts ->
+        Inspect.inspect(term, opts)
+    end
+
+    opts = [inspect_fun: fun]
+
+    assert inspect(1000, opts) == "<1000>"
+    assert inspect([1000], opts) == "[<1000>]"
+
+    uri = URI.parse("https://elixir-lang.org")
+    assert inspect(uri, opts) == "#URI<https://elixir-lang.org>"
+    assert inspect([uri], opts) == "[#URI<https://elixir-lang.org>]"
+  end
+
+  defmodule Nested do
+    defstruct nested: nil
+
+    defimpl Inspect do
+      import Inspect.Algebra
+
+      def inspect(%Nested{nested: nested}, opts) do
+        indent = Keyword.get(opts.custom_options, :indent, 2)
+        level = Keyword.get(opts.custom_options, :level, 1)
+
+        nested_str =
+          Kernel.inspect(nested, custom_options: [level: level + 1, indent: indent + 2])
+
+        concat(
+          nest(line("#Nested[##{level}/#{indent}]<", nested_str), indent),
+          nest(line("", ">"), indent - 2)
+        )
+      end
+    end
+  end
+
+  test "custom_options" do
+    assert inspect(%Nested{nested: %Nested{nested: 42}}) ==
+             "#Nested[#1/2]<\n  #Nested[#2/4]<\n    42\n  >\n>"
   end
 end

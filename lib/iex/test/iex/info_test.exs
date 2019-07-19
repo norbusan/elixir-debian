@@ -3,6 +3,8 @@ Code.require_file("../test_helper.exs", __DIR__)
 defmodule IEx.InfoTest do
   use ExUnit.Case
 
+  import ExUnit.CaptureLog
+
   alias IEx.Info
 
   defmodule Foo do
@@ -52,6 +54,10 @@ defmodule IEx.InfoTest do
     test "regular atom" do
       assert Info.info(:foo) == [{"Data type", "Atom"}, {"Reference modules", "Atom"}]
     end
+
+    test "do not log errors if module exists with different casing" do
+      assert capture_log(fn -> Info.info(Datetime) end) == ""
+    end
   end
 
   describe "lists" do
@@ -67,6 +73,7 @@ defmodule IEx.InfoTest do
     end
 
     test "regular lists" do
+      assert get_key(Info.info([]), "Reference modules") == "List"
       assert get_key(Info.info([:foo, :bar, :baz]), "Reference modules") == "List"
     end
   end
@@ -86,7 +93,7 @@ defmodule IEx.InfoTest do
       assert get_key(info, "Byte size") == 7
       assert description =~ "This is a string"
       assert description =~ "It's printed with the `<<>>`"
-      assert description =~ "the first non-printable codepoint being\n`<<0>>`"
+      assert description =~ "the first non-printable code point being\n`<<0>>`"
     end
 
     test "binary" do

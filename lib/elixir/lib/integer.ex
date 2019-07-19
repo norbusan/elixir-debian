@@ -4,7 +4,7 @@ defmodule Integer do
 
   Some functions that work on integers are found in `Kernel`:
 
-    * `abs/2`
+    * `abs/1`
     * `div/2`
     * `max/2`
     * `min/2`
@@ -158,7 +158,7 @@ defmodule Integer do
   Returns the integer represented by the ordered `digits`.
 
   An optional `base` value may be provided representing the radix for the `digits`.
-  Base has to be an integer greater or equal than `2`.
+  Base has to be an integer greater than or equal to `2`.
 
   ## Examples
 
@@ -269,6 +269,9 @@ defmodule Integer do
 
   defp count_digits_nosign(<<_::binary>>, _, count), do: count
 
+  # TODO: Remove Integer.to_string/1 once the minimum supported version is
+  #       Erlang/OTP 22, since it is covered by the now BIF Integer.to_string/2.
+  #       Please reapply commit 2622fd6b0aa419a983a899a1fbdb5deefba3d85d.
   @doc """
   Returns a binary which corresponds to the text representation
   of `integer`.
@@ -320,6 +323,9 @@ defmodule Integer do
     :erlang.integer_to_binary(integer, base)
   end
 
+  # TODO: Remove Integer.to_charlist/1 once the minimum supported version is
+  #       Erlang/OTP 22, since it is covered by the now BIF Integer.to_charlist/2.
+  #       Please reapply commit 2622fd6b0aa419a983a899a1fbdb5deefba3d85d.
   @doc """
   Returns a charlist which corresponds to the text representation of the given `integer`.
 
@@ -399,8 +405,7 @@ defmodule Integer do
 
   """
   @doc since: "1.5.0"
-  @spec gcd(0, 0) :: 0
-  @spec gcd(integer, integer) :: pos_integer
+  @spec gcd(integer, integer) :: non_neg_integer
   def gcd(integer1, integer2) when is_integer(integer1) and is_integer(integer2) do
     gcd_positive(abs(integer1), abs(integer2))
   end
@@ -409,12 +414,10 @@ defmodule Integer do
   defp gcd_positive(integer1, 0), do: integer1
   defp gcd_positive(integer1, integer2), do: gcd_positive(integer2, rem(integer1, integer2))
 
-  # TODO: Remove by 2.0
   @doc false
   @deprecated "Use Integer.to_charlist/1 instead"
   def to_char_list(integer), do: Integer.to_charlist(integer)
 
-  # TODO: Remove by 2.0
   @doc false
   @deprecated "Use Integer.to_charlist/2 instead"
   def to_char_list(integer, base), do: Integer.to_charlist(integer, base)

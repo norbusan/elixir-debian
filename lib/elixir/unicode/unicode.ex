@@ -1,15 +1,14 @@
 # How to update the Unicode files
 #
-# 1. Update CompositionExclusions.txt by copying original as is
-# 2. Update PropList.txt by copying original as is
-# 3. Update SpecialCasing.txt by copying original and removing conditional mappings
-# 4. Update GraphemeBreakProperty.txt by copying original as is
-# 5. Copy Extended_Pictographic from emoji-data at the end of GraphemeBreakProperty.txt
-# 6. Update GraphemeBreakTest.txt by copying original as is
-# 7. Update String.Unicode.version/0 and on String module docs
-# 8. make unicode
-# 9. elixir lib/elixir/unicode/graphemes_test.exs
-#
+# 1. Update PropList.txt by copying original as is
+# 2. Update SpecialCasing.txt by copying original and removing conditional mappings
+# 3. Update GraphemeBreakProperty.txt by copying original as is
+# 4. Copy Extended_Pictographic from emoji-data at the end of GraphemeBreakProperty.txt
+# 5. Update GraphemeBreakTest.txt by copying original as is
+# 6. Update String.Unicode.version/0 and on String module docs
+# 7. make unicode
+# 8. elixir lib/elixir/unicode/graphemes_test.exs
+
 defmodule String.Unicode do
   @moduledoc false
   def version, do: {11, 0, 0}
@@ -195,13 +194,10 @@ defmodule String.Unicode do
 
   for codepoint <- cluster["ZWJ"] do
     defp next_extend_size(<<unquote(codepoint), rest::binary>>, size, marker) do
-      next_extend_size(rest, size + unquote(byte_size(codepoint)), from_emoji_to_zwj(marker))
-    end
-  end
-
-  for codepoint <- cluster["Extended_Pictographic"] do
-    defp next_extend_size(<<unquote(codepoint), rest::binary>>, size, :zwj) do
-      next_extend_size(rest, size + unquote(byte_size(codepoint)), :other)
+      case marker do
+        :emoji -> next_pictographic_size(rest, size + unquote(byte_size(codepoint)))
+        _ -> next_extend_size(rest, size + unquote(byte_size(codepoint)), :other)
+      end
     end
   end
 
@@ -209,11 +205,19 @@ defmodule String.Unicode do
     {size, rest}
   end
 
+  # Handle Pictographic (always after zwj, falls back to extend size)
+  for codepoint <- cluster["Extended_Pictographic"] do
+    defp next_pictographic_size(<<unquote(codepoint), rest::binary>>, size) do
+      next_extend_size(rest, size + unquote(byte_size(codepoint)), :emoji)
+    end
+  end
+
+  defp next_pictographic_size(rest, size) do
+    next_extend_size(rest, size, :other)
+  end
+
   defp keep_emoji(:emoji), do: :emoji
   defp keep_emoji(_), do: :other
-
-  defp from_emoji_to_zwj(:emoji), do: :zwj
-  defp from_emoji_to_zwj(_), do: :other
 
   # Handle Prepend
   for codepoint <- cluster["Prepend"] do
@@ -279,14 +283,14 @@ defmodule String.Unicode do
     {acc, string}
   end
 
-  # Codepoints
+  # Code points
 
   def next_codepoint(<<cp::utf8, rest::binary>>) do
     {<<cp::utf8>>, rest}
   end
 
-  def next_codepoint(<<cp, rest::binary>>) do
-    {<<cp>>, rest}
+  def next_codepoint(<<byte, rest::binary>>) do
+    {<<byte>>, rest}
   end
 
   def next_codepoint(<<>>) do

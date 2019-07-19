@@ -15,6 +15,9 @@ defmodule Mix.Tasks.Xref do
   your project is compiled via `mix compile.xref`. See
   `Mix.Tasks.Compile.Xref` for more information.
 
+  This task is automatically reenabled, so you can perform multiple
+  cross reference checks in the same Mix invocation.
+
   ## Xref modes
 
   The `xref` task expects a mode as first argument:
@@ -32,7 +35,7 @@ defmodule Mix.Tasks.Xref do
   The "file:line" represents the file and line a call to an unknown
   "module.function/arity" is made.
 
-  The flag `--abort-if-any` can be used for the command to fail if
+  The option `--abort-if-any` can be used for the command to fail if
   unreachable calls exist.
 
   ## deprecated
@@ -46,7 +49,7 @@ defmodule Mix.Tasks.Xref do
   local calls (a call to a deprecated function or macro in the same module)
   nor calls to deprecated functionality in Elixir itself.
 
-  The flag `--abort-if-any` can be used for the command to fail if
+  The option `--abort-if-any` can be used for the command to fail if
   deprecated calls exist.
 
   ### callers CALLEE
@@ -61,7 +64,7 @@ defmodule Mix.Tasks.Xref do
   ### graph
 
   Prints a file dependency graph where an edge from `A` to `B` indicates
-  that `A` depends on `B`.
+  that `A` (source) depends on `B` (sink).
 
       mix xref graph --format stats
 
@@ -70,13 +73,15 @@ defmodule Mix.Tasks.Xref do
     * `--exclude` - paths to exclude
 
     * `--label` - only shows relationships with the given label
-      The labels are "compile", "struct" and "runtime" (runtime is now shown on the graph)
+      The labels are "compile", "struct" and "runtime"
 
     * `--only-nodes` - only shows the node names (no edges)
 
-    * `--source` - displays all files that the given source file references (directly or indirectly)
+    * `--source` - displays all files that the given source file
+      references (directly or indirectly)
 
-    * `--sink` - displays all files that reference the given file (directly or indirectly)
+    * `--sink` - displays all files that reference the given file
+      (directly or indirectly)
 
     * `--format` - can be set to one of:
 
@@ -129,8 +134,9 @@ defmodule Mix.Tasks.Xref do
 
   All configuration for Xref should be placed under the key `:xref`.
 
-    * `:exclude` - a list of modules and `{module, function, arity}` tuples to ignore when checking
-      cross references. For example: `[MissingModule, {MissingModule2, :missing_func, 2}]`
+    * `:exclude` - a list of modules and `{module, function, arity}`
+      tuples to ignore when checking cross references. For example:
+      `[MissingModule, {MissingModule2, :missing_func, 2}]`
 
   """
 
@@ -149,6 +155,7 @@ defmodule Mix.Tasks.Xref do
     source: :string
   ]
 
+  @impl true
   def run(args) do
     {opts, args} = OptionParser.parse!(args, strict: @switches)
     Mix.Task.run("loadpaths")
@@ -282,7 +289,7 @@ defmodule Mix.Tasks.Xref do
     :ok
   end
 
-  ## Warnings (unreacheable + deprecated)
+  ## Warnings (unreachable + deprecated)
 
   defp source_warnings(excludes, opts) do
     sources = sources(opts)
@@ -394,18 +401,18 @@ defmodule Mix.Tasks.Xref do
     end
   end
 
-  @protocol_builtins for {_, type} <- Protocol.__builtin__(), do: type
+  @protocol_built_ins for {_, type} <- Protocol.__built_in__(), do: type
 
   defp skip_unreachable?(:erlang, func, 2) when func in [:andalso, :orelse] do
     true
   end
 
   defp skip_unreachable?(module, :__impl__, 1) do
-    {maybe_protocol, maybe_builtin} = module |> Module.split() |> Enum.split(-1)
+    {maybe_protocol, maybe_built_in} = module |> Module.split() |> Enum.split(-1)
     maybe_protocol = Module.concat(maybe_protocol)
-    maybe_builtin = Module.concat(maybe_builtin)
+    maybe_built_in = Module.concat(maybe_built_in)
 
-    maybe_builtin in @protocol_builtins and Code.ensure_loaded?(maybe_protocol) and
+    maybe_built_in in @protocol_built_ins and Code.ensure_loaded?(maybe_protocol) and
       function_exported?(maybe_protocol, :__protocol__, 1)
   end
 
