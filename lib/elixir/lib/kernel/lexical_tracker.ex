@@ -12,22 +12,15 @@ defmodule Kernel.LexicalTracker do
   @doc """
   Returns all remotes referenced in this lexical scope.
   """
-  def remote_references(arg) do
-    :gen_server.call(to_pid(arg), :remote_references, @timeout)
+  def remote_references(pid) do
+    :gen_server.call(pid, :remote_references, @timeout)
   end
 
   @doc """
   Returns all remote dispatches in this lexical scope.
   """
-  def remote_dispatches(arg) do
-    :gen_server.call(to_pid(arg), :remote_dispatches, @timeout)
-  end
-
-  defp to_pid(pid) when is_pid(pid), do: pid
-
-  defp to_pid(mod) when is_atom(mod) do
-    {set, _} = :elixir_module.data_tables(mod)
-    :ets.lookup_element(set, {:elixir, :lexical_tracker}, 2)
+  def remote_dispatches(pid) do
+    :gen_server.call(pid, :remote_dispatches, @timeout)
   end
 
   # Internal API
@@ -40,7 +33,7 @@ defmodule Kernel.LexicalTracker do
 
   @doc false
   def stop(pid) do
-    :gen_server.cast(pid, :stop)
+    :gen_server.call(pid, :stop)
   end
 
   @doc false
@@ -153,6 +146,10 @@ defmodule Kernel.LexicalTracker do
     {:reply, :maps.get(key, cache), state}
   end
 
+  def handle_call(:stop, _from, state) do
+    {:stop, :normal, :ok, state}
+  end
+
   def handle_cast({:write_cache, key, value}, %{cache: cache} = state) do
     {:noreply, %{state | cache: :maps.put(key, value, cache)}}
   end
@@ -162,7 +159,7 @@ defmodule Kernel.LexicalTracker do
   end
 
   def handle_cast({:remote_struct, module, line}, state) do
-    state = add_remote_dispatch(state, module, {:__struct__, 1}, line, :compile)
+    state = add_remote_dispatch(state, module, {:__struct__, 0}, line, :compile)
     structs = :maps.put(module, true, state.structs)
     {:noreply, %{state | structs: structs}}
   end
@@ -211,10 +208,6 @@ defmodule Kernel.LexicalTracker do
 
   def handle_cast({:add_alias, module, line, warn}, state) do
     {:noreply, %{state | directives: add_directive(state.directives, module, line, warn, :alias)}}
-  end
-
-  def handle_cast(:stop, state) do
-    {:stop, :normal, state}
   end
 
   @doc false

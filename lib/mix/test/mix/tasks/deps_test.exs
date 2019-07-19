@@ -90,6 +90,27 @@ defmodule Mix.Tasks.DepsTest do
     end)
   end
 
+  test "prints misspelled dependency name hint" do
+    Mix.Project.push(DepsApp)
+
+    in_fixture("deps_status", fn ->
+      other_app_path = Path.join(Mix.Project.build_path(), "lib/noappfile/ebin/other_app.app")
+      File.mkdir_p!(Path.dirname(other_app_path))
+      File.write!(other_app_path, "")
+
+      Mix.Tasks.Deps.run([])
+
+      message =
+        "  could not find an app file at \"_build/dev/lib/noappfile/ebin/noappfile.app\". " <>
+          "Another app file was found in the same directory " <>
+          "\"_build/dev/lib/noappfile/ebin/other_app.app\", " <>
+          "try changing the dependency name to :other_app"
+
+      assert_received {:mix_shell, :info, ["* noappfile (deps/noappfile)"]}
+      assert_received {:mix_shell, :info, [^message]}
+    end)
+  end
+
   test "prints Elixir req mismatches" do
     Mix.Project.push(ReqDepsApp)
 
@@ -120,7 +141,9 @@ defmodule Mix.Tasks.DepsTest do
     Mix.Project.push(DepsApp)
 
     in_fixture("deps_status", fn ->
-      File.cd!("deps/ok", fn -> System.cmd("git", ["init"]) end)
+      File.cd!("deps/ok", fn ->
+        System.cmd("git", ~w[-c core.hooksPath='' init])
+      end)
 
       Mix.Tasks.Deps.run([])
       assert_received {:mix_shell, :info, ["* ok (https://github.com/elixir-lang/ok.git) (mix)"]}
@@ -709,7 +732,7 @@ defmodule Mix.Tasks.DepsTest do
     end
   end
 
-  test "does not compile deps that have explicit flag" do
+  test "does not compile deps that have explicit option" do
     Mix.Project.push(NonCompilingDeps)
 
     in_fixture("deps_status", fn ->
@@ -776,7 +799,7 @@ defmodule Mix.Tasks.DepsTest do
 
       message =
         "\"mix deps.clean\" expects dependencies as arguments or " <>
-          "a flag indicating which dependencies to clean. " <>
+          "an option indicating which dependencies to clean. " <>
           "The --all option will clean all dependencies while " <>
           "the --unused option cleans unused dependencies"
 

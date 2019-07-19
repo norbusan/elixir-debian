@@ -7,6 +7,23 @@ defmodule Mix.UtilsTest do
   use MixTest.Case
   doctest Mix.Utils
 
+  setup do
+    # Store state before test
+    mix_home = System.get_env("MIX_HOME")
+
+    # Clear all variables to get a reproducible test
+    System.delete_env("MIX_HOME")
+    System.delete_env("XDG_DATA_HOME")
+    System.delete_env("XDG_CONFIG_HOME")
+
+    # Reset Env Variables
+    on_exit(fn ->
+      System.put_env("MIX_HOME", mix_home)
+      System.delete_env("XDG_DATA_HOME")
+      System.delete_env("XDG_CONFIG_HOME")
+    end)
+  end
+
   test "command to module" do
     assert Mix.Utils.command_to_module("cheers", Mix.Tasks) == {:module, Mix.Tasks.Cheers}
     assert Mix.Utils.command_to_module("unknown", Mix.Tasks) == {:error, :nofile}
@@ -38,8 +55,8 @@ defmodule Mix.UtilsTest do
   end
 
   test "extract stale" do
-    # 2030-01-01 00:00:00
-    time = 1_893_456_000
+    # 2038-01-01 00:00:00
+    time = 2_145_916_800
     assert Mix.Utils.extract_stale([__ENV__.file], [time]) == []
 
     # 2000-01-01 00:00:00
@@ -95,6 +112,46 @@ defmodule Mix.UtilsTest do
 
     System.put_env("HTTPS_PROXY", "https://example.com")
     assert Mix.Utils.proxy_config("https://example.com") == []
+  end
+
+  # 10.0.0.0 is a non-routable address
+  test "read_path timeouts requests" do
+    assert {:remote, "request timed out after 0ms"} =
+             Mix.Utils.read_path("http://10.0.0.0/", timeout: 0)
+  end
+
+  describe "mix_home/0" do
+    test "prefers MIX_HOME over XDG_DATA_HOME" do
+      System.put_env("MIX_HOME", "mix_home")
+      System.put_env("XDG_DATA_HOME", "xdg_data_home")
+      assert "mix_home" = Mix.Utils.mix_home()
+    end
+
+    test "falls back to XDG_DATA_HOME/mix" do
+      System.put_env("XDG_DATA_HOME", "xdg_data_home")
+      assert "xdg_data_home/mix" == Mix.Utils.mix_home()
+    end
+
+    test "falls back to $HOME/.mix" do
+      assert Path.expand("~/.mix") == Mix.Utils.mix_home()
+    end
+  end
+
+  describe "mix_config/0" do
+    test "prefers MIX_HOME over XDG_CONFIG_HOME" do
+      System.put_env("MIX_HOME", "mix_home")
+      System.put_env("XDG_CONFIG_HOME", "xdg_data_home")
+      assert "mix_home" = Mix.Utils.mix_config()
+    end
+
+    test "falls back to XDG_CONFIG_HOME/mix" do
+      System.put_env("XDG_CONFIG_HOME", "xdg_config_home")
+      assert "xdg_config_home/mix" == Mix.Utils.mix_config()
+    end
+
+    test "falls back to $HOME/.mix" do
+      assert Path.expand("~/.mix") == Mix.Utils.mix_config()
+    end
   end
 
   defp assert_ebin_symlinked_or_copied(result) do

@@ -53,6 +53,13 @@ defmodule IEx.CLI do
     if tty_works?() do
       :user_drv.start([:"tty_sl -c -e", tty_args()])
     else
+      if get_remsh(:init.get_plain_arguments()) do
+        IO.puts(
+          :stderr,
+          "warning: the --remsh option will be ignored because IEx is running on limited shell"
+        )
+      end
+
       :application.set_env(:stdlib, :shell_prompt_func, {__MODULE__, :prompt})
       :user.start()
       local_start()
@@ -81,20 +88,17 @@ defmodule IEx.CLI do
       if Node.alive?() do
         case :rpc.call(remote, :code, :ensure_loaded, [IEx]) do
           {:badrpc, reason} ->
-            suggestion =
-              if Atom.to_string(remote) =~ "@" do
-                ""
-              else
-                "Make sure the node given to --remsh is in the node@host format. "
-              end
-
             message =
-              "Could not contact remote node #{remote}, reason: #{inspect(reason)}. " <>
-                suggestion <> "Aborting..."
+              "Could not contact remote node #{remote}, reason: #{inspect(reason)}. Aborting..."
 
             abort(message)
 
           {:module, IEx} ->
+            case :rpc.call(remote, :net_kernel, :get_net_ticktime, []) do
+              seconds when is_integer(seconds) -> :net_kernel.set_net_ticktime(seconds)
+              _ -> :ok
+            end
+
             {mod, fun, args} = remote_start_mfa()
             {remote, mod, fun, args}
 
@@ -107,7 +111,7 @@ defmodule IEx.CLI do
         )
       end
     else
-      {:erlang, :apply, [local_start_function(), []]}
+      local_start_mfa()
     end
   end
 
@@ -120,8 +124,8 @@ defmodule IEx.CLI do
     receive do: ({:done, ^ref} -> :ok)
   end
 
-  defp local_start_function do
-    &local_start/0
+  defp local_start_mfa do
+    {__MODULE__, :local_start, []}
   end
 
   defp remote_start_mfa do
@@ -141,7 +145,7 @@ defmodule IEx.CLI do
   end
 
   defp options do
-    [dot_iex_path: find_dot_iex(:init.get_plain_arguments())]
+    [dot_iex_path: find_dot_iex(:init.get_plain_arguments()), on_eof: :halt]
   end
 
   defp abort(msg) do
@@ -157,7 +161,14 @@ defmodule IEx.CLI do
   defp find_dot_iex([_ | t]), do: find_dot_iex(t)
   defp find_dot_iex([]), do: nil
 
-  defp get_remsh(['--remsh', h | _]), do: List.to_atom(h)
+  defp get_remsh(['--remsh', h | _]), do: List.to_atom(append_hostname(h))
   defp get_remsh([_ | t]), do: get_remsh(t)
   defp get_remsh([]), do: nil
+
+  defp append_hostname(node) do
+    case :string.find(node, '@') do
+      :nomatch -> node ++ :string.find(Atom.to_charlist(node()), '@')
+      _ -> node
+    end
+  end
 end

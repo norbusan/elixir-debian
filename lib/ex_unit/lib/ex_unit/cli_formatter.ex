@@ -150,11 +150,13 @@ defmodule ExUnit.CLIFormatter do
 
     print_failure(formatted, config)
 
-    test_counter =
-      Enum.reduce(test_module.tests, config.test_counter, &update_test_counter(&2, &1))
+    {:noreply, config}
+  end
 
-    failure_counter = config.failure_counter + tests_length
-    config = %{config | test_counter: test_counter, failure_counter: failure_counter}
+  def handle_cast(:max_failures_reached, config) do
+    "--max-failures reached, aborting test suite"
+    |> failure(config)
+    |> IO.write()
 
     {:noreply, config}
   end
@@ -280,8 +282,8 @@ defmodule ExUnit.CLIFormatter do
   end
 
   defp print_filters(include: include, exclude: exclude) do
-    if include != [], do: IO.puts(format_filters(include, :include))
     if exclude != [], do: IO.puts(format_filters(exclude, :exclude))
+    if include != [], do: IO.puts(format_filters(include, :include))
     IO.puts("")
     :ok
   end

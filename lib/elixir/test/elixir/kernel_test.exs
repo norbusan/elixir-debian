@@ -7,6 +7,12 @@ defmodule KernelTest do
 
   defp empty_list(), do: []
 
+  defp assert_eval_raise(error, msg, string) do
+    assert_raise error, msg, fn ->
+      Code.eval_string(string)
+    end
+  end
+
   test "=~/2" do
     assert "abcd" =~ ~r/c(d)/ == true
     assert "abcd" =~ ~r/e/ == false
@@ -127,12 +133,6 @@ defmodule KernelTest do
 
   defmodule User do
     assert is_map(defstruct name: "john")
-  end
-
-  defmodule UserTuple do
-    def __struct__({UserTuple, :ok}) do
-      %User{}
-    end
   end
 
   test "struct/1 and struct/2" do
@@ -257,15 +257,31 @@ defmodule KernelTest do
       assert 2 in 1..3
       refute 4 in [1, 2, 3]
       refute 4 in 1..3
+      refute 2 in []
+      refute false in []
+      refute true in []
     end
 
     test "with expressions on right side" do
       list = [1, 2, 3]
+      empty_list = []
       assert 2 in list
       refute 4 in list
 
+      refute 4 in empty_list
+      refute false in empty_list
+      refute true in empty_list
+
       assert 2 in [1 | [2, 3]]
       assert 3 in [1 | list]
+
+      some_call = & &1
+      refute :x in [1, 2 | some_call.([3, 4])]
+      assert :x in [1, 2 | some_call.([3, :x])]
+
+      assert_raise ArgumentError, fn ->
+        :x in [1, 2 | some_call.({3, 4})]
+      end
     end
 
     @at_list1 [4, 5]
@@ -367,6 +383,16 @@ defmodule KernelTest do
       _ = a
     end
 
+    test "setting attribute with uppercase" do
+      message = "module attributes set via @ cannot start with an uppercase letter"
+
+      assert_raise ArgumentError, message, fn ->
+        defmodule UpcaseAttrSample do
+          @Upper
+        end
+      end
+    end
+
     test "in module body" do
       defmodule InSample do
         @foo [:a, :b]
@@ -401,7 +427,7 @@ defmodule KernelTest do
     end
 
     test "with a non-compile-time range in guards" do
-      message = ~r/invalid args for operator "in", .* got: :hello/
+      message = ~r/invalid right argument for operator "in", .* got: :hello/
 
       assert_eval_raise(ArgumentError, message, """
       defmodule InErrors do
@@ -411,7 +437,7 @@ defmodule KernelTest do
     end
 
     test "with a non-compile-time list cons in guards" do
-      message = ~r/invalid args for operator "in", .* got: \[1 | list\(\)\]/
+      message = ~r/invalid right argument for operator "in", .* got: \[1 | list\(\)\]/
 
       assert_eval_raise(ArgumentError, message, """
       defmodule InErrors do
@@ -422,7 +448,7 @@ defmodule KernelTest do
     end
 
     test "with a compile-time non-list in tail in guards" do
-      message = ~r/invalid args for operator "in", .* got: \[1 | 1..3\]/
+      message = ~r/invalid right argument for operator "in", .* got: \[1 | 1..3\]/
 
       assert_eval_raise(ArgumentError, message, """
       defmodule InErrors do
@@ -440,47 +466,96 @@ defmodule KernelTest do
       end
     end
 
-    test "hoists variables" do
+    test "hoists variables and keeps order" do
+      # Ranges
       result = expand_to_string(quote(do: rand() in 1..2))
       assert result =~ "var = rand()"
 
       assert result =~
                ":erlang.andalso(:erlang.is_integer(var), :erlang.andalso(:erlang.>=(var, 1), :erlang.\"=<\"(var, 2)))"
 
+      # Empty list
+      assert expand_to_string(quote(do: :x in [])) =~
+               ~S"""
+                 _ = :x
+                 false
+               """
+
+      assert expand_to_string(quote(do: :x in []), :guard) ==
+               "false"
+
+      # Lists
       result = expand_to_string(quote(do: rand() in [1, 2]))
       assert result =~ "var = rand()"
-      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 2), :erlang.\"=:=\"(var, 1))"
+      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :erlang.\"=:=\"(var, 2))"
 
       result = expand_to_string(quote(do: rand() in [1 | [2]]))
       assert result =~ "var = rand()"
       assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :erlang.\"=:=\"(var, 2))"
 
+      result = expand_to_string(quote(do: rand() in [1, 2 | [3]]))
+      assert result =~ "var = rand()"
+
+      assert result =~
+               ":erlang.orelse(:erlang.\"=:=\"(var, 1), :erlang.orelse(:erlang.\"=:=\"(var, 2), :erlang.\"=:=\"(var, 3)))"
+
+      result = expand_to_string(quote(do: rand() in [1 | [2 | [3]]]))
+      assert result =~ "var = rand()"
+
+      assert result =~
+               ":erlang.orelse(:erlang.\"=:=\"(var, 1), :erlang.orelse(:erlang.\"=:=\"(var, 2), :erlang.\"=:=\"(var, 3)))"
+
       result = expand_to_string(quote(do: rand() in [1 | some_call()]))
       assert result =~ "var = rand()"
-      assert result =~ "{var0} = {some_call()}"
-      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :lists.member(var, var0))"
+      assert result =~ "{arg0} = {some_call()}"
+      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :lists.member(var, arg0))"
+
+      result = expand_to_string(quote(do: rand() in [{1}, {2}, {3} | some_call()]))
+      assert result =~ "var = rand()"
+      assert result =~ "{arg0, arg1, arg2, arg3} = {{1}, {2}, {3}, some_call()}"
+
+      assert result =~
+               ":erlang.orelse(:erlang.\"=:=\"(var, arg1), :erlang.orelse(:erlang.\"=:=\"(var, arg2), :lists.member(var, arg3))))"
+    end
+
+    defp quote_case_in(left, right) do
+      quote do
+        case 0 do
+          _ when unquote(left) in unquote(right) -> true
+        end
+      end
     end
 
     test "is optimized" do
-      assert expand_to_string(quote(do: foo in [])) == "Enum.member?([], foo)"
+      assert expand_to_string(quote(do: foo in [])) =~
+               ~S"""
+                 _ = foo
+                 false
+               """
+
+      assert expand_to_string(quote(do: foo in [foo])) =~
+               ~r/{arg0} = {foo}\n\s+:erlang."=:="\(foo, arg0\)\n/
 
       assert expand_to_string(quote(do: foo in 0..1)) ==
                ":erlang.andalso(:erlang.is_integer(foo), :erlang.andalso(:erlang.>=(foo, 0), :erlang.\"=<\"(foo, 1)))"
 
       assert expand_to_string(quote(do: foo in -1..0)) ==
                ":erlang.andalso(:erlang.is_integer(foo), :erlang.andalso(:erlang.>=(foo, -1), :erlang.\"=<\"(foo, 0)))"
+
+      assert expand_to_string(quote(do: foo in 1..1)) ==
+               ":erlang.\"=:=\"(foo, 1)"
     end
 
-    defp expand_to_string(ast) do
+    defp expand_to_string(ast, environment_or_context \\ __ENV__)
+
+    defp expand_to_string(ast, context) when is_atom(context) do
+      expand_to_string(ast, %{__ENV__ | context: context})
+    end
+
+    defp expand_to_string(ast, environment) do
       ast
-      |> Macro.prewalk(&Macro.expand(&1, __ENV__))
+      |> Macro.prewalk(&Macro.expand(&1, environment))
       |> Macro.to_string()
-    end
-
-    defp assert_eval_raise(error, msg, string) do
-      assert_raise error, msg, fn ->
-        Code.eval_string(string)
-      end
     end
   end
 
@@ -552,7 +627,25 @@ defmodule KernelTest do
     end
   end
 
+  describe "defmodule" do
+    test "does not accept special atoms as module names" do
+      special_atoms = [nil, true, false]
+
+      Enum.each(special_atoms, fn special_atom ->
+        msg = ~r"invalid module name: #{inspect(special_atom)}"
+
+        assert_raise CompileError, msg, fn ->
+          defmodule special_atom, do: :ok
+        end
+      end)
+    end
+  end
+
   describe "access" do
+    defmodule StructAccess do
+      defstruct [:foo, :bar]
+    end
+
     test "get_in/2" do
       users = %{"john" => %{age: 27}, "meg" => %{age: 23}}
       assert get_in(users, ["john", :age]) == 27
@@ -589,6 +682,11 @@ defmodule KernelTest do
       assert put_in(users["john"][:age], 28) == %{"john" => %{age: 28}, "meg" => %{age: 23}}
 
       assert put_in(users["john"].age, 28) == %{"john" => %{age: 28}, "meg" => %{age: 23}}
+
+      struct = %StructAccess{foo: %StructAccess{}}
+
+      assert put_in(struct.foo.bar, :baz) ==
+               %StructAccess{bar: nil, foo: %StructAccess{bar: :baz, foo: nil}}
 
       assert_raise BadMapError, fn ->
         put_in(users["dave"].age, 19)
@@ -627,6 +725,11 @@ defmodule KernelTest do
       assert update_in(users["john"].age, &(&1 + 1)) ==
                %{"john" => %{age: 28}, "meg" => %{age: 23}}
 
+      struct = %StructAccess{foo: %StructAccess{bar: 41}}
+
+      assert update_in(struct.foo.bar, &(&1 + 1)) ==
+               %StructAccess{bar: nil, foo: %StructAccess{bar: 42, foo: nil}}
+
       assert_raise BadMapError, fn ->
         update_in(users["dave"].age, &(&1 + 1))
       end
@@ -663,6 +766,11 @@ defmodule KernelTest do
 
       assert get_and_update_in(users["john"].age, &{&1, &1 + 1}) ==
                {27, %{"john" => %{age: 28}, "meg" => %{age: 23}}}
+
+      struct = %StructAccess{foo: %StructAccess{bar: 41}}
+
+      assert get_and_update_in(struct.foo.bar, &{&1, &1 + 1}) ==
+               {41, %StructAccess{bar: nil, foo: %StructAccess{bar: 42, foo: nil}}}
 
       assert_raise ArgumentError, "could not put/update key \"john\" on a nil value", fn ->
         get_and_update_in(nil["john"][:age], fn nil -> {:ok, 28} end)
@@ -945,6 +1053,63 @@ defmodule KernelTest do
     end
 
     assert hd([1 | 2]) == 1
+  end
+
+  test "floor/1" do
+    assert floor(1) === 1
+    assert floor(1.0) === 1
+    assert floor(0) === 0
+    assert floor(0.0) === 0
+    assert floor(-0.0) === 0
+    assert floor(1.123) === 1
+    assert floor(-10.123) === -11
+    assert floor(-10) === -10
+    assert floor(-10.0) === -10
+
+    assert match?(x when floor(x) == 0, 0.2)
+  end
+
+  test "ceil/1" do
+    assert ceil(1) === 1
+    assert ceil(1.0) === 1
+    assert ceil(0) === 0
+    assert ceil(0.0) === 0
+    assert ceil(-0.0) === 0
+    assert ceil(1.123) === 2
+    assert ceil(-10.123) === -10
+    assert ceil(-10) === -10
+    assert ceil(-10.0) === -10
+
+    assert match?(x when ceil(x) == 1, 0.2)
+  end
+
+  test "sigil_U/2" do
+    assert ~U[2015-01-13 13:00:07.123Z] == %DateTime{
+             calendar: Calendar.ISO,
+             day: 13,
+             hour: 13,
+             microsecond: {123_000, 3},
+             minute: 0,
+             month: 1,
+             second: 7,
+             std_offset: 0,
+             time_zone: "Etc/UTC",
+             utc_offset: 0,
+             year: 2015,
+             zone_abbr: "UTC"
+           }
+
+    assert_raise ArgumentError, ~r"reason: :invalid_format", fn ->
+      Code.eval_string(~s{~U[2015-01-13 13:00]})
+    end
+
+    assert_raise ArgumentError, ~r"reason: :missing_offset", fn ->
+      Code.eval_string(~s{~U[2015-01-13 13:00:07]})
+    end
+
+    assert_raise ArgumentError, ~r"reason: :non_utc_offset", fn ->
+      Code.eval_string(~s{~U[2015-01-13 13:00:07+00:30]})
+    end
   end
 
   defp purge(module) do

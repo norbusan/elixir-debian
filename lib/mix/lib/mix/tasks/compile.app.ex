@@ -40,10 +40,13 @@ defmodule Mix.Tasks.Compile.App do
   For example:
 
       def application do
-        [extra_applications: [:logger, :crypto],
-         env: [key: :value],
-         registered: [MyServer]]
+        [
+          extra_applications: [:logger, :crypto],
+          env: [key: :value],
+          registered: [MyServer]
+        ]
       end
+
 
   Other options include:
 
@@ -82,6 +85,8 @@ defmodule Mix.Tasks.Compile.App do
   ## Command line options
 
     * `--force` - forces compilation regardless of modification times
+    * `--compile-path` - where to find `.beam` files and write the
+      resulting `.app` file, defaults to `Mix.Project.compile_path/0`
 
   ## Phases
 
@@ -92,15 +97,19 @@ defmodule Mix.Tasks.Compile.App do
   Let's see an example `MyApp.application/0` function:
 
       def application do
-        [start_phases: [init: [], go: [], finish: []],
-         included_applications: [:my_included_app]]
+        [
+          start_phases: [init: [], go: [], finish: []],
+          included_applications: [:my_included_app]
+        ]
       end
 
   And an example `:my_included_app` defines on its `mix.exs` the function:
 
       def application do
-        [mod: {MyIncludedApp, []},
-         start_phases: [go: []]]
+        [
+          mod: {MyIncludedApp, []},
+          start_phases: [go: []]
+        ]
       end
 
   In this example, the order that the application callbacks are called in is:
@@ -113,8 +122,10 @@ defmodule Mix.Tasks.Compile.App do
       MyApp.start_phase(:finish, :normal, [])
 
   """
+
+  @impl true
   def run(args) do
-    {opts, _, _} = OptionParser.parse(args, switches: [force: :boolean])
+    {opts, _, _} = OptionParser.parse(args, switches: [force: :boolean, compile_path: :string])
 
     project = Mix.Project.get!()
     config = Mix.Project.config()
@@ -125,7 +136,7 @@ defmodule Mix.Tasks.Compile.App do
     validate_app(app)
     validate_version(version)
 
-    path = Mix.Project.compile_path()
+    path = Keyword.get_lazy(opts, :compile_path, &Mix.Project.compile_path/0)
     mods = modules_from(Path.wildcard("#{path}/*.beam")) |> Enum.sort()
 
     target = Path.join(path, "#{app}.app")
@@ -226,7 +237,7 @@ defmodule Mix.Tasks.Compile.App do
 
       {:id, value} ->
         unless is_list(value) do
-          Mix.raise("Application id (:id) is not a character list, got: " <> inspect(value))
+          Mix.raise("Application ID (:id) is not a character list, got: " <> inspect(value))
         end
 
       {:vsn, value} ->
@@ -336,7 +347,14 @@ defmodule Mix.Tasks.Compile.App do
   defp runtime_dep?(_), do: true
 
   defp runtime_opts?(opts) do
-    Keyword.get(opts, :runtime, true) and Keyword.get(opts, :app, true)
+    Keyword.get(opts, :runtime, true) and Keyword.get(opts, :app, true) and matching_only?(opts)
+  end
+
+  defp matching_only?(opts) do
+    case Keyword.fetch(opts, :only) do
+      {:ok, value} -> Mix.env() in List.wrap(value)
+      :error -> true
+    end
   end
 
   defp normalize_apps(apps, extra, config) do

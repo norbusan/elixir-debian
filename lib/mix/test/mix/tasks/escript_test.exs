@@ -97,7 +97,7 @@ defmodule Mix.Tasks.EscriptTest do
     end)
   end
 
-  test "generate escript with --no-compile flag" do
+  test "generate escript with --no-compile option" do
     Mix.Project.push(Escript)
 
     in_fixture("escript_test", fn ->
@@ -212,18 +212,6 @@ defmodule Mix.Tasks.EscriptTest do
     purge([Ok.MixProject])
   end
 
-  test "generating escript for umbrella projects fails with a nice error" do
-    message = "Building escripts for umbrella projects is unsupported"
-
-    in_fixture("umbrella_dep/deps/umbrella", fn ->
-      Mix.Project.in_project(:umbrella, ".", fn _ ->
-        assert_raise Mix.Error, message, fn ->
-          Mix.Tasks.Escript.Build.run([])
-        end
-      end)
-    end)
-  end
-
   test "generate escript with consolidated protocols" do
     Mix.Project.push(EscriptConsolidated)
 
@@ -320,7 +308,7 @@ defmodule Mix.Tasks.EscriptTest do
       File.write!("lib/git_repo.ex", """
       defmodule GitRepo do
         def main(_argv) do
-          IO.puts "TEST"
+          IO.puts("TEST")
         end
       end
       """)
@@ -347,5 +335,19 @@ defmodule Mix.Tasks.EscriptTest do
     end)
   after
     purge([GitRepo, GitRepo.MixProject])
+  end
+
+  test "escript install timeout" do
+    message = ~r[request timed out after 0ms]
+
+    send(self(), {:mix_shell_input, :yes?, true})
+
+    assert_raise Mix.Error, message, fn ->
+      Mix.Tasks.Escript.Install.run([
+        "http://10.0.0.0/unlikely-to-exist-0.1.0.ez",
+        "--timeout",
+        "0"
+      ])
+    end
   end
 end

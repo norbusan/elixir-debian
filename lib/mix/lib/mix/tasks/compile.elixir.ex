@@ -32,11 +32,11 @@ defmodule Mix.Tasks.Compile.Elixir do
     * `:elixirc_paths` - directories to find source files.
       Defaults to `["lib"]`.
 
-    * `:elixirc_options` - compilation options that apply
-      to Elixir's compiler, they are: `:ignore_module_conflict`,
-      `:docs` and `:debug_info`. By default, uses the same
-      defaults as `elixirc` and they can always be overridden from
-      the command line according to the options above.
+    * `:elixirc_options` - compilation options that apply to Elixir's compiler.
+      They are the same as the command line options listed above. They must be specified
+      as atoms and use underscores instead of dashes (for example, `:debug_info`). These
+      options can always be overridden from the command line and they have the same defaults
+      as their command line counterparts, as documented above.
 
   """
 
@@ -51,9 +51,7 @@ defmodule Mix.Tasks.Compile.Elixir do
     all_warnings: :boolean
   ]
 
-  @doc """
-  Runs this task.
-  """
+  @impl true
   def run(args) do
     {opts, _, _} = OptionParser.parse(args, switches: @switches)
 
@@ -73,15 +71,12 @@ defmodule Mix.Tasks.Compile.Elixir do
     Mix.Compilers.Elixir.compile(manifest, srcs, dest, [:ex], force, opts)
   end
 
-  @doc """
-  Returns Elixir manifests.
-  """
+  @impl true
   def manifests, do: [manifest()]
+
   defp manifest, do: Path.join(Mix.Project.manifest_path(), @manifest)
 
-  @doc """
-  Cleans up compilation artifacts.
-  """
+  @impl true
   def clean do
     dest = Mix.Project.compile_path()
     Mix.Compilers.Elixir.clean(manifest(), dest)

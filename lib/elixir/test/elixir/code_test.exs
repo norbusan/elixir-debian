@@ -8,7 +8,7 @@ defmodule CodeTest do
 
   def genmodule(name) do
     defmodule name do
-      Kernel.LexicalTracker.remote_references(__MODULE__)
+      Kernel.LexicalTracker.remote_references(__ENV__.lexical_tracker)
     end
   end
 
@@ -133,11 +133,11 @@ defmodule CodeTest do
     end
 
     test "returns an error tuple on interpolation in calls" do
-      assert Code.string_to_quoted(".\"\#{}\"") ==
-               {:error, {1, "interpolation is not allowed when invoking functions", "\""}}
+      msg =
+        "interpolation is not allowed when calling function/macro. Found interpolation in a call starting with: "
 
-      assert Code.string_to_quoted(".\"a\#{:b}\"c") ==
-               {:error, {1, "interpolation is not allowed when invoking functions", "\""}}
+      assert Code.string_to_quoted(".\"\#{}\"") == {:error, {1, msg, "\""}}
+      assert Code.string_to_quoted(".\"a\#{:b}\"c") == {:error, {1, msg, "\""}}
     end
 
     test "returns an error tuple on long atoms" do
@@ -151,6 +151,55 @@ defmodule CodeTest do
     test "returns an error tuple when no atom is found with :existing_atoms_only" do
       assert Code.string_to_quoted(":there_is_no_such_atom", existing_atoms_only: true) ==
                {:error, {1, "unsafe atom does not exist: ", "there_is_no_such_atom"}}
+    end
+
+    test "supports static_atoms_encoder" do
+      ref = make_ref()
+
+      encoder = fn atom, meta ->
+        assert atom == "there_is_no_such_atom"
+        assert meta[:line] == 1
+        assert meta[:column] == 1
+        assert meta[:file] == "nofile"
+        {:ok, {:my, "atom", ref}}
+      end
+
+      assert {:ok, {:my, "atom", ^ref}} =
+               Code.string_to_quoted(":there_is_no_such_atom", static_atoms_encoder: encoder)
+    end
+
+    test "static_atoms_encoder, error case" do
+      encoder = fn _atom, _meta ->
+        {:error, "Invalid atom name"}
+      end
+
+      assert {:error, {1, "Invalid atom name: ", "there_is_no_such_atom"}} =
+               Code.string_to_quoted(":there_is_no_such_atom", static_atoms_encoder: encoder)
+    end
+
+    test "returns an error tuple on long atoms, even when using static_atoms_encoder" do
+      atom = String.duplicate("a", 256)
+
+      encoder = fn atom, _meta -> {:ok, atom} end
+
+      assert Code.string_to_quoted(atom, static_atoms_encoder: encoder) ==
+               {:error, {1, "atom length must be less than system limit: ", atom}}
+    end
+
+    test "extended static_atoms_encoder" do
+      encoder = fn string, _metadata ->
+        try do
+          {:ok, String.to_existing_atom(string)}
+        rescue
+          ArgumentError ->
+            {:ok, {:user_atom, string}}
+        end
+      end
+
+      assert {:ok, {:try, _, [[do: {:test, _, [{{:user_atom, "atom_does_not_exist"}, _, []}]}]]}} =
+               Code.string_to_quoted("try do: test(atom_does_not_exist())",
+                 static_atoms_encoder: encoder
+               )
     end
 
     test "raises on errors when string_to_quoted!/2 is used" do
@@ -203,10 +252,14 @@ defmodule CodeTest do
       assert string_to_quoted.(":one") == {:__block__, [line: 1], [:one]}
 
       args = [[{:__block__, [original: '1', line: 1], [1]}]]
-      assert string_to_quoted.("[1]") == {:__block__, [end_line: 1, line: 1], args}
+
+      assert string_to_quoted.("[1]") ==
+               {:__block__, [eol: false, closing: [line: 1], line: 1], args}
 
       args = [{{:__block__, [line: 1], [:ok]}, {:__block__, [line: 1], [:test]}}]
-      assert string_to_quoted.("{:ok, :test}") == {:__block__, [end_line: 1, line: 1], args}
+
+      assert string_to_quoted.("{:ok, :test}") ==
+               {:__block__, [eol: false, closing: [line: 1], line: 1], args}
 
       assert string_to_quoted.(~s("""\nhello\n""")) ==
                {:__block__, [format: :bin_heredoc, line: 1], ["hello\n"]}
@@ -214,10 +267,12 @@ defmodule CodeTest do
       assert string_to_quoted.("'''\nhello\n'''") ==
                {:__block__, [format: :list_heredoc, line: 1], ['hello\n']}
 
-      left = {:__block__, [original: '1', line: 1, end_line: 1, line: 1], [1]}
+      left = {:__block__, [original: '1', line: 1, closing: [line: 1], line: 1], [1]}
       right = {:__block__, [format: :string, line: 1], ["hello"]}
       args = [{:->, [line: 1], [[left], right]}]
-      assert string_to_quoted.(~s[fn (1) -> "hello" end]) == {:fn, [end_line: 1, line: 1], args}
+
+      assert string_to_quoted.(~s[fn (1) -> "hello" end]) ==
+               {:fn, [closing: [line: 1], line: 1], args}
     end
 
     test "adds newlines information to blocks when :formatter_metadata (private) is given" do
@@ -232,11 +287,11 @@ defmodule CodeTest do
       """
 
       args = [
-        {:one, [end_line: 1, line: 1], []},
-        {:two, [newlines: 0, end_line: 1, line: 1], []},
-        {:three, [newlines: 1, end_line: 2, line: 2], []},
-        {:four, [newlines: 2, end_line: 4, line: 4], []},
-        {:five, [newlines: 3, end_line: 7, line: 7], []}
+        {:one, [eol: false, closing: [line: 1], line: 1], []},
+        {:two, [newlines: 0, eol: false, closing: [line: 1], line: 1], []},
+        {:three, [newlines: 1, eol: false, closing: [line: 2], line: 2], []},
+        {:four, [newlines: 2, eol: false, closing: [line: 4], line: 4], []},
+        {:five, [newlines: 3, eol: false, closing: [line: 7], line: 7], []}
       ]
 
       assert Code.string_to_quoted!(file, formatter_metadata: true) == {:__block__, [], args}

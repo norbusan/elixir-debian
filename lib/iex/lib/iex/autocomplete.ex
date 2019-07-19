@@ -1,7 +1,26 @@
 defmodule IEx.Autocomplete do
   @moduledoc false
 
-  def expand(expr, server \\ IEx.Server)
+  @doc """
+  Provides one helper function that is injected into connecting
+  remote nodes to properly handle autocompletion.
+  """
+  def remsh(node) do
+    fn e ->
+      case :rpc.call(node, IEx.Autocomplete, :expand, [e]) do
+        {:badrpc, _} -> {:no, '', []}
+        r -> r
+      end
+    end
+  end
+
+  @doc """
+  The expansion logic.
+
+  Some of the expansion has to be use the current shell
+  environemnt, which is found via the broker.
+  """
+  def expand(expr, server \\ IEx.Broker)
 
   def expand('', server) do
     expand_variable_or_import("", server)
@@ -349,7 +368,8 @@ defmodule IEx.Autocomplete do
 
   defp match_modules(hint, root) do
     get_modules(root)
-    |> :lists.usort()
+    |> Enum.sort()
+    |> Enum.dedup()
     |> Enum.drop_while(&(not String.starts_with?(&1, hint)))
     |> Enum.take_while(&String.starts_with?(&1, hint))
   end

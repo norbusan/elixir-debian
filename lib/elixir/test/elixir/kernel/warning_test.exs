@@ -39,15 +39,22 @@ defmodule Kernel.WarningTest do
     assert output =~ "found atom \":foo!\", ending with \"!\""
   end
 
-  test "unnecessary quotes" do
-    assert capture_err(fn -> Code.eval_string(~s/:"foo"/) end) =~
-             "found quoted atom \"foo\" but the quotes are not required"
+  describe "unnecessary quotes" do
+    test "does not warn for unnecessary quotes in uppercase atoms/keywords" do
+      assert capture_err(fn -> Code.eval_string(~s/:"Foo"/) end) == ""
+      assert capture_err(fn -> Code.eval_string(~s/["Foo": :bar]/) end) == ""
+    end
 
-    assert capture_err(fn -> Code.eval_string(~s/["foo": :bar]/) end) =~
-             "found quoted keyword \"foo\" but the quotes are not required"
+    test "warns for unnecessary quotes" do
+      assert capture_err(fn -> Code.eval_string(~s/:"foo"/) end) =~
+               "found quoted atom \"foo\" but the quotes are not required"
 
-    assert capture_err(fn -> Code.eval_string(~s/[Kernel."length"([])]/) end) =~
-             "found quoted call \"length\" but the quotes are not required"
+      assert capture_err(fn -> Code.eval_string(~s/["foo": :bar]/) end) =~
+               "found quoted keyword \"foo\" but the quotes are not required"
+
+      assert capture_err(fn -> Code.eval_string(~s/[Kernel."length"([])]/) end) =~
+               "found quoted call \"length\" but the quotes are not required"
+    end
   end
 
   test "unused variable" do
@@ -336,7 +343,7 @@ defmodule Kernel.WarningTest do
                defp hello, do: nil
              end
              """)
-           end) =~ "function hello/0 is unused"
+           end) =~ "function hello/0 is unused\n  nofile:2"
 
     assert capture_err(fn ->
              Code.eval_string("""
@@ -345,7 +352,7 @@ defmodule Kernel.WarningTest do
                defp hello(1), do: :ok
              end
              """)
-           end) =~ "function hello/1 is unused"
+           end) =~ "function hello/1 is unused\n  nofile:2"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -356,20 +363,34 @@ defmodule Kernel.WarningTest do
                defp d(x), do: x
              end
              """)
-           end) =~ "function c/2 is unused"
+           end) =~ "function c/2 is unused\n  nofile:4"
+
+    assert capture_err(fn ->
+             Code.eval_string(~S"""
+             defmodule Sample4 do
+               def a, do: nil
+               defp b(x \\ 1, y \\ 1)
+               defp b(x, y), do: [x, y]
+             end
+             """)
+           end) =~ "function b/2 is unused\n  nofile:3"
   after
-    purge([Sample1, Sample2, Sample3])
+    purge([Sample1, Sample2, Sample3, Sample4])
   end
 
   test "unused cyclic functions" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule Sample do
-               defp a, do: b()
-               defp b, do: a()
-             end
-             """)
-           end) =~ "function a/0 is unused"
+    message =
+      capture_err(fn ->
+        Code.eval_string("""
+        defmodule Sample do
+          defp a, do: b()
+          defp b, do: a()
+        end
+        """)
+      end)
+
+    assert message =~ "function a/0 is unused\n  nofile:2"
+    assert message =~ "function b/0 is unused\n  nofile:3"
   after
     purge(Sample)
   end
@@ -411,7 +432,7 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "default arguments in b/3 are never used"
+           end) =~ "default arguments in b/3 are never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -420,7 +441,7 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "the first 2 default arguments in b/3 are never used"
+           end) =~ "the first 2 default arguments in b/3 are never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -429,7 +450,7 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "the first default argument in b/3 is never used"
+           end) =~ "the first default argument in b/3 is never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -439,8 +460,30 @@ defmodule Kernel.WarningTest do
              end
              """)
            end) == ""
+
+    assert capture_err(fn ->
+             Code.eval_string(~S"""
+             defmodule Sample5 do
+               def a, do: b(1, 2, 3)
+               defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3)
+
+               defp b(arg1, arg2, arg3), do: [arg1, arg2, arg3]
+             end
+             """)
+           end) =~ "default arguments in b/3 are never used\n  nofile:3"
+
+    assert capture_err(fn ->
+             Code.eval_string(~S"""
+             defmodule Sample6 do
+               def a, do: b(1, 2)
+               defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3)
+
+               defp b(arg1, arg2, arg3), do: [arg1, arg2, arg3]
+             end
+             """)
+           end) =~ "the first 2 default arguments in b/3 are never used\n  nofile:3"
   after
-    purge([Sample1, Sample2, Sample3, Sample4])
+    purge([Sample1, Sample2, Sample3, Sample4, Sample5, Sample6])
   end
 
   test "unused import" do
@@ -535,20 +578,21 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
-  # TODO: Remove this check once we depend only on 20
-  if :erlang.system_info(:otp_release) >= '20' do
-    test "duplicate map keys" do
-      output =
-        capture_err(fn ->
-          defmodule DuplicateMapKeys do
-            assert %{a: :b, a: :c} == %{a: :c}
-            assert %{1 => 2, 1 => 3} == %{1 => 3}
-          end
-        end)
+  test "duplicate map keys" do
+    output =
+      capture_err(fn ->
+        defmodule DuplicateMapKeys do
+          assert %{a: :b, a: :c} == %{a: :c}
+          assert %{m: :n, m: :o, m: :p} == %{m: :p}
+          assert %{1 => 2, 1 => 3} == %{1 => 3}
+        end
+      end)
 
-      assert output =~ "key :a will be overridden in map"
-      assert output =~ "key 1 will be overridden in map"
-    end
+    assert output =~ "key :a will be overridden in map"
+    assert output =~ "key :m will be overridden in map"
+    assert output =~ "key 1 will be overridden in map"
+
+    assert map_size(%{System.unique_integer() => 1, System.unique_integer() => 2}) == 2
   end
 
   test "unused guard" do
@@ -953,6 +997,24 @@ defmodule Kernel.WarningTest do
     purge([Sample1, Sample2, Sample3])
   end
 
+  test "duplicate behaviour" do
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample1 do
+               @callback foo :: term
+             end
+
+             defmodule Sample2 do
+               @behaviour Sample1
+               @behaviour Sample1
+             end
+             """)
+           end) =~
+             "the behavior Sample1 has been declared twice (conflict in function foo/0 in module Sample2)"
+  after
+    purge([Sample1, Sample2])
+  end
+
   test "undefined behaviour" do
     assert capture_err(fn ->
              Code.eval_string("""
@@ -1080,10 +1142,10 @@ defmodule Kernel.WarningTest do
     purge(Sample2)
   end
 
-  test "warning on codepoint escape" do
+  test "warning on code point escape" do
     assert capture_err(fn ->
              Code.eval_string("? ")
-           end) =~ "found ? followed by codepoint 0x20 (space), please use ?\\s instead"
+           end) =~ "found ? followed by code point 0x20 (space), please use ?\\s instead"
   end
 
   test "duplicated docs in the same clause" do
@@ -1131,6 +1193,82 @@ defmodule Kernel.WarningTest do
   end
 
   describe "typespecs" do
+    test "unused types" do
+      output =
+        capture_err(fn ->
+          Code.eval_string("""
+          defmodule Sample do
+            @type pub :: any
+            @opaque op :: any
+            @typep priv :: any
+            @typep priv_args(var1, var2) :: {var1, var2}
+            @typep priv2 :: any
+            @typep priv3 :: priv2 | atom
+
+            @spec my_fun(priv3) :: pub
+            def my_fun(var), do: var
+          end
+          """)
+        end)
+
+      assert output =~ "nofile:4"
+      assert output =~ "type priv/0 is unused"
+      assert output =~ "nofile:5"
+      assert output =~ "type priv_args/2 is unused"
+      refute output =~ "type pub/0 is unused"
+      refute output =~ "type op/0 is unused"
+      refute output =~ "type priv2/0 is unused"
+      refute output =~ "type priv3/0 is unused"
+    after
+      purge(Sample)
+    end
+
+    test "underspecified opaque types" do
+      output =
+        capture_err(fn ->
+          Code.eval_string("""
+          defmodule Sample do
+            @opaque op1 :: term
+            @opaque op2 :: any
+            @opaque op3 :: atom
+          end
+          """)
+        end)
+
+      assert output =~ "nofile:2"
+      assert output =~ "@opaque type op1/0 is underspecified and therefore meaningless"
+      assert output =~ "nofile:3"
+      assert output =~ "@opaque type op2/0 is underspecified and therefore meaningless"
+      refute output =~ "nofile:4"
+      refute output =~ "op3"
+    after
+      purge(Sample)
+    end
+
+    test "underscored types variables" do
+      output =
+        capture_err(fn ->
+          Code.eval_string("""
+          defmodule Sample do
+            @type in_typespec_vars(_var1, _var1) :: atom
+            @type in_typespec(_var2) :: {atom, _var2}
+
+            @spec in_spec(_var3) :: {atom, _var3} when _var3: var
+            def in_spec(a), do: {:ok, a}
+          end
+          """)
+        end)
+
+      assert output =~ "nofile:2"
+      assert output =~ ~r/the underscored type variable "_var1" is used more than once/
+      assert output =~ "nofile:3"
+      assert output =~ ~r/the underscored type variable "_var2" is used more than once/
+      assert output =~ "nofile:5"
+      assert output =~ ~r/the underscored type variable "_var3" is used more than once/
+    after
+      purge(Sample)
+    end
+
     test "typedoc on typep" do
       assert capture_err(fn ->
                Code.eval_string("""
@@ -1183,6 +1321,77 @@ defmodule Kernel.WarningTest do
         end)
 
       assert message != ""
+    after
+      purge(Sample)
+    end
+
+    test "nested type annotations" do
+      message = "invalid type annotation. Type annotations cannot be nested"
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @type my_type :: ann_type :: nested_ann_type :: atom
+               end
+               """)
+             end) =~ message
+
+      purge(Sample)
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @type my_type :: ann_type :: nested_ann_type :: atom | port
+               end
+               """)
+             end) =~ message
+
+      purge(Sample)
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @spec foo :: {pid, ann_type :: nested_ann_type :: atom}
+                 def foo, do: nil
+               end
+               """)
+             end) =~ message
+    after
+      purge(Sample)
+    end
+
+    test "invalid type annotations" do
+      message =
+        "invalid type annotation. When using the | operator to represent the union of types, " <>
+          "make sure to wrap type annotations in parentheses"
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @type my_type :: pid | ann_type :: atom
+               end
+               """)
+             end) =~ message
+
+      purge(Sample)
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @type my_type :: pid | ann_type :: atom | port
+               end
+               """)
+             end) =~ message
+
+      purge(Sample)
+
+      assert capture_err(fn ->
+               Code.eval_string("""
+               defmodule Sample do
+                 @type my_type :: {port, pid | ann_type :: atom | port}
+               end
+               """)
+             end) =~ message
     after
       purge(Sample)
     end
@@ -1295,6 +1504,27 @@ defmodule Kernel.WarningTest do
       end)
 
     assert output =~ ~s("catch" should always come after "rescue" in try)
+  end
+
+  test "catch comes before rescue in def" do
+    output =
+      capture_err(fn ->
+        Code.eval_string("""
+        defmodule Sample do
+          def foo do
+            :trying
+          catch
+            _, _ -> :caught
+          rescue
+            _ -> :error
+          end
+        end
+        """)
+      end)
+
+    assert output =~ ~s("catch" should always come after "rescue" in def)
+  after
+    purge(Sample)
   end
 
   test "System.stacktrace is deprecated outside catch/rescue" do
@@ -1450,6 +1680,55 @@ defmodule Kernel.WarningTest do
 
     assert message =~ "Elixir does not support nested comparisons"
     assert message =~ "1 < x < y < 10"
+  end
+
+  test "def warns if only clause is else" do
+    message =
+      capture_err(fn ->
+        Code.compile_string("""
+        defmodule Sample do
+          def foo do
+            :bar
+          else
+            _other -> :ok
+          end
+        end
+        """)
+      end)
+
+    assert message =~ "\"else\" shouldn't be used as the only clause in \"def\""
+  after
+    purge(Sample)
+  end
+
+  test "try warns if only clause is else" do
+    message =
+      capture_err(fn ->
+        Code.compile_string("""
+          try do
+            :ok
+          else
+            other -> other
+          end
+        """)
+      end)
+
+    assert message =~ "\"else\" shouldn't be used as the only clause in \"try\""
+  end
+
+  test "warns on bad record update input" do
+    assert capture_err(fn ->
+             defmodule Sample do
+               require Record
+               Record.defrecord(:user, __MODULE__, name: "john", age: 25)
+
+               def fun do
+                 user(user(), _: :_, name: "meg")
+               end
+             end
+           end) =~ "updating a record with a default (:_) is equivalent to creating a new record"
+  after
+    purge([Sample])
   end
 
   defp purge(list) when is_list(list) do

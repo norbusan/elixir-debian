@@ -1,6 +1,29 @@
 defmodule OptionParser do
   @moduledoc """
-  This module contains functions to parse command line options.
+  Functions for parsing command line arguments.
+
+  When calling a command, it's possible to pass command line options
+  to modify what the command does. In this documentation, those are
+  called "switches", in other situations they may be called "flags"
+  or simply "options". A switch can be given a value, also called an
+  "argument".
+
+  The main function in this module is `parse/2`, which parses a list
+  of command line options and arguments into a keyword list:
+
+      iex> OptionParser.parse(["--debug"], strict: [debug: :boolean])
+      {[debug: true], [], []}
+
+  `OptionParser` provides some conveniences out of the box,
+  such as aliases and automatic handling of negation switches.
+
+  The `parse_head/2` function is an alternative to `parse/2`
+  which stops parsing as soon as it finds a value that is not
+  a switch nor a value for a previous switch.
+
+  This module also provides low-level functions, such as `next/2`,
+  for parsing switches manually, as well as `split/1` and `to_argv/1`
+  for parsing from and converting switches to strings.
   """
 
   @type argv :: [String.t()]
@@ -40,8 +63,10 @@ defmodule OptionParser do
       iex> OptionParser.parse(["--source", "lib"], strict: [source: :string])
       {[source: "lib"], [], []}
 
-      iex> OptionParser.parse(["--source-path", "lib", "test/enum_test.exs", "--verbose"],
-      ...>                    strict: [source_path: :string, verbose: :boolean])
+      iex> OptionParser.parse(
+      ...>   ["--source-path", "lib", "test/enum_test.exs", "--verbose"],
+      ...>   strict: [source_path: :string, verbose: :boolean]
+      ...> )
       {[source_path: "lib", verbose: true], ["test/enum_test.exs"], []}
 
   We will explore the valid switches and operation modes of option parser below.
@@ -58,15 +83,16 @@ defmodule OptionParser do
 
   Switches can be specified via one of two options:
 
-    * `:strict` - defines strict switches. Any switch in `argv` that is not
-      specified in the list is returned in the invalid options list.
-    * `:switches` - defines some switches and their types. This function
+    * `:strict` - defines strict switches and their types. Any switch
+      in `argv` that is not specified in the list is returned in the
+      invalid options list. This is the preferred way to parse options.
+
+    * `:switches` - defines switches and their types. This function
       still attempts to parse switches that are not in this list.
 
-  Both these options accept a keyword list of `{name, type}` tuples where `name`
-  is an atom defining the name of the switch and `type` is an atom that
-  specifies the type for the value of this switch (see the "Types" section below
-  for the possible types and more information about type casting).
+  Both these options accept a keyword list where the key is an atom
+  defining the name of the switch and value is the `type` of the
+  switch (see the "Types" section below for more information).
 
   Note that you should only supply the `:switches` or the `:strict` option.
   If you supply both, an `ArgumentError` exception will be raised.
@@ -95,7 +121,7 @@ defmodule OptionParser do
   Switches can be specified with modifiers, which change how
   they behave. The following modifiers are supported:
 
-    * `:keep` - keeps duplicated items instead of overriding them;
+    * `:keep` - keeps duplicated elements instead of overriding them;
       works with all types except `:count`. Specifying `switch_name: :keep`
       assumes the type of `:switch_name` will be `:string`.
 
@@ -139,16 +165,17 @@ defmodule OptionParser do
       # The :option_parser_example atom is not used anywhere below
 
   However, the code below would work as long as `:option_parser_example` atom is
-  used at some point later (or earlier) **in the same module**:
+  used at some point later (or earlier) **in the same module**. For example:
 
       {opts, _, _} = OptionParser.parse(["--option-parser-example"], switches: [debug: :boolean])
+      # ... then somewhere in the same module you access it ...
       opts[:option_parser_example]
 
-  In other words, Elixir will do the correct thing and only parse options that are
-  used by the runtime, ignoring all others. If you would like to parse all switches,
-  regardless if they exist or not, you can force creation of atoms by passing
-  `allow_nonexistent_atoms: true` as option. Use this option with care. It is only
-  useful when you are building command-line applications that receive
+  In other words, Elixir will only parse options that are used by the runtime,
+  ignoring all others. If you would like to parse all switches, regardless if
+  they exist or not, you can force creation of atoms by passing
+  `allow_nonexistent_atoms: true` as option. Use this option with care. It is
+  only useful when you are building command-line applications that receive
   dynamically-named arguments and must be avoided in long-running systems.
 
   ## Aliases
@@ -165,8 +192,10 @@ defmodule OptionParser do
       iex> OptionParser.parse(["--unlock", "path/to/file"], strict: [unlock: :boolean])
       {[unlock: true], ["path/to/file"], []}
 
-      iex> OptionParser.parse(["--unlock", "--limit", "0", "path/to/file"],
-      ...>                    strict: [unlock: :boolean, limit: :integer])
+      iex> OptionParser.parse(
+      ...>   ["--unlock", "--limit", "0", "path/to/file"],
+      ...>   strict: [unlock: :boolean, limit: :integer]
+      ...> )
       {[unlock: true, limit: 0], ["path/to/file"], []}
 
       iex> OptionParser.parse(["--limit", "3"], strict: [limit: :integer])
@@ -184,11 +213,16 @@ defmodule OptionParser do
       iex> OptionParser.parse(["--unknown", "xyz"], strict: [])
       {[], ["xyz"], [{"--unknown", nil}]}
 
-      iex> OptionParser.parse(["--limit", "3", "--unknown", "xyz"],
-      ...>                    switches: [limit: :integer])
+      iex> OptionParser.parse(
+      ...>   ["--limit", "3", "--unknown", "xyz"],
+      ...>   switches: [limit: :integer]
+      ...> )
       {[limit: 3, unknown: "xyz"], [], []}
 
-      iex> OptionParser.parse(["--unlock", "path/to/file", "--unlock", "path/to/another/file"], strict: [unlock: :keep])
+      iex> OptionParser.parse(
+      ...>   ["--unlock", "path/to/file", "--unlock", "path/to/another/file"],
+      ...>   strict: [unlock: :keep]
+      ...> )
       {[unlock: "path/to/file", unlock: "path/to/another/file"], [], []}
 
   """
@@ -219,14 +253,17 @@ defmodule OptionParser do
       ** (OptionParser.ParseError) 1 error found!
       --unknown : Unknown option
 
-      iex> OptionParser.parse!(["-l", "xyz", "-f", "bar"],
-      ...>                     switches: [limit: :integer, foo: :integer], aliases: [l: :limit, f: :foo])
+      iex> OptionParser.parse!(
+      ...>   ["-l", "xyz", "-f", "bar"],
+      ...>   switches: [limit: :integer, foo: :integer],
+      ...>   aliases: [l: :limit, f: :foo]
+      ...> )
       ** (OptionParser.ParseError) 2 errors found!
       -l : Expected type integer, got "xyz"
       -f : Expected type integer, got "bar"
 
   """
-  @spec parse!(argv, options) :: {parsed, argv} | no_return
+  @spec parse!(argv, options) :: {parsed, argv}
   def parse!(argv, opts \\ []) when is_list(argv) and is_list(opts) do
     case parse(argv, opts) do
       {parsed, args, []} -> {parsed, args}
@@ -242,12 +279,16 @@ defmodule OptionParser do
 
   ## Example
 
-      iex> OptionParser.parse_head(["--source", "lib", "test/enum_test.exs", "--verbose"],
-      ...>                         switches: [source: :string, verbose: :boolean])
+      iex> OptionParser.parse_head(
+      ...>   ["--source", "lib", "test/enum_test.exs", "--verbose"],
+      ...>   switches: [source: :string, verbose: :boolean]
+      ...> )
       {[source: "lib"], ["test/enum_test.exs", "--verbose"], []}
 
-      iex> OptionParser.parse_head(["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
-      ...>                         switches: [source: :string, verbose: :boolean, unlock: :boolean])
+      iex> OptionParser.parse_head(
+      ...>   ["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
+      ...>   switches: [source: :string, verbose: :boolean, unlock: :boolean]
+      ...> )
       {[verbose: true, source: "lib"], ["test/enum_test.exs", "--unlock"], []}
 
   """
@@ -267,23 +308,29 @@ defmodule OptionParser do
 
   ## Examples
 
-      iex> OptionParser.parse_head!(["--source", "lib", "path/to/file", "--verbose"],
-      ...>                         switches: [source: :string, verbose: :boolean])
+      iex> OptionParser.parse_head!(
+      ...>   ["--source", "lib", "path/to/file", "--verbose"],
+      ...>   switches: [source: :string, verbose: :boolean]
+      ...> )
       {[source: "lib"], ["path/to/file", "--verbose"]}
 
-      iex> OptionParser.parse_head!(["--number", "lib", "test/enum_test.exs", "--verbose"],
-      ...>                          strict: [number: :integer])
+      iex> OptionParser.parse_head!(
+      ...>   ["--number", "lib", "test/enum_test.exs", "--verbose"],
+      ...>   strict: [number: :integer]
+      ...> )
       ** (OptionParser.ParseError) 1 error found!
       --number : Expected type integer, got "lib"
 
-      iex> OptionParser.parse_head!(["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
-      ...>                          strict: [verbose: :integer, source: :integer])
+      iex> OptionParser.parse_head!(
+      ...>   ["--verbose", "--source", "lib", "test/enum_test.exs", "--unlock"],
+      ...>   strict: [verbose: :integer, source: :integer]
+      ...> )
       ** (OptionParser.ParseError) 2 errors found!
       --verbose : Missing argument of type integer
       --source : Expected type integer, got "lib"
 
   """
-  @spec parse_head!(argv, options) :: {parsed, argv} | no_return
+  @spec parse_head!(argv, options) :: {parsed, argv}
   def parse_head!(argv, opts \\ []) when is_list(argv) and is_list(opts) do
     case parse_head(argv, opts) do
       {parsed, args, []} -> {parsed, args}
@@ -405,7 +452,6 @@ defmodule OptionParser do
         option_key = config.aliases[key]
 
         if key && option_key do
-          # TODO: Remove this in Elixir v2.0
           IO.warn("multi-letter aliases are deprecated, got: #{inspect(key)}")
           next_tagged({:default, option_key}, value, original, rest, config)
         else
@@ -447,7 +493,7 @@ defmodule OptionParser do
 
   It is advised to pass to `to_argv/2` the same set of `options`
   given to `parse/2`. Some switches can only be reconstructed
-  correctly with the `switches` information in hand.
+  correctly with the `:switches` information in hand.
 
   ## Examples
 
@@ -457,7 +503,7 @@ defmodule OptionParser do
       ["--bool", "--no-bool"]
 
   Some switches will output different values based on the switches
-  flag:
+  types:
 
       iex> OptionParser.to_argv([number: 2], switches: [])
       ["--number", "2"]
@@ -466,8 +512,8 @@ defmodule OptionParser do
 
   """
   @spec to_argv(Enumerable.t(), options) :: argv
-  def to_argv(enum, opts \\ []) do
-    switches = Keyword.get(opts, :switches, [])
+  def to_argv(enum, options \\ []) do
+    switches = Keyword.get(options, :switches, [])
 
     Enum.flat_map(enum, fn
       {_key, nil} -> []
@@ -558,7 +604,6 @@ defmodule OptionParser do
           {strict, true}
 
         true ->
-          # TODO: Remove this in Elixir v2.0
           IO.warn("not passing the :switches or :strict option to OptionParser is deprecated")
           {[], false}
       end

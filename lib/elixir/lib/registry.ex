@@ -32,10 +32,26 @@ defmodule Registry do
       {:ok, _} = Agent.start_link(fn -> 0 end, name: name)
       Agent.get(name, & &1)
       #=> 0
-      Agent.update(name, & &1 + 1)
+      Agent.update(name, &(&1 + 1))
       Agent.get(name, & &1)
       #=> 1
 
+  In the previous example, we were not interested in associating a value to the
+  process:
+
+      Registry.lookup(Registry.ViaTest, "agent")
+      #=> [{self(), nil}]
+
+  However, in some cases it may be desired to associate a value to the process
+  using the alternate `{:via, Registry, {registry, key, value}}` tuple:
+
+      {:ok, _} = Registry.start_link(keys: :unique, name: Registry.ViaTest)
+      name = {:via, Registry, {Registry.ViaTest, "agent", :hello}}
+      {:ok, _} = Agent.start_link(fn -> 0 end, name: name)
+      Registry.lookup(Registry.ViaTest, "agent")
+      #=> [{self(), :hello}]
+
+  To this point, we have been starting `Registry` using `start_link/1`.
   Typically the registry is started as part of a supervision tree though:
 
       {Registry, keys: :unique, name: Registry.ViaTest}
@@ -62,14 +78,14 @@ defmodule Registry do
   Now, an entity interested in dispatching events for a given key may call
   `dispatch/3` passing in the key and a callback. This callback will be invoked
   with a list of all the values registered under the requested key, alongside
-  the pid of the process that registered each value, in the form of `{pid,
+  the PID of the process that registered each value, in the form of `{pid,
   value}` tuples. In our example, `value` will be the `{module, function}` tuple
   in the code above:
 
       Registry.dispatch(Registry.DispatcherTest, "hello", fn entries ->
         for {pid, {module, function}} <- entries, do: apply(module, function, [pid])
       end)
-      # Prints #PID<...> where the pid is for the process that called register/3 above
+      # Prints #PID<...> where the PID is for the process that called register/3 above
       #=> :ok
 
   Dispatching happens in the process that calls `dispatch/3` either serially or
@@ -83,6 +99,7 @@ defmodule Registry do
   errors:
 
       require Logger
+
       Registry.dispatch(Registry.DispatcherTest, "hello", fn entries ->
         for {pid, {module, function}} <- entries do
           try do
@@ -90,7 +107,7 @@ defmodule Registry do
           catch
             kind, reason ->
               formatted = Exception.format(kind, reason, __STACKTRACE__)
-              Logger.error "Registry.dispatch/3 failed with #{formatted}"
+              Logger.error("Registry.dispatch/3 failed with #{formatted}")
           end
         end
       end)
@@ -111,9 +128,15 @@ defmodule Registry do
   schedulers online, which will make the registry more performant on highly
   concurrent environments:
 
-      {:ok, _} = Registry.start_link(keys: :duplicate, name: Registry.PubSubTest,
-                                     partitions: System.schedulers_online)
+      {:ok, _} =
+        Registry.start_link(
+          keys: :duplicate,
+          name: Registry.PubSubTest,
+          partitions: System.schedulers_online()
+        )
+
       {:ok, _} = Registry.register(Registry.PubSubTest, "hello", [])
+
       Registry.dispatch(Registry.PubSubTest, "hello", fn entries ->
         for {pid, _} <- entries, do: send(pid, {:broadcast, "world"})
       end)
@@ -138,7 +161,7 @@ defmodule Registry do
   in the function documentation.
 
   However, keep in mind those cases are typically not an issue. After all, a
-  process referenced by a pid may crash at any time, including between getting
+  process referenced by a PID may crash at any time, including between getting
   the value from the registry and sending it a message. Many parts of the standard
   library are designed to cope with that, such as `Process.monitor/1` which will
   deliver the `:DOWN` message immediately if the monitored process is already dead
@@ -180,11 +203,19 @@ defmodule Registry do
   @typedoc "A list of guards to be evaluated when matching on objects in a registry"
   @type guards :: [guard] | []
 
+  @typedoc "A pattern used to representing the output format part of a match spec"
+  @type body :: [atom | tuple]
+
+  @typedoc "A full match spec used when selecting objects in the registry"
+  @type spec :: [{match_pattern, guards, body}]
+
   ## Via callbacks
 
   @doc false
-  @doc since: "1.4.0"
-  def whereis_name({registry, key}) do
+  def whereis_name({registry, key}), do: whereis_name(registry, key)
+  def whereis_name({registry, key, _value}), do: whereis_name(registry, key)
+
+  defp whereis_name(registry, key) do
     case key_info!(registry) do
       {:unique, partitions, key_ets} ->
         key_ets = key_ets || key_ets!(registry, key, partitions)
@@ -203,16 +234,17 @@ defmodule Registry do
   end
 
   @doc false
-  @doc since: "1.4.0"
-  def register_name({registry, key}, pid) when pid == self() do
-    case register(registry, key, nil) do
+  def register_name({registry, key}, pid), do: register_name(registry, key, nil, pid)
+  def register_name({registry, key, value}, pid), do: register_name(registry, key, value, pid)
+
+  defp register_name(registry, key, value, pid) when pid == self() do
+    case register(registry, key, value) do
       {:ok, _} -> :yes
       {:error, _} -> :no
     end
   end
 
   @doc false
-  @doc since: "1.4.0"
   def send({registry, key}, msg) do
     case lookup(registry, key) do
       [{pid, _}] -> Kernel.send(pid, msg)
@@ -221,7 +253,6 @@ defmodule Registry do
   end
 
   @doc false
-  @doc since: "1.4.0"
   def unregister_name({registry, key}) do
     unregister(registry, key)
   end
@@ -239,21 +270,23 @@ defmodule Registry do
 
       Supervisor.start_link([
         {Registry, keys: :unique, name: MyApp.Registry}
-      ])
+      ], strategy: :one_for_one)
 
   For intensive workloads, the registry may also be partitioned (by specifying
   the `:partitions` option). If partitioning is required then a good default is to
   set the number of partitions to the number of schedulers available:
 
-      Registry.start_link(keys: :unique, name: MyApp.Registry,
-                          partitions: System.schedulers_online())
+      Registry.start_link(
+        keys: :unique,
+        name: MyApp.Registry,
+        partitions: System.schedulers_online()
+      )
 
   or:
 
       Supervisor.start_link([
-        {Registry, keys: :unique, name: MyApp.Registry,
-                   partitions: System.schedulers_online()}
-      ])
+        {Registry, keys: :unique, name: MyApp.Registry, partitions: System.schedulers_online()}
+      ], strategy: :one_for_one)
 
   ## Options
 
@@ -289,11 +322,17 @@ defmodule Registry do
             "expected :keys to be given and be one of :unique or :duplicate, got: #{inspect(keys)}"
     end
 
-    name = Keyword.get(options, :name)
+    name =
+      case Keyword.fetch(options, :name) do
+        {:ok, name} when is_atom(name) ->
+          name
 
-    unless is_atom(name) do
-      raise ArgumentError, "expected :name to be given and to be an atom, got: #{inspect(name)}"
-    end
+        {:ok, other} ->
+          raise ArgumentError, "expected :name to be an atom, got: #{inspect(other)}"
+
+        :error ->
+          raise ArgumentError, "expected :name option to be present"
+      end
 
     meta = Keyword.get(options, :meta, [])
 
@@ -396,8 +435,8 @@ defmodule Registry do
   for the given `registry`.
 
   The list of `entries` is a non-empty list of two-element tuples where
-  the first element is the pid and the second element is the value
-  associated to the pid. If there are no entries for the given key,
+  the first element is the PID and the second element is the value
+  associated to the PID. If there are no entries for the given key,
   the callback is never invoked.
 
   If the registry is partitioned, the callback is invoked multiple times
@@ -583,9 +622,11 @@ defmodule Registry do
       [{self(), {1, :atom, 1}}, {self(), {2, :atom, 2}}]
       iex> Registry.match(Registry.MatchTest, "hello", {:"$1", :_, :"$1"}) |> Enum.sort()
       [{self(), {1, :atom, 1}}, {self(), {2, :atom, 2}}]
-      iex> Registry.match(Registry.MatchTest, "hello", {:_, :_, :"$1"}, [{:>, :"$1", 1}])
+      iex> guards = [{:>, :"$1", 1}]
+      iex> Registry.match(Registry.MatchTest, "hello", {:_, :_, :"$1"}, guards)
       [{self(), {2, :atom, 2}}]
-      iex> Registry.match(Registry.MatchTest, "hello", {:_, :"$1", :_}, [{:is_atom, :"$1"}]) |> Enum.sort()
+      iex> guards = [{:is_atom, :"$1"}]
+      iex> Registry.match(Registry.MatchTest, "hello", {:_, :"$1", :_}, guards) |> Enum.sort()
       [{self(), {1, :atom, 1}}, {self(), {2, :atom, 2}}]
 
   """
@@ -650,7 +691,7 @@ defmodule Registry do
 
     keys =
       try do
-        spec = [{{pid, :"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}]
+        spec = [{{pid, :"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}]
         :ets.select(pid_ets, spec)
       catch
         :error, :badarg -> []
@@ -727,8 +768,8 @@ defmodule Registry do
     # Remove first from the key_ets because in case of crashes
     # the pid_ets will still be able to clean up. The last step is
     # to clean if we have no more entries.
-    true = :ets.match_delete(key_ets, {key, {self, :_}})
-    true = :ets.delete_object(pid_ets, {self, key, key_ets})
+    true = __unregister__(key_ets, {key, {self, :_}}, 1)
+    true = __unregister__(pid_ets, {self, key, key_ets, :_}, 2)
 
     unlink_if_unregistered(pid_server, pid_ets, self)
 
@@ -777,6 +818,7 @@ defmodule Registry do
 
   """
   @doc since: "1.5.0"
+  @spec unregister_match(registry, key, match_pattern, guards) :: :ok
   def unregister_match(registry, key, pattern, guards \\ []) when is_list(guards) do
     self = self()
 
@@ -789,8 +831,7 @@ defmodule Registry do
     # the pid_ets will still be able to clean up. The last step is
     # to clean if we have no more entries.
 
-    # Here we want to count all entries for this pid under this key, regardless
-    # of pattern.
+    # Here we want to count all entries for this pid under this key, regardless of pattern.
     underscore_guard = {:"=:=", {:element, 1, :"$_"}, {:const, key}}
     total_spec = [{{:_, {self, :_}}, [underscore_guard], [true]}]
     total = :ets.select_count(key_ets, total_spec)
@@ -801,8 +842,7 @@ defmodule Registry do
     case :ets.select_delete(key_ets, delete_spec) do
       # We deleted everything, we can just delete the object
       ^total ->
-        true = :ets.delete_object(pid_ets, {self, key, key_ets})
-
+        true = __unregister__(pid_ets, {self, key, key_ets, :_}, 2)
         unlink_if_unregistered(pid_server, pid_ets, self)
 
         for listener <- listeners do
@@ -817,11 +857,12 @@ defmodule Registry do
         # duplicate_bag tables will remove every entry, but we only want to
         # remove those we have deleted. The solution is to introduce a temp_entry
         # that indicates how many keys WILL be remaining after the delete operation.
+        counter = System.unique_integer()
         remaining = total - deleted
-        temp_entry = {self, key, {key_ets, remaining}}
+        temp_entry = {self, key, {key_ets, remaining}, counter}
         true = :ets.insert(pid_ets, temp_entry)
-        true = :ets.delete_object(pid_ets, {self, key, key_ets})
-        real_keys = List.duplicate({self, key, key_ets}, remaining)
+        true = __unregister__(pid_ets, {self, key, key_ets, :_}, 2)
+        real_keys = List.duplicate({self, key, key_ets, counter}, remaining)
         true = :ets.insert(pid_ets, real_keys)
         # We've recreated the real remaining key entries, so we can now delete
         # our temporary entry.
@@ -839,11 +880,11 @@ defmodule Registry do
   lookup.
 
   This function returns `{:ok, owner}` or `{:error, reason}`.
-  The `owner` is the pid in the registry partition responsible for
-  the pid. The owner is automatically linked to the caller.
+  The `owner` is the PID in the registry partition responsible for
+  the PID. The owner is automatically linked to the caller.
 
   If the registry has unique keys, it will return `{:ok, owner}` unless
-  the key is already associated to a pid, in which case it returns
+  the key is already associated to a PID, in which case it returns
   `{:error, {:already_registered, pid}}`.
 
   If the registry has duplicate keys, multiple registrations from the
@@ -878,11 +919,13 @@ defmodule Registry do
     key_ets = key_ets || key_ets!(registry, key_partition)
     {pid_server, pid_ets} = pid_ets || pid_ets!(registry, pid_partition)
 
-    # Notice we write first to the pid ets table because it will
+    # Notice we write first to the pid_ets table because it will
     # always be able to do the cleanup. If we register first to the
     # key one and the process crashes, the key will stay there forever.
     Process.link(pid_server)
-    true = :ets.insert(pid_ets, {self, key, key_ets})
+
+    counter = System.unique_integer()
+    true = :ets.insert(pid_ets, {self, key, key_ets, counter})
 
     case register_key(kind, pid_server, key_ets, key, {key, {self, value}}) do
       {:ok, _} = ok ->
@@ -893,10 +936,11 @@ defmodule Registry do
         ok
 
       {:error, {:already_registered, ^self}} = error ->
+        true = :ets.delete_object(pid_ets, {self, key, key_ets, counter})
         error
 
       {:error, _} = error ->
-        true = :ets.delete_object(pid_ets, {self, key, key_ets})
+        true = :ets.delete_object(pid_ets, {self, key, key_ets, counter})
         unlink_if_unregistered(pid_server, pid_ets, self)
         error
     end
@@ -929,7 +973,7 @@ defmodule Registry do
   end
 
   @doc """
-  Reads registry metadata given on `start_link/3`.
+  Reads registry metadata given on `start_link/1`.
 
   Atoms and tuples are allowed as keys.
 
@@ -1060,20 +1104,20 @@ defmodule Registry do
   In the example below we register the current process under the same
   key in a duplicate registry but with different values:
 
-      iex> Registry.start_link(keys: :duplicate, name: Registry.MatchTest)
-      iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {1, :atom, 1})
-      iex> {:ok, _} = Registry.register(Registry.MatchTest, "hello", {2, :atom, 2})
-      iex> Registry.count_match(Registry.MatchTest, "hello", {1, :_, :_})
+      iex> Registry.start_link(keys: :duplicate, name: Registry.CountMatchTest)
+      iex> {:ok, _} = Registry.register(Registry.CountMatchTest, "hello", {1, :atom, 1})
+      iex> {:ok, _} = Registry.register(Registry.CountMatchTest, "hello", {2, :atom, 2})
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {1, :_, :_})
       1
-      iex> Registry.count_match(Registry.MatchTest, "hello", {2, :_, :_})
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {2, :_, :_})
       1
-      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :atom, :_})
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {:_, :atom, :_})
       2
-      iex> Registry.count_match(Registry.MatchTest, "hello", {:"$1", :_, :"$1"})
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {:"$1", :_, :"$1"})
       2
-      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :_, :"$1"}, [{:>, :"$1", 1}])
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {:_, :_, :"$1"}, [{:>, :"$1", 1}])
       1
-      iex> Registry.count_match(Registry.MatchTest, "hello", {:_, :"$1", :_}, [{:is_atom, :"$1"}])
+      iex> Registry.count_match(Registry.CountMatchTest, "hello", {:_, :"$1", :_}, [{:is_atom, :"$1"}])
       2
 
   """
@@ -1097,6 +1141,80 @@ defmodule Registry do
           count = :ets.select_count(key_ets!(registry, partition_index), spec)
           acc + count
         end)
+    end
+  end
+
+  @doc """
+  Select key, pid, and values registered using full match specs.
+
+  The `spec` consists of a list of three part tuples, in the shape of `[{match_pattern, guards, body}]`.
+
+  The first part, the match pattern, must be a tuple that will match the structure of the
+  the data stored in the registry, which is `{key, pid, value}`. The atom `:_` can be used to
+  ignore a given value or tuple element, while the atom `:"$1"` can be used to temporarily
+  assign part of pattern to a variable for a subsequent comparison. This can be combined
+  like `{:"$1", :_, :_}`.
+
+  The second part, the guards, is a list of conditions that allow filtering the results.
+  Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
+  For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
+  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+
+  The third part, the body, is a list of shapes of the returned entries. Like guards, you have access to
+  assigned variables like `:"$1"`, which you can combine with hardcoded values to freely shape entries
+  Note that tuples have to be wrapped in an additional tuple. To get a result format like
+  `%{key: key, pid: pid, value: value}`, assuming you bound those variables in order in the match part,
+  you would provide a body like `[%{key: :"$1", pid: :"$2", value: :"$3"}]`. Like guards, you can use
+  some operations like `:element` to modify the output format.
+
+  Do not use special match variables `:"$_"` and `:"$$"`, because they might not work as expected.
+
+  Note that for large registries with many partitions this will be costly as it builds the result by
+  concatenating all the partitions.
+
+  ## Examples
+
+  This example shows how to get everything from the registry.
+
+      iex> Registry.start_link(keys: :unique, name: Registry.SelectAllTest)
+      iex> {:ok, _} = Registry.register(Registry.SelectAllTest, "hello", :value)
+      iex> {:ok, _} = Registry.register(Registry.SelectAllTest, "world", :value)
+      iex> Registry.select(Registry.SelectAllTest, [{{:"$1", :"$2", :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+      [{"world", self(), :value}, {"hello", self(), :value}]
+
+  Get all keys in the registry.
+
+      iex> Registry.start_link(keys: :unique, name: Registry.SelectAllTest)
+      iex> {:ok, _} = Registry.register(Registry.SelectAllTest, "hello", :value)
+      iex> {:ok, _} = Registry.register(Registry.SelectAllTest, "world", :value)
+      iex> Registry.select(Registry.SelectAllTest, [{{:"$1", :_, :_}, [], [:"$1"]}])
+      ["world", "hello"]
+
+  """
+  @doc since: "1.9.0"
+  @spec select(registry, spec) :: [term]
+  def select(registry, spec)
+      when is_atom(registry) and is_list(spec) do
+    spec =
+      for part <- spec do
+        case part do
+          {{key, pid, value}, guards, select} ->
+            {{key, {pid, value}}, guards, select}
+
+          _ ->
+            raise ArgumentError,
+                  "invalid match specification in Registry.select/2: #{inspect(spec)}"
+        end
+      end
+
+    case key_info!(registry) do
+      {_kind, partitions, nil} ->
+        Enum.flat_map(0..(partitions - 1), fn partition_index ->
+          :ets.select(key_ets!(registry, partition_index), spec)
+        end)
+
+      {_kind, 1, key_ets} ->
+        :ets.select(key_ets, spec)
     end
   end
 
@@ -1164,6 +1282,24 @@ defmodule Registry do
       Process.unlink(pid_server)
     end
   end
+
+  @doc false
+  def __unregister__(table, match, pos) do
+    key = :erlang.element(pos, match)
+
+    # We need to perform an element comparison if we have an special atom key.
+    if is_atom(key) and reserved_atom?(Atom.to_string(key)) do
+      match = :erlang.setelement(pos, match, :_)
+      guard = {:"=:=", {:element, pos, :"$_"}, {:const, key}}
+      :ets.select_delete(table, [{match, [guard], [true]}]) >= 0
+    else
+      :ets.match_delete(table, match)
+    end
+  end
+
+  defp reserved_atom?("_"), do: true
+  defp reserved_atom?("$" <> _), do: true
+  defp reserved_atom?(_), do: false
 end
 
 defmodule Registry.Supervisor do
@@ -1191,12 +1327,12 @@ defmodule Registry.Supervisor do
   end
 
   # Unique registries have their key partition hashed by key.
-  # This means that, if a pid partition crashes, it may have
+  # This means that, if a PID partition crashes, it may have
   # entries from all key partitions, so we need to crash all.
   defp strategy_for_kind(:unique), do: :one_for_all
 
   # Duplicate registries have both key and pid partitions hashed
-  # by pid. This means that, if a pid partition crashes, all of
+  # by pid. This means that, if a PID partition crashes, all of
   # its associated entries are in its sibling table, so we crash one.
   defp strategy_for_kind(:duplicate), do: :one_for_one
 end
@@ -1204,7 +1340,7 @@ end
 defmodule Registry.Partition do
   @moduledoc false
 
-  # This process owns the equivalent key and pid ets tables
+  # This process owns the equivalent key and pid ETS tables
   # and is responsible for monitoring processes that map to
   # its own pid table.
   use GenServer
@@ -1293,10 +1429,10 @@ defmodule Registry.Partition do
   def handle_info({:EXIT, pid, _reason}, ets) do
     entries = :ets.take(ets, pid)
 
-    for {_pid, key, key_ets} <- entries do
+    for {_pid, key, key_ets, _counter} <- entries do
       key_ets =
         case key_ets do
-          # In case the fake key ets is being used. See unregister_match/2.
+          # In case the fake key_ets is being used. See unregister_match/2.
           {key_ets, _} ->
             key_ets
 
@@ -1305,7 +1441,7 @@ defmodule Registry.Partition do
         end
 
       try do
-        :ets.match_delete(key_ets, {key, {pid, :_}})
+        Registry.__unregister__(key_ets, {key, {pid, :_}}, 1)
       catch
         :error, :badarg -> :badarg
       end

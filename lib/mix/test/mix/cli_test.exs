@@ -42,7 +42,7 @@ defmodule Mix.CLITest do
         @shortdoc "Says hello"
 
         def run(_) do
-          IO.puts Mix.Project.get!.hello_world
+          IO.puts(Mix.Project.get!().hello_world())
           Mix.shell.info("This won't appear")
           Mix.raise("oops")
         end
@@ -143,7 +143,33 @@ defmodule Mix.CLITest do
     System.delete_env("MIX_EXS")
   end
 
-  test "new with tests" do
+  test "target config defaults to the user's preferred cli target", context do
+    in_tmp(context.test, fn ->
+      File.write!("custom.exs", """
+      defmodule P do
+        use Mix.Project
+        def project, do: [app: :p, version: "0.1.0", preferred_cli_target: [test_task: :other]]
+      end
+
+      defmodule Mix.Tasks.TestTask do
+        use Mix.Task
+
+        def run(args) do
+          IO.inspect {Mix.target, args}
+        end
+      end
+      """)
+
+      System.put_env("MIX_EXS", "custom.exs")
+
+      output = mix(["test_task", "a", "b", "c"])
+      assert output =~ ~s({:other, ["a", "b", "c"]})
+    end)
+  after
+    System.delete_env("MIX_EXS")
+  end
+
+  test "new with tests and cover" do
     in_tmp("new_with_tests", fn ->
       output = mix(~w[new .])
       assert output =~ "* creating lib/new_with_tests.ex"

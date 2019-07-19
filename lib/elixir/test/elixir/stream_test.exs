@@ -1054,7 +1054,11 @@ defmodule StreamTest do
     stream = Stream.timer(10)
     now = :os.timestamp()
     assert Enum.to_list(stream) == [0]
-    assert :timer.now_diff(:os.timestamp(), now) >= 10000
+    # We check for >= 5000 (us) instead of >= 10000 (us)
+    # because the resolution on Windows system is not high
+    # enough and we would get a difference of 9000 from
+    # time to time. So a value halfway is good enough.
+    assert :timer.now_diff(:os.timestamp(), now) >= 5000
   end
 
   test "unfold/2" do
@@ -1110,6 +1114,9 @@ defmodule StreamTest do
 
     stream = %HaltAcc{acc: 1..3}
     assert Stream.zip([1..3, stream]) |> Enum.to_list() == [{1, 1}, {2, 2}, {3, 3}]
+
+    range_cycle = Stream.cycle(1..2)
+    assert Stream.zip([1..3, range_cycle]) |> Enum.to_list() == [{1, 1}, {2, 2}, {3, 1}]
   end
 
   test "zip/1 does not leave streams suspended" do
@@ -1205,8 +1212,8 @@ defmodule StreamTest do
 
   defp inbox_stream({:cont, acc}, f) do
     receive do
-      {:stream, item} ->
-        inbox_stream(f.(item, acc), f)
+      {:stream, element} ->
+        inbox_stream(f.(element, acc), f)
     end
   end
 end

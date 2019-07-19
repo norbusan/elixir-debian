@@ -2,8 +2,8 @@ Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule ExUnit.AssertionsTest.Value do
   def tuple, do: {2, 1}
-  def falsy, do: false
-  def truthy, do: true
+  def falsy, do: nil
+  def truthy, do: :truthy
 end
 
 defmodule ExUnit.AssertionsTest.BrokenError do
@@ -29,30 +29,35 @@ defmodule ExUnit.AssertionsTest do
     end
   end
 
+  require Record
+  Record.defrecordp(:vec, x: 0, y: 0, z: 0)
+
+  defguardp is_zero(zero) when zero == 0
+
   test "assert inside macro" do
     assert_ok(42)
   end
 
-  test "assert with true value" do
-    true = assert Value.truthy()
+  test "assert with truthy value" do
+    :truthy = assert Value.truthy()
   end
 
-  test "assert with message when value is false" do
+  test "assert with message when value is falsy" do
     try do
-      "This should never be tested" = assert false, "This should be true"
+      "This should never be tested" = assert Value.falsy(), "This should be truthy"
     rescue
       error in [ExUnit.AssertionError] ->
-        "This should be true" = error.message
+        "This should be truthy" = error.message
     end
   end
 
-  test "assert when value evaluates to false" do
+  test "assert when value evaluates to falsy" do
     try do
       "This should never be tested" = assert Value.falsy()
     rescue
       error in [ExUnit.AssertionError] ->
         "assert(Value.falsy())" = error.expr |> Macro.to_string()
-        "Expected truthy, got false" = error.message
+        "Expected truthy, got nil" = error.message
     end
   end
 
@@ -71,7 +76,7 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert arguments are not kept for operators" do
     try do
-      "This should never be tested" = assert not Value.truthy()
+      "This should never be tested" = assert !Value.truthy()
     rescue
       error in [ExUnit.AssertionError] ->
         false = is_list(error.args)
@@ -114,23 +119,29 @@ defmodule ExUnit.AssertionsTest do
     assert argless_macro == 1
   end
 
-  test "refute when value is false" do
+  test "refute when value is falsy" do
     false = refute false
+    nil = refute Value.falsy()
   end
 
-  test "refute when value evaluates to true" do
+  test "refute when value evaluates to truthy" do
     try do
       refute Value.truthy()
       raise "refute was supposed to fail"
     rescue
       error in [ExUnit.AssertionError] ->
         "refute(Value.truthy())" = Macro.to_string(error.expr)
-        "Expected false or nil, got true" = error.message
+        "Expected false or nil, got :truthy" = error.message
     end
   end
 
   test "assert match when equal" do
     {2, 1} = assert {2, 1} = Value.tuple()
+  end
+
+  test "assert match expands argument in match context" do
+    {x, y, z} = {1, 2, 3}
+    assert vec(x: ^x, y: ^y) = vec(x: x, y: y, z: z)
   end
 
   test "assert match with pinned variable" do
@@ -223,6 +234,14 @@ defmodule ExUnit.AssertionsTest do
     :hello = assert_receive :hello
   end
 
+  @string "hello"
+
+  test "assert receive with interpolated compile-time string" do
+    parent = self()
+    spawn(fn -> send(parent, "string: hello") end)
+    "string: #{@string}" = assert_receive "string: #{@string}"
+  end
+
   test "assert receive accepts custom failure message" do
     send(self(), :hello)
     assert_receive message, 0, "failure message"
@@ -264,13 +283,15 @@ defmodule ExUnit.AssertionsTest do
     end
   end
 
-  require Record
-  Record.defrecordp(:vec, x: 0, y: 0, z: 0)
-
-  test "assert_receive should not expand argument" do
+  test "assert_receive expands argument in match context" do
     {x, y, z} = {1, 2, 3}
     send(self(), vec(x: x, y: y, z: z))
     assert_receive vec(x: ^x, y: ^y)
+  end
+
+  test "assert_receive expands argument in guard context" do
+    send(self(), {:ok, 0, :other})
+    assert_receive {:ok, val, atom} when is_zero(val) and is_atom(atom)
   end
 
   test "assert received does not wait" do
@@ -375,7 +396,6 @@ defmodule ExUnit.AssertionsTest do
         """
         No message matching x when x == :hello after 0ms.
         Process mailbox:
-          {:message, 1}
           {:message, 2}
           {:message, 3}
           {:message, 4}
@@ -385,7 +405,8 @@ defmodule ExUnit.AssertionsTest do
           {:message, 8}
           {:message, 9}
           {:message, 10}
-        Showing only 10 of 11 messages.\
+          {:message, 11}
+        Showing only last 10 of 11 messages.\
         """ = error.message
     end
   end

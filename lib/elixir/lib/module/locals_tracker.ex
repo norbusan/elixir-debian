@@ -4,23 +4,25 @@
 #
 # ## Implementation
 #
-# The implementation uses ets to track all dependencies
+# The implementation uses ETS to track all dependencies
 # resembling a graph. The keys and what they point to are:
 #
 #   * `:reattach` points to `{name, arity}`
-#   * `{:local, {name, arity}}` points to `{name, arity}`
+#   * `{:local, {name, arity}}` points to `{{name, arity}, line, macro_dispatch?}`
 #   * `{:import, {name, arity}}` points to `Module`
 #
 # This is built on top of the internal module tables.
 defmodule Module.LocalsTracker do
   @moduledoc false
 
+  @defmacros [:defmacro, :defmacrop]
+
   @doc """
   Adds and tracks defaults for a definition into the tracker.
   """
-  def add_defaults({_set, bag}, _kind, {name, arity} = pair, defaults) do
+  def add_defaults({_set, bag}, kind, {name, arity} = pair, defaults, meta) do
     for i <- :lists.seq(arity - defaults, arity - 1) do
-      put_edge(bag, {:local, {name, i}}, pair)
+      put_edge(bag, {:local, {name, i}}, {pair, get_line(meta), kind in @defmacros})
     end
 
     :ok
@@ -29,11 +31,9 @@ defmodule Module.LocalsTracker do
   @doc """
   Adds a local dispatch from-to the given target.
   """
-  def add_local({_set, bag}, from, to) when is_tuple(from) and is_tuple(to) do
-    if from != to do
-      put_edge(bag, {:local, from}, to)
-    end
-
+  def add_local({_set, bag}, from, to, meta, macro_dispatch?)
+      when is_tuple(from) and is_tuple(to) and is_boolean(macro_dispatch?) do
+    put_edge(bag, {:local, from}, {to, get_line(meta), macro_dispatch?})
     :ok
   end
 
@@ -56,14 +56,14 @@ defmodule Module.LocalsTracker do
   @doc """
   Reattach a previously yanked node.
   """
-  def reattach({_set, bag}, tuple, _kind, function, out_neigh) do
-    for to <- out_neigh do
-      put_edge(bag, {:local, function}, to)
+  def reattach({_set, bag}, tuple, kind, function, out_neighbours, meta) do
+    for out_neighbour <- out_neighbours do
+      put_edge(bag, {:local, function}, out_neighbour)
     end
 
     # Make a call from the old function to the new one
     if function != tuple do
-      put_edge(bag, {:local, function}, tuple)
+      put_edge(bag, {:local, function}, {tuple, get_line(meta), kind in @defmacros})
     end
 
     # Finally marked the new one as reattached
@@ -96,6 +96,38 @@ defmodule Module.LocalsTracker do
 
     reattached = :lists.usort(out_neighbours(bag, :reattach))
     {unreachable(reachable, reattached, private), collect_warnings(reachable, private)}
+  end
+
+  @doc """
+  Collect undefined functions based on local calls and existing definitions.
+  """
+  def collect_undefined_locals({set, bag}, all_defined) do
+    undefined =
+      for {pair, _, meta, _} <- all_defined,
+          {local, line, macro_dispatch?} <- out_neighbours(bag, {:local, pair}),
+          error = undefined_local_error(set, local, macro_dispatch?),
+          do: {build_meta(line, meta), local, error}
+
+    :lists.usort(undefined)
+  end
+
+  defp undefined_local_error(set, local, true) do
+    case :ets.member(set, {:def, local}) do
+      true -> false
+      false -> :undefined_function
+    end
+  end
+
+  defp undefined_local_error(set, local, false) do
+    try do
+      if :ets.lookup_element(set, {:def, local}, 2) in @defmacros do
+        :incorrect_dispatch
+      else
+        false
+      end
+    catch
+      _, _ -> :undefined_function
+    end
   end
 
   defp unreachable(reachable, reattached, private) do
@@ -170,12 +202,26 @@ defmodule Module.LocalsTracker do
   defp reachable_from(bag, local, vertices) do
     vertices = Map.put(vertices, local, true)
 
-    Enum.reduce(out_neighbours(bag, {:local, local}), vertices, fn {_, _} = local, acc ->
+    Enum.reduce(out_neighbours(bag, {:local, local}), vertices, fn {local, _line, _}, acc ->
       case acc do
         %{^local => true} -> acc
         _ -> reachable_from(bag, local, acc)
       end
     end)
+  end
+
+  defp get_line(meta), do: Keyword.get(meta, :line)
+
+  defp build_meta(nil, _meta), do: []
+
+  # We need to transform any file annotation in the function
+  # definition into a keep annotation that is used by the
+  # error handling system in order to respect line/file.
+  defp build_meta(line, meta) do
+    case Keyword.get(meta, :file) do
+      {file, _} -> [keep: {file, line}]
+      _ -> [line: line]
+    end
   end
 
   ## Lightweight digraph implementation

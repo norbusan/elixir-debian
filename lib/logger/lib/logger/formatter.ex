@@ -47,7 +47,7 @@ defmodule Logger.Formatter do
   @replacement "�"
 
   @doc """
-  Prunes non-valid UTF-8 codepoints.
+  Prunes non-valid UTF-8 code points.
 
   Typically called after formatting when the data cannot be printed.
   """
@@ -89,7 +89,7 @@ defmodule Logger.Formatter do
   def compile({mod, fun}) when is_atom(mod) and is_atom(fun), do: {mod, fun}
 
   def compile(str) when is_binary(str) do
-    regex = Regex.recompile!(~r/(?<head>)\$[a-z]+(?<tail>)/)
+    regex = ~r/(?<head>)\$[a-z]+(?<tail>)/
 
     for part <- Regex.split(regex, str, on: [:head, :tail], trim: true) do
       case part do

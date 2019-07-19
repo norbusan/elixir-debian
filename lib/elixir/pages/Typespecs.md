@@ -1,6 +1,6 @@
 # Typespecs
 
-Elixir comes with a notation for declaring types and specifications. Elixir is a dynamically typed language, and as such, type specifications are never used by the compiler to optimize or modify code. Still, using type specifications is useful because
+Elixir comes with a notation for declaring types and specifications. Elixir is a dynamically typed language, and as such, type specifications are never used by the compiler to optimize or modify code. Still, using type specifications is useful because:
 
   * they provide documentation (for example, tools such as [ExDoc](https://github.com/elixir-lang/ex_doc) show type specifications in the documentation)
   * they're used by tools such as [Dialyzer](http://www.erlang.org/doc/man/dialyzer.html), that can analyze code with typespec to find type inconsistencies and possible bugs
@@ -68,7 +68,7 @@ The notation to represent the union of types is the pipe `|`. For example, the t
           | nonempty_maybe_improper_list(type1, type2)  # non-empty proper or improper list
 
           | Literals                # Described in section "Literals"
-          | Builtin                 # Described in section "Built-in types"
+          | BuiltIn                 # Described in section "Built-in types"
           | Remotes                 # Described in section "Remote types"
           | UserDefined             # Described in section "User-defined types"
 
@@ -125,7 +125,7 @@ Built-in type           | Defined as
 `as_boolean(t)`         | `t`
 `binary()`              | `<<_::_*8>>`
 `bitstring()`           | `<<_::_*1>>`
-`boolean()`             | `false` \| `true`
+`boolean()`             | `true` \| `false`
 `byte()`                | `0..255`
 `char()`                | `0..0x10FFFF`
 `charlist()`            | `[char()]`
@@ -149,9 +149,11 @@ Built-in type           | Defined as
 `struct()`              | `%{:__struct__ => atom(), optional(atom()) => any()}`
 `timeout()`             | `:infinity` \| `non_neg_integer()`
 
+`as_boolean(t)` exists to signal users that the given value will be treated as a boolean, where `nil` and `false` will be evaluated as `false` and everything else is `true`. For example, `Enum.filter/2` has the following specification: `filter(t, (element -> as_boolean(term))) :: list`.
+
 ### Remote types
 
-Any module is also able to define its own types and the modules in Elixir are no exception. For example, the `Range` module defines a `t/0` type that represents a range: this type can be referred to as `t:Range.t/0`. In a similar fashion, a string is `t:String.t/0`, any enumerable can be `t:Enum.t/0`, and so on.
+Any module is also able to define its own types and the modules in Elixir are no exception. For example, the `Range` module defines a [`t/0`](t:Range.t/0) type that represents a range: this type can be referred to as `t:Range.t/0`. In a similar fashion, a string is `t:String.t/0`, any enumerable can be `t:Enum.t/0`, and so on.
 
 ### Maps
 
@@ -191,7 +193,7 @@ If you want to specify more than one variable, you separate them by a comma.
 
     @spec function(arg1, arg2) :: {arg1, arg2} when arg1: atom, arg2: integer
 
-Type variables with no restriction can also be defined.
+Type variables with no restriction can also be defined using `var`.
 
     @spec function(arg) :: [arg] when arg: var
 
@@ -258,6 +260,6 @@ Elixir's standard library contains a few frequently used behaviours such as `Gen
 
 ## The `string()` type
 
-Elixir discourages the use of the `string()` type. The `string()` type refers to Erlang strings, which are known as "charlists" in Elixir. They do not refer to Elixir strings, which are UTF-8 encoded binaries. To avoid confusion, if you attempt to use the type `string()`, Elixir will emit a warning. You should use `charlist()`, `binary()` or `String.t()` accordingly.
+Elixir discourages the use of the `string()` type. The `string()` type refers to Erlang strings, which are known as "charlists" in Elixir. They do not refer to Elixir strings, which are UTF-8 encoded binaries. To avoid confusion, if you attempt to use the type `string()`, Elixir will emit a warning. You should use `charlist()`, `nonempty_charlist()`, `binary()` or `String.t()` accordingly, or any of the several literal representations for these types.
 
-Note `String.t()` and `binary()` are equivalent to analysis tools. Although, for those reading the documentation, `String.t()` implies it is a UTF-8 encoded binary.
+Note that `String.t()` and `binary()` are equivalent to analysis tools. Although, for those reading the documentation, `String.t()` implies it is a UTF-8 encoded binary.

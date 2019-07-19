@@ -15,25 +15,45 @@ defmodule Mix.Dep.Loader do
   current environment, behaviour can be overridden via options.
   """
   def children() do
-    mix_children([]) ++ Mix.Dep.Umbrella.unloaded()
+    mix_children(Mix.Project.config(), []) ++ Mix.Dep.Umbrella.unloaded()
   end
 
   @doc """
   Partitions loaded dependencies by environment.
   """
-  def partition_by_env(deps, nil), do: {deps, []}
-  def partition_by_env(deps, env), do: Enum.split_with(deps, &(not skip?(&1, env)))
+  def split_by_env_and_target(deps, {nil, nil}), do: {deps, []}
+
+  def split_by_env_and_target(deps, env_target),
+    do: Enum.split_with(deps, &(not skip?(&1, env_target)))
 
   @doc """
   Checks if a dependency must be skipped according to the environment.
   """
-  def skip?(_dep, nil), do: false
   def skip?(%Mix.Dep{status: {:divergedonly, _}}, _), do: false
+  def skip?(%Mix.Dep{status: {:divergedtargets, _}}, _), do: false
 
-  def skip?(%Mix.Dep{opts: opts}, env) do
-    only = opts[:only]
-    validate_only!(only)
-    only != nil and env not in List.wrap(only)
+  def skip?(%Mix.Dep{opts: opts}, {env, target}) do
+    skip?(opts[:only], :only, env) or skip?(opts[:targets], :targets, target)
+  end
+
+  # The dependency is not filtered
+  defp skip?(nil, _key, _value), do: false
+
+  # The command is not filtered
+  defp skip?(_maybe_list_of_atoms, _key, nil), do: false
+
+  # The dependency is filtered as well as the command
+  defp skip?(maybe_list_of_atoms, key, value) do
+    wrapped = List.wrap(maybe_list_of_atoms)
+
+    for entry <- wrapped, not is_atom(entry) do
+      Mix.raise(
+        "Expected #{inspect(key)} in dependency to be an atom or a list of atoms, " <>
+          "got: #{inspect(maybe_list_of_atoms)}"
+      )
+    end
+
+    value not in wrapped
   end
 
   def with_system_env(%Mix.Dep{system_env: []}, callback), do: callback.()
@@ -86,7 +106,7 @@ defmodule Mix.Dep.Loader do
           {dep, []}
       end
 
-    %{validate_app(dep) | deps: attach_only(children, opts)}
+    %{validate_app(dep) | deps: attach_only_and_targets(children, opts)}
   end
 
   @doc """
@@ -254,19 +274,23 @@ defmodule Mix.Dep.Loader do
   ## Fetching
 
   # We need to override the dependencies so they mirror
-  # the :only requirement in the parent.
-  defp attach_only(deps, opts) do
-    if only = opts[:only] do
-      Enum.map(deps, fn %{opts: opts} = dep ->
-        %{dep | opts: Keyword.put_new(opts, :only, only)}
-      end)
-    else
-      deps
+  # the :only and :targets requirements from the parent.
+  defp attach_only_and_targets(deps, opts) do
+    case Keyword.take(opts, [:only, :targets]) do
+      [] ->
+        deps
+
+      merge_opts ->
+        Enum.map(deps, fn %{opts: opts} = dep ->
+          %{dep | opts: Keyword.merge(merge_opts, opts)}
+        end)
     end
   end
 
-  defp mix_dep(%Mix.Dep{opts: opts} = dep, nil) do
+  defp mix_dep(%Mix.Dep{app: app, opts: opts} = dep, nil) do
     Mix.Dep.in_dependency(dep, fn _ ->
+      config = Mix.Project.config()
+
       opts =
         if Mix.Project.umbrella?() do
           Keyword.put_new(opts, :app, false)
@@ -276,12 +300,21 @@ defmodule Mix.Dep.Loader do
 
       child_opts =
         if opts[:from_umbrella] do
+          if config[:app] != app do
+            Mix.raise(
+              "Umbrella app #{inspect(config[:app])} is located at " <>
+                "directory #{app}. Mix requires the directory to match " <>
+                "the application name for umbrella apps. Please rename the " <>
+                "directory or change the application name in the mix.exs file."
+            )
+          end
+
           []
         else
           [env: Keyword.fetch!(opts, :env)]
         end
 
-      deps = mix_children(child_opts) ++ Mix.Dep.Umbrella.unloaded()
+      deps = mix_children(config, child_opts) ++ Mix.Dep.Umbrella.unloaded()
       {%{dep | opts: opts}, deps}
     end)
   end
@@ -319,22 +352,12 @@ defmodule Mix.Dep.Loader do
     {dep, []}
   end
 
-  defp validate_only!(only) do
-    for entry <- List.wrap(only), not is_atom(entry) do
-      Mix.raise(
-        "Expected :only in dependency to be an atom or a list of atoms, got: #{inspect(only)}"
-      )
-    end
-
-    only
-  end
-
-  defp mix_children(opts) do
+  defp mix_children(config, opts) do
     from = Path.absname("mix.exs")
 
-    (Mix.Project.config()[:deps] || [])
+    (config[:deps] || [])
     |> Enum.map(&to_dep(&1, from))
-    |> partition_by_env(opts[:env])
+    |> split_by_env_and_target({opts[:env], nil})
     |> elem(0)
   end
 
@@ -410,7 +433,10 @@ defmodule Mix.Dep.Loader do
         {:invalidapp, app_path}
 
       {:error, _} ->
-        {:noappfile, app_path}
+        case Path.wildcard(Path.join(Path.dirname(app_path), "*.app")) do
+          [other_app_path] -> {:noappfile, {app_path, other_app_path}}
+          _ -> {:noappfile, {app_path, nil}}
+        end
     end
   end
 end

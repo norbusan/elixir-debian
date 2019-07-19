@@ -18,7 +18,7 @@ defmodule Code.Typespec do
           uniq: true,
           do: {var, {:var, meta, nil}}
 
-    spec = {:::, meta, [body, typespec_to_quoted(result)]}
+    spec = {:"::", meta, [body, typespec_to_quoted(result)]}
 
     if vars == [] do
       spec
@@ -28,7 +28,7 @@ defmodule Code.Typespec do
   end
 
   def spec_to_quoted(name, {:type, line, :fun, []}) when is_atom(name) do
-    {:::, [line: line], [{name, [line: line], []}, quote(do: term)]}
+    {:"::", [line: line], [{name, [line: line], []}, quote(do: term)]}
   end
 
   def spec_to_quoted(name, {:type, line, :bounded_fun, [type, constrs]}) when is_atom(name) do
@@ -52,7 +52,7 @@ defmodule Code.Typespec do
     args = for arg <- args, do: typespec_to_quoted(arg)
 
     when_args = [
-      {:::, meta, [{name, [line: line], args}, typespec_to_quoted(result)]},
+      {:"::", meta, [{name, [line: line], args}, typespec_to_quoted(result)]},
       guards ++ vars
     ]
 
@@ -152,37 +152,23 @@ defmodule Code.Typespec do
     end
   end
 
-  # TODO: Do not rely on abstract_code when OTP 20+ support is dropped (v1.8).
-  # We should then be able to simplify this code and use `with`.
   defp typespecs_abstract_code(module) do
-    case get_module_and_beam(module) do
-      {module, binary} ->
-        case :beam_lib.chunks(binary, [:debug_info]) do
-          {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} ->
-            case data do
-              {:elixir_v1, %{}, specs} ->
-                # Fast path to avoid translation to Erlang from Elixir.
-                {:ok, specs}
+    with {module, binary} <- get_module_and_beam(module),
+         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
+           :beam_lib.chunks(binary, [:debug_info]) do
+      case data do
+        {:elixir_v1, %{}, specs} ->
+          # Fast path to avoid translation to Erlang from Elixir.
+          {:ok, specs}
 
-              _ ->
-                case backend.debug_info(:erlang_v1, module, data, []) do
-                  {:ok, abstract_code} -> {:ok, abstract_code}
-                  _ -> :error
-                end
-            end
-
-          _ ->
-            case :beam_lib.chunks(binary, [:abstract_code]) do
-              {:ok, {_, [{:abstract_code, {_raw_abstract_v1, abstract_code}}]}} ->
-                {:ok, abstract_code}
-
-              _ ->
-                :error
-            end
-        end
-
-      :error ->
-        :error
+        _ ->
+          case backend.debug_info(:erlang_v1, module, data, []) do
+            {:ok, abstract_code} -> {:ok, abstract_code}
+            _ -> :error
+          end
+      end
+    else
+      _ -> :error
     end
   end
 
@@ -343,7 +329,7 @@ defmodule Code.Typespec do
   end
 
   defp typespec_to_quoted({:var, line, var}) do
-    {erl_to_ex_var(var), line, nil}
+    {erl_to_ex_var(var), [line: line], nil}
   end
 
   defp typespec_to_quoted({:op, line, op, arg}) do
@@ -355,7 +341,7 @@ defmodule Code.Typespec do
   end
 
   defp typespec_to_quoted({:ann_type, line, [var, type]}) do
-    {:::, [line: line], [typespec_to_quoted(var), typespec_to_quoted(type)]}
+    {:"::", [line: line], [typespec_to_quoted(var), typespec_to_quoted(type)]}
   end
 
   defp typespec_to_quoted(

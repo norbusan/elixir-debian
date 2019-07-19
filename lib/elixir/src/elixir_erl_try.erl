@@ -65,16 +65,18 @@ normalize_rescue(Meta, Var, Pattern, Expr, ErlangAliases) ->
   prepend_to_block(Meta, {'=', Meta, [Pattern, Normalized]}, Expr).
 
 dynamic_normalize(Meta, Var, [H | T]) ->
+  Generated = ?generated(Meta),
+
   Guards =
     lists:foldl(fun(Alias, Acc) ->
-      {'when', Meta, [erl_rescue_stacktrace_for(Meta, Var, Alias), Acc]}
-    end, erl_rescue_stacktrace_for(Meta, Var, H), T),
+      {'when', Generated, [erl_rescue_stacktrace_for(Generated, Var, Alias), Acc]}
+    end, erl_rescue_stacktrace_for(Generated, Var, H), T),
 
-  {'case', Meta, [
+  {'case', Generated, [
     Var,
     [{do, [
-      {'->', Meta, [[{'when', Meta, [Var, Guards]}], {'__STACKTRACE__', Meta, nil}]},
-      {'->', Meta, [[{'_', Meta, nil}], []]}
+      {'->', Generated, [[{'when', Generated, [Var, Guards]}], {'__STACKTRACE__', Generated, nil}]},
+      {'->', Generated, [[{'_', Generated, nil}], []]}
     ]}]
   ]}.
 
@@ -85,7 +87,7 @@ erl_rescue_stacktrace_for(_Meta, _Var, 'Elixir.ErlangError') ->
   %% ErlangError is a "meta" exception, we should never expand it here.
   error(badarg);
 erl_rescue_stacktrace_for(Meta, Var, 'Elixir.KeyError') ->
-  %% Only the two element tuple requires stacktrace.
+  %% Only the two-element tuple requires stacktrace.
   erl_and(Meta, erl_tuple_size(Meta, Var, 2), erl_record_compare(Meta, Var, badkey));
 erl_rescue_stacktrace_for(Meta, Var, Module) ->
   erl_rescue_guard_for(Meta, Var, Module).
@@ -141,7 +143,7 @@ maybe_add_stacktrace(Line, Kind, Expr, Guards, Body, #elixir_erl{stacktrace = {V
       {clause, Line, [Match], Guards, Body};
     false ->
       Match = {tuple, Line, [Kind, Expr, {var, Line, '_'}]},
-      Stack = {match, Line, {var, Line, Var}, elixir_erl:remote(Line, erlang, get_stacktrace, [])},
+      Stack = {match, Line, {var, Line, Var}, ?remote(Line, erlang, get_stacktrace, [])},
       {clause, Line, [Match], Guards, [Stack | Body]}
   end;
 maybe_add_stacktrace(Line, Kind, Expr, Guards, Body, _) ->
@@ -151,7 +153,6 @@ maybe_add_stacktrace(Line, Kind, Expr, Guards, Body, _) ->
 %% TODO: Remove this check once we support Erlang/OTP 21+ exclusively.
 supports_stacktrace() ->
   case erlang:system_info(otp_release) of
-    "19" -> false;
     "20" -> false;
     _ -> true
   end.

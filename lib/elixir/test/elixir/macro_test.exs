@@ -44,7 +44,7 @@ defmodule MacroTest do
 
     test "escapes bitstring" do
       assert {:<<>>, [], args} = Macro.escape(<<300::12>>)
-      assert [{:::, [], [1, {:size, [], [4]}]}, {:::, [], [",", {:binary, [], []}]}] = args
+      assert [{:"::", [], [1, {:size, [], [4]}]}, {:"::", [], [",", {:binary, [], []}]}] = args
     end
 
     test "escapes recursively" do
@@ -121,6 +121,10 @@ defmodule MacroTest do
         quote(unquote: false, do: [1, unquote_splicing([2]), 3, unquote_splicing([4]) | [5]])
 
       assert eval_escaped(contents) == [1, 2, 3, 4, 5]
+    end
+
+    test "does not add context to quote" do
+      assert Macro.escape({:quote, [], [[do: :foo]]}) == {:{}, [], [:quote, [], [[do: :foo]]]}
     end
   end
 
@@ -232,8 +236,8 @@ defmodule MacroTest do
 
     test "does not expand module attributes" do
       message =
-        "could not call get_attribute with argument #{inspect(__MODULE__)} " <>
-          "because the module is already compiled"
+        "could not call Module.get_attribute/2 because the module #{inspect(__MODULE__)} " <>
+          "is already compiled. Use the Module.__info__/1 callback or Code.fetch_docs/1 instead"
 
       assert_raise ArgumentError, message, fn ->
         Macro.expand_once(quote(do: @foo), __ENV__)
@@ -289,7 +293,7 @@ defmodule MacroTest do
            end).bar([1, 2, 3])
         end
 
-      assert Macro.to_string(quoted) == "(foo() do\n  :ok\nend).bar([1, 2, 3])"
+      assert Macro.to_string(quoted) == "(foo do\n  :ok\nend).bar([1, 2, 3])"
     end
 
     test "atom remote call" do
@@ -449,7 +453,7 @@ defmodule MacroTest do
         end
 
       expected = """
-      try() do
+      try do
         foo
       rescue
         ArgumentError ->
@@ -749,7 +753,7 @@ defmodule MacroTest do
     test "to_match/1" do
       quote = quote(do: x in [])
 
-      assert {{:., _, [{:__aliases__, _, [Elixir, :Enum]}, :member?]}, _, _} =
+      assert {:__block__, [], [{:=, [], [{:_, [], Kernel}, {:x, [], MacroTest}]}, false]} =
                Macro.expand_once(quote, __ENV__)
 
       assert Macro.expand_once(quote, Macro.Env.to_match(__ENV__)) == false
@@ -780,7 +784,11 @@ defmodule MacroTest do
       Macro.pipe(1, quote(do: <<1>>), 0)
     end
 
-    # TODO: restore this test when we drop unary operator support in pipes
+    assert_raise ArgumentError, ~r"cannot pipe 1 into the special form unquote/1", fn ->
+      Macro.pipe(1, quote(do: unquote()), 0)
+    end
+
+    # TODO: Restore this test when we drop unary operator support in pipes
     # assert_raise ArgumentError, ~r"cannot pipe 1 into \+1", fn ->
     #   Macro.pipe(1, quote(do: + 1), 0)
     # end
@@ -901,12 +909,30 @@ defmodule MacroTest do
 
   test "generate_arguments/2" do
     assert Macro.generate_arguments(0, __MODULE__) == []
-    assert Macro.generate_arguments(1, __MODULE__) == [{:var1, [], __MODULE__}]
+    assert Macro.generate_arguments(1, __MODULE__) == [{:arg1, [], __MODULE__}]
     assert Macro.generate_arguments(4, __MODULE__) |> length == 4
   end
 
   defp postwalk(ast) do
     Macro.postwalk(ast, [], &{&1, [&1 | &2]}) |> elem(1) |> Enum.reverse()
+  end
+
+  test "struct!/2 expands structs multiple levels deep" do
+    defmodule StructBang do
+      defstruct [:a, :b]
+
+      assert Macro.struct!(StructBang, __ENV__) == %{__struct__: StructBang, a: nil, b: nil}
+
+      def within_function do
+        assert Macro.struct!(StructBang, __ENV__) == %{__struct__: StructBang, a: nil, b: nil}
+      end
+
+      defmodule Nested do
+        assert Macro.struct!(StructBang, __ENV__) == %{__struct__: StructBang, a: nil, b: nil}
+      end
+    end
+
+    assert Macro.struct!(StructBang, __ENV__) == %{__struct__: StructBang, a: nil, b: nil}
   end
 
   test "operator?/2" do

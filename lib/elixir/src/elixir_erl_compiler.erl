@@ -1,21 +1,70 @@
 -module(elixir_erl_compiler).
--export([forms/3, noenv_forms/3]).
+-export([spawn/2, forms/3, noenv_forms/3, erl_to_core/2, format_error/1]).
+-include("elixir.hrl").
+
+spawn(Fun, Args) ->
+  CompilerPid = get(elixir_compiler_pid),
+
+  {_, Ref} =
+    spawn_monitor(fun() ->
+      put(elixir_compiler_pid, CompilerPid),
+
+      try apply(Fun, Args) of
+        Result -> exit({ok, Result})
+      catch
+        ?WITH_STACKTRACE(Kind, Reason, Stack)
+          exit({Kind, Reason, Stack})
+      end
+    end),
+
+  receive
+    {'DOWN', Ref, process, _, {ok, Result}} ->
+      Result;
+    {'DOWN', Ref, process, _, {Kind, Reason, Stack}} ->
+      erlang:raise(Kind, Reason, Stack)
+  end.
 
 forms(Forms, File, Opts) ->
-  compile(fun compile:forms/2, Forms, File, Opts).
+  compile(Forms, File, Opts ++ compile:env_compiler_options()).
 
 noenv_forms(Forms, File, Opts) ->
-  compile(fun compile:noenv_forms/2, Forms, File, Opts).
+  compile(Forms, File, Opts).
 
-compile(Fun, Forms, File, Opts) when is_list(Forms), is_list(Opts), is_binary(File) ->
+erl_to_core(Forms, Opts) ->
+  %% TODO: Remove parse transform handling on Elixir v2.0
+  case [M || {parse_transform, M} <- Opts] of
+    [] ->
+      v3_core:module(Forms, Opts);
+    _ ->
+      case compile:noenv_forms(Forms, [?NO_SPAWN_COMPILER_PROCESS, to_core0, return, no_auto_import | Opts]) of
+        {ok, _Module, Core, Warnings} -> {ok, Core, Warnings};
+        {error, Errors, Warnings} -> {error, Errors, Warnings}
+      end
+  end.
+
+compile(Forms, File, Opts) when is_list(Forms), is_list(Opts), is_binary(File) ->
   Source = elixir_utils:characters_to_list(File),
-  case Fun(Forms, [return, {source, Source} | Opts]) of
-    {ok, Module, Binary, Warnings} ->
-      format_warnings(Opts, Warnings),
-      {Module, Binary};
-    {error, Errors, Warnings} ->
-      format_warnings(Opts, Warnings),
-      format_errors(Errors)
+
+  case erl_to_core(Forms, Opts) of
+    {ok, CoreForms, CoreWarnings} ->
+      format_warnings(Opts, CoreWarnings),
+
+      case compile:noenv_forms(CoreForms, [?NO_SPAWN_COMPILER_PROCESS, from_core, no_auto_import, return, {source, Source} | Opts]) of
+        {ok, Module, Binary, Warnings} when is_binary(Binary) ->
+          format_warnings(Opts, Warnings),
+          {Module, Binary};
+
+        {ok, Module, _Binary, _Warnings} ->
+          elixir_errors:form_error([], File, ?MODULE, {invalid_compilation, Module});
+
+        {error, Errors, Warnings} ->
+          format_warnings(Opts, Warnings),
+          format_errors(Errors)
+      end;
+
+    {error, CoreErrors, CoreWarnings} ->
+      format_warnings(Opts, CoreWarnings),
+      format_errors(CoreErrors)
   end.
 
 format_errors([]) ->
@@ -41,53 +90,31 @@ format_warnings(Opts, Warnings) ->
 handle_file_warning(true, _File, {_Line, sys_core_fold, nomatch_guard}) -> ok;
 handle_file_warning(true, _File, {_Line, sys_core_fold, {nomatch_shadow, _}}) -> ok;
 
-%% Ignore always
+%% Those we implement ourselves
+handle_file_warning(_, _File, {_Line, v3_core, {map_key_repeated, _}}) -> ok;
 handle_file_warning(_, _File, {_Line, sys_core_fold, useless_building}) -> ok;
 
-%% This is an Erlang bug, it considers {tuple, _}.call to always fail
-handle_file_warning(_, _File, {_Line, v3_kernel, bad_call}) -> ok;
-
-%% Those we handle them ourselves
-handle_file_warning(_, _File, {_Line, erl_lint, {unused_function, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {unused_var, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {shadowed_var, _, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {exported_var, _, _}}) -> ok;
-
-%% Ignore behaviour warnings as we check for these problem ourselves
-handle_file_warning(_, _File, {_Line, erl_lint, {conflicting_behaviours, _, _, _, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {undefined_behaviour_func, _, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {undefined_behaviour, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {ill_defined_behaviour_callbacks, _}}) -> ok;
-handle_file_warning(_, _File, {_Line, erl_lint, {ill_defined_optional_callbacks, _}}) -> ok;
+%% Ignore all linting errors (only come up on parse transforms)
+handle_file_warning(_, _File, {_Line, erl_lint, _}) -> ok;
 
 handle_file_warning(_, File, {Line, Module, Desc}) ->
-  Message = format_error(Module, Desc),
-  elixir_errors:warn(Line, File, Message).
+  Message = custom_format(Module, Desc),
+  elixir_errors:erl_warn(Line, File, Message).
 
 %% Handle warnings
 
 handle_file_error(File, {beam_validator, Rest}) ->
   elixir_errors:form_error([{line, 0}], File, beam_validator, Rest);
 handle_file_error(File, {Line, Module, Desc}) ->
-  Message = format_error(Module, Desc),
+  Message = custom_format(Module, Desc),
   elixir_errors:compile_error([{line, Line}], File, Message).
 
-%% Custom formatting
-
-%% Normalize formatting of functions
-format_error(erl_lint, {undefined_function, {F, A}}) ->
-  io_lib:format("undefined function ~ts/~B", [F, A]);
-
-%% Normalize formatting of specs
-format_error(erl_lint, {spec_fun_undefined, {M, F, A}}) ->
-  io_lib:format("spec for undefined function ~ts.~ts/~B", [elixir_aliases:inspect(M), F, A]);
-
 %% Mention the capture operator in make_fun
-format_error(sys_core_fold, {no_effect, {erlang, make_fun, 3}}) ->
+custom_format(sys_core_fold, {no_effect, {erlang, make_fun, 3}}) ->
   "the result of the capture operator & (:erlang.make_fun/3) is never used";
 
 %% Make no_effect clauses pretty
-format_error(sys_core_fold, {no_effect, {erlang, F, A}}) ->
+custom_format(sys_core_fold, {no_effect, {erlang, F, A}}) ->
   {Fmt, Args} = case erl_internal:comp_op(F, A) of
     true -> {"use of operator ~ts has no effect", [elixir_utils:erlang_comparison_op_to_elixir(F)]};
     false ->
@@ -98,21 +125,27 @@ format_error(sys_core_fold, {no_effect, {erlang, F, A}}) ->
   end,
   io_lib:format(Fmt, Args);
 
-%% Rewrite nomatch_guard to be more generic it can happen inside if, unless, etc
-format_error(sys_core_fold, nomatch_guard) ->
+%% Rewrite nomatch_guard to be more generic it can happen inside if, unless, etc.
+custom_format(sys_core_fold, nomatch_guard) ->
   "this check/guard will always yield the same result";
 
-%% Properly format keys using inspect.
-format_error(v3_core, {map_key_repeated, Key}) ->
-    io_lib:format("key ~ts will be overridden in map", ['Elixir.Kernel':inspect(Key)]);
-
 %% Handle literal eval failures
-format_error(sys_core_fold, {eval_failure, Error}) ->
+custom_format(sys_core_fold, {eval_failure, Error}) ->
   #{'__struct__' := Struct} = 'Elixir.Exception':normalize(error, Error),
   ["this expression will fail with ", elixir_aliases:inspect(Struct)];
 
-format_error([], Desc) ->
+custom_format([], Desc) ->
   io_lib:format("~p", [Desc]);
 
-format_error(Module, Desc) ->
+custom_format(Module, Desc) ->
   Module:format_error(Desc).
+
+%% Error formatting
+
+format_error({invalid_compilation, Module}) ->
+  io_lib:format(
+    "could not compile module ~ts. We expected the compiler to return a .beam binary but "
+    "got something else. This usually happens because ERL_COMPILER_OPTIONS or @compile "
+    "was set to change the compilation outcome in a way that is incompatible with Elixir",
+    [elixir_aliases:inspect(Module)]
+  ).

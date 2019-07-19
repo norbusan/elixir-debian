@@ -70,9 +70,17 @@ defmodule Kernel.DocsTest do
       end
     end
 
-    assert_raise ArgumentError, ~r/should be a string, boolean, keyword list, or nil/, fn ->
+    message = ~r/should be either false, nil, a string, or a keyword list/
+
+    assert_raise ArgumentError, message, fn ->
       defmodule AtSyntaxDocAttributesFormat do
         @moduledoc :not_a_binary
+      end
+    end
+
+    assert_raise ArgumentError, message, fn ->
+      defmodule AtSyntaxDocAttributesFormat do
+        @moduledoc true
       end
     end
   end
@@ -164,8 +172,16 @@ defmodule Kernel.DocsTest do
           @callback bar() :: term
           @callback baz(any, term) :: any
 
+          @doc "Callback with multiple clauses"
+          @callback callback_multi(integer) :: integer
+          @callback callback_multi(atom) :: atom
+
           @doc "Macrocallback doc"
           @macrocallback qux(any) :: any
+
+          @doc "Macrocallback with multiple clauses"
+          @macrocallback macrocallback_multi(integer) :: integer
+          @macrocallback macrocallback_multi(atom) :: atom
 
           @doc "Function doc"
           @doc since: "1.2.3", color: :red
@@ -173,7 +189,7 @@ defmodule Kernel.DocsTest do
           @deprecated "use baz/2 instead"
           def foo(arg \\ 0), do: arg + 1
 
-          @doc "Multiple bodiless clause doc"
+          @doc "Multiple function head doc"
           @deprecated "something else"
           def bar(_arg)
           def bar(_arg)
@@ -183,12 +199,15 @@ defmodule Kernel.DocsTest do
           @doc since: "1.2"
           def baz(_arg)
           def baz(arg), do: arg + 1
-          @doc "Multiple bodiless clause and docs"
+          @doc "Multiple function head and docs"
           @doc since: "1.2.3"
           def baz(_arg)
 
           @doc false
           def qux(true), do: false
+
+          @doc "A guard"
+          defguard is_zero(v) when v == 0
 
           # We do this to avoid the deprecation warning.
           module = Module
@@ -207,6 +226,7 @@ defmodule Kernel.DocsTest do
       [
         callback_bar,
         callback_baz,
+        callback_multi,
         callback_foo,
         function_struct_0,
         function_struct_1,
@@ -215,6 +235,8 @@ defmodule Kernel.DocsTest do
         function_foo,
         function_nullary,
         function_qux,
+        guard_is_zero,
+        macrocallback_multi,
         macrocallback_qux,
         type_bar,
         type_foo
@@ -227,16 +249,19 @@ defmodule Kernel.DocsTest do
               %{since: "1.2.3", deprecated: "use baz/2 instead", color: :blue, stable: true}} =
                callback_foo
 
+      assert {{:callback, :callback_multi, 1}, _, [], %{"en" => "Callback with multiple clauses"},
+              %{}} = callback_multi
+
       assert {{:function, :__struct__, 0}, _, ["%Kernel.DocsTest.SampleDocs{}"],
               %{"en" => "My struct"}, %{}} = function_struct_0
 
       assert {{:function, :__struct__, 1}, _, ["__struct__(kv)"], :none, %{}} = function_struct_1
 
-      assert {{:function, :bar, 1}, _, ["bar(arg)"], %{"en" => "Multiple bodiless clause doc"},
+      assert {{:function, :bar, 1}, _, ["bar(arg)"], %{"en" => "Multiple function head doc"},
               %{deprecated: "something else"}} = function_bar
 
-      assert {{:function, :baz, 1}, _, ["baz(arg)"],
-              %{"en" => "Multiple bodiless clause and docs"}, %{since: "1.2.3"}} = function_baz
+      assert {{:function, :baz, 1}, _, ["baz(arg)"], %{"en" => "Multiple function head and docs"},
+              %{since: "1.2.3"}} = function_baz
 
       assert {{:function, :foo, 1}, _, ["foo(arg \\\\ 0)"], %{"en" => "Function doc"},
               %{
@@ -251,6 +276,12 @@ defmodule Kernel.DocsTest do
                function_nullary
 
       assert {{:function, :qux, 1}, _, ["qux(bool)"], :hidden, %{}} = function_qux
+
+      assert {{:macro, :is_zero, 1}, _, ["is_zero(v)"], %{"en" => "A guard"}, %{guard: true}} =
+               guard_is_zero
+
+      assert {{:macrocallback, :macrocallback_multi, 1}, _, [],
+              %{"en" => "Macrocallback with multiple clauses"}, %{}} = macrocallback_multi
 
       assert {{:macrocallback, :qux, 1}, _, [], %{"en" => "Macrocallback doc"}, %{}} =
                macrocallback_qux
@@ -299,5 +330,13 @@ defmodule Kernel.DocsTest do
              {{:foo, 1}, %{"en" => "Foo docs"}},
              {{:fuz, 0}, :none}
            ] = Enum.sort(function_docs)
+  end
+
+  describe "special signatures" do
+    test "fn" do
+      {:docs_v1, _, _, _, _, _, docs} = Code.fetch_docs(Kernel.SpecialForms)
+      {_, _, fn_docs, _, _} = Enum.find(docs, &match?({_, :fn, 1}, elem(&1, 0)))
+      assert fn_docs == ["fn"]
+    end
   end
 end

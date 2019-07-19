@@ -95,13 +95,26 @@ defmodule TaskTest do
     assert task.pid in links
 
     receive do: (:ready -> :ok)
-
     assert {__MODULE__, :wait_and_send, 2} === :proc_lib.translate_initial_call(task.pid)
 
     send(task.pid, true)
-
     assert Task.await(task) === :done
     assert_receive :done
+  end
+
+  test "async with $callers" do
+    grandparent = self()
+
+    Task.async(fn ->
+      parent = self()
+      assert Process.get(:"$callers") == [grandparent]
+
+      Task.async(fn ->
+        assert Process.get(:"$callers") == [parent, grandparent]
+      end)
+      |> Task.await()
+    end)
+    |> Task.await()
   end
 
   test "start/1" do
@@ -166,9 +179,25 @@ defmodule TaskTest do
     assert_receive :done
   end
 
+  test "start_link with $callers" do
+    grandparent = self()
+
+    Task.start_link(fn ->
+      parent = self()
+      assert Process.get(:"$callers") == [grandparent]
+
+      Task.start_link(fn ->
+        assert Process.get(:"$callers") == [parent, grandparent]
+        send(grandparent, :done)
+      end)
+    end)
+
+    assert_receive :done
+  end
+
   describe "await/2" do
     test "exits on timeout" do
-      task = %Task{ref: make_ref(), owner: self()}
+      task = %Task{ref: make_ref(), owner: self(), pid: nil}
       assert catch_exit(Task.await(task, 0)) == {:timeout, {Task, :await, [task, 0]}}
     end
 
@@ -223,7 +252,7 @@ defmodule TaskTest do
 
     test "exits on :noconnection from named monitor" do
       ref = make_ref()
-      task = %Task{ref: ref, pid: nil, owner: self()}
+      task = %Task{ref: ref, owner: self(), pid: nil}
       send(self(), {:DOWN, ref, :process, {:name, :node}, :noconnection})
       assert catch_exit(Task.await(task)) |> elem(0) == {:nodedown, :node}
     end
@@ -241,7 +270,7 @@ defmodule TaskTest do
 
   describe "yield/2" do
     test "returns {:ok, result} when reply and :DOWN in message queue" do
-      task = %Task{ref: make_ref(), owner: self()}
+      task = %Task{ref: make_ref(), owner: self(), pid: nil}
       send(self(), {task.ref, :result})
       send(self(), {:DOWN, task.ref, :process, self(), :abnormal})
       assert Task.yield(task, 0) == {:ok, :result}
@@ -249,7 +278,7 @@ defmodule TaskTest do
     end
 
     test "returns nil on timeout" do
-      task = %Task{ref: make_ref(), owner: self()}
+      task = %Task{ref: make_ref(), pid: nil, owner: self()}
       assert Task.yield(task, 0) == nil
     end
 
@@ -278,7 +307,7 @@ defmodule TaskTest do
 
   describe "yield_many/2" do
     test "returns {:ok, result} when reply and :DOWN in message queue" do
-      task = %Task{ref: make_ref(), owner: self()}
+      task = %Task{ref: make_ref(), owner: self(), pid: nil}
       send(self(), {task.ref, :result})
       send(self(), {:DOWN, task.ref, :process, self(), :abnormal})
       assert Task.yield_many([task], 0) == [{task, {:ok, :result}}]
@@ -286,7 +315,7 @@ defmodule TaskTest do
     end
 
     test "returns nil on timeout" do
-      task = %Task{ref: make_ref(), owner: self()}
+      task = %Task{ref: make_ref(), owner: self(), pid: nil}
       assert Task.yield_many([task], 0) == [{task, nil}]
     end
 
@@ -313,9 +342,9 @@ defmodule TaskTest do
     end
 
     test "returns results from multiple tasks" do
-      task1 = %Task{ref: make_ref(), owner: self()}
-      task2 = %Task{ref: make_ref(), owner: self()}
-      task3 = %Task{ref: make_ref(), owner: self()}
+      task1 = %Task{ref: make_ref(), owner: self(), pid: nil}
+      task2 = %Task{ref: make_ref(), owner: self(), pid: nil}
+      task3 = %Task{ref: make_ref(), owner: self(), pid: nil}
 
       send(self(), {task1.ref, :result})
       send(self(), {:DOWN, task3.ref, :process, self(), :normal})
@@ -325,9 +354,9 @@ defmodule TaskTest do
     end
 
     test "returns results on infinity timeout" do
-      task1 = %Task{ref: make_ref(), owner: self()}
-      task2 = %Task{ref: make_ref(), owner: self()}
-      task3 = %Task{ref: make_ref(), owner: self()}
+      task1 = %Task{ref: make_ref(), owner: self(), pid: nil}
+      task2 = %Task{ref: make_ref(), owner: self(), pid: nil}
+      task3 = %Task{ref: make_ref(), owner: self(), pid: nil}
 
       send(self(), {task1.ref, :result})
       send(self(), {task2.ref, :result})
@@ -355,7 +384,7 @@ defmodule TaskTest do
       refute_received {:DOWN, _, _, _, _}
     end
 
-    test "returns {:ok, result} when reply and shutdown :DOWN in message queue" do
+    test "returns {:ok, result} when reply and shut down :DOWN in message queue" do
       task = create_dummy_task(:shutdown)
       send(self(), {task.ref, :result})
       send(self(), {:DOWN, task.ref, :process, task.pid, :shutdown})
@@ -401,7 +430,7 @@ defmodule TaskTest do
     end
 
     test "raises if task PID is nil" do
-      task = %Task{ref: make_ref(), pid: nil}
+      task = %Task{ref: make_ref(), owner: nil, pid: nil}
       message = "task #{inspect(task)} does not have an associated task process"
       assert_raise ArgumentError, message, fn -> Task.shutdown(task) end
     end
@@ -455,7 +484,7 @@ defmodule TaskTest do
       refute_received {:DOWN, _, _, _, _}
     end
 
-    test "returns {:ok, result} when reply and shutdown :DOWN in message queue" do
+    test "returns {:ok, result} when reply and shut down :DOWN in message queue" do
       task = create_dummy_task(:shutdown)
       send(self(), {task.ref, :result})
       send(self(), {:DOWN, task.ref, :process, task.pid, :shutdown})
@@ -549,6 +578,24 @@ defmodule TaskTest do
 
     test "streams an enumerable with infinite timeout" do
       [ok: :ok] = Task.async_stream([1], fn _ -> :ok end, timeout: :infinity) |> Enum.to_list()
+    end
+
+    test "with $callers" do
+      grandparent = self()
+
+      Task.async_stream([1], fn 1 ->
+        parent = self()
+        assert Process.get(:"$callers") == [grandparent]
+
+        Task.async_stream([1], fn 1 ->
+          assert Process.get(:"$callers") == [parent, grandparent]
+          send(grandparent, :done)
+        end)
+        |> Stream.run()
+      end)
+      |> Stream.run()
+
+      assert_receive :done
     end
   end
 

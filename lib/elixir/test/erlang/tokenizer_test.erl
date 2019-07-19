@@ -127,7 +127,7 @@ newline_test() ->
    {'.', {2, 1, nil}},
    {identifier, {2, 2, nil}, bar}]  = tokenize("foo\n.bar"),
   [{int, {1, 1, 1}, "1"},
-   {two_op, {2, 1, eol}, '++'},
+   {two_op, {2, 1, 1}, '++'},
    {int, {2, 3, 2}, "2"}]  = tokenize("1\n++2").
 
 dot_newline_operator_test() ->
@@ -139,6 +139,12 @@ dot_newline_operator_test() ->
    {'.', {1, 4, nil}},
    {identifier, {2, 1, nil}, '+'},
    {int, {2, 2, 1}, "1"}] = tokenize("foo.#bar\n+1").
+
+dot_call_operator_test() ->
+  [{identifier, {1, 1, nil}, f},
+   {dot_call_op, {1, 2, nil}, '.'},
+   {'(', {1, 3, nil}},
+   {')', {1, 4, nil}}] = tokenize("f.()").
 
 aliases_test() ->
   [{'alias', {1, 1, nil}, 'Foo'}] = tokenize("Foo"),
@@ -183,7 +189,7 @@ chars_test() ->
   [{char, {1, 1, "?\\\\"}, 92}] = tokenize("?\\\\").
 
 interpolation_test() ->
-  [{bin_string, {1, 1, nil}, [<<"f">>, {{1, 3, 1}, [{identifier, {1, 5, nil}, oo}]}]},
+  [{bin_string, {1, 1, nil}, [<<"f">>, {{1, 3, nil},{1, 7, nil}, [{identifier, {1, 5, nil}, oo}]}]},
    {two_op, {1, 10, nil}, '<>'},
    {bin_string, {1, 13, nil}, [<<>>]}] = tokenize("\"f#{oo}\" <> \"\"").
 
@@ -221,4 +227,4 @@ sigil_terminator_test() ->
 
 invalid_sigil_delimiter_test() ->
   {1, 1, "invalid sigil delimiter: ", Message} = tokenize_error("~s\\"),
-  true = lists:prefix("\"\\\" (column 3, codepoint U+005C)", lists:flatten(Message)).
+  true = lists:prefix("\"\\\" (column 3, code point U+005C)", lists:flatten(Message)).

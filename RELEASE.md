@@ -20,7 +20,9 @@
 
 9. Publish new zips with `make zips`, upload `Precompiled.zip` and `Docs.zip` to GitHub Releases, and include SHAs+CHANGELOG
 
-10. Add the release to `elixir.csv` and `_data/elixir-versions.yml` files in `elixir-lang/elixir-lang.github.com`
+10. Add the release to `elixir.csv` (all releases) and `_data/elixir-versions.yml` (except for RCs) files in `elixir-lang/elixir-lang.github.com`
+
+11. Send an e-mail to elixir-lang-ann@googlegroups.com with title "Elixir vVERSION released". The body should be a link to the Release page on GitHub and the checksums. If it is a security release, prefix the title with the `[security]` tag
 
 ## Creating a new vMAJOR.MINOR branch
 
@@ -28,7 +30,7 @@
 
 1. Set `CANONICAL=` in /Makefile
 
-2. Update **all** tables in "Compatibility and Deprecations"
+2. Update tables in /SECURITY.md and "Compatibility and Deprecations"
 
 3. Commit "Prepare vMAJOR.MINOR for release"
 
@@ -38,4 +40,6 @@
 
 2. Start new /CHANGELOG.md
 
-3. Commit "Start vMAJOR.MINOR+1"
+3. Update tables in "Compatibility and Deprecations"
+
+4. Commit "Start vMAJOR.MINOR+1"

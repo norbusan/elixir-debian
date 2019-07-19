@@ -27,7 +27,7 @@ defmodule Kernel.DialyzerTest do
     dialyzer_run(analysis_type: :plt_build, output_plt: plt, apps: [:erts], files: files)
 
     # Compile Dialyzer fixtures
-    assert '' = elixirc("#{fixture_path("dialyzer")} -o #{dir}")
+    assert elixirc("#{fixture_path("dialyzer")} -o #{dir}") == ""
 
     {:ok, [base_dir: dir, base_plt: plt]}
   end
@@ -100,6 +100,7 @@ defmodule Kernel.DialyzerTest do
     assert_dialyze_no_warnings!(context)
   end
 
+  @tag warnings: [:specdiffs]
   test "no warnings on protocol calls with opaque types", context do
     alias Dialyzer.ProtocolOpaque
 
@@ -120,6 +121,11 @@ defmodule Kernel.DialyzerTest do
     assert_dialyze_no_warnings!(context)
   end
 
+  test "no warnings on cond", context do
+    copy_beam!(context, Dialyzer.Cond)
+    assert_dialyze_no_warnings!(context)
+  end
+
   test "no warnings on for comprehensions with bitstrings", context do
     copy_beam!(context, Dialyzer.ForBitstring)
     assert_dialyze_no_warnings!(context)
@@ -130,15 +136,18 @@ defmodule Kernel.DialyzerTest do
     assert_dialyze_no_warnings!(context)
   end
 
-  if :erlang.system_info(:otp_release) >= '20' do
-    test "no warnings on with/else", context do
-      copy_beam!(context, Dialyzer.With)
-      assert_dialyze_no_warnings!(context)
-    end
+  test "no warnings on with/else", context do
+    copy_beam!(context, Dialyzer.With)
+    assert_dialyze_no_warnings!(context)
   end
 
   test "no warnings on defmacrop", context do
     copy_beam!(context, Dialyzer.Defmacrop)
+    assert_dialyze_no_warnings!(context)
+  end
+
+  test "no warnings on try", context do
+    copy_beam!(context, Dialyzer.Try)
     assert_dialyze_no_warnings!(context)
   end
 

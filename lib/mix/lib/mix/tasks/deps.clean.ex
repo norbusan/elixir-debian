@@ -24,6 +24,7 @@ defmodule Mix.Tasks.Deps.Clean do
 
   @switches [unlock: :boolean, all: :boolean, only: :string, unused: :boolean, build: :boolean]
 
+  @impl true
   def run(args) do
     Mix.Project.get!()
     {opts, apps, _} = OptionParser.parse(args, switches: @switches)
@@ -31,11 +32,15 @@ defmodule Mix.Tasks.Deps.Clean do
     build_path =
       Mix.Project.build_path()
       |> Path.dirname()
-      |> Path.join("#{opts[:only] || :*}/lib")
+      |> Path.join("*#{opts[:only]}/lib")
 
     deps_path = Mix.Project.deps_path()
 
-    loaded_opts = if only = opts[:only], do: [env: :"#{only}"], else: []
+    loaded_opts =
+      for {switch, key} <- [only: :env, target: :target],
+          value = opts[switch],
+          do: {key, :"#{value}"}
+
     loaded_deps = Mix.Dep.load_on_environment(loaded_opts)
 
     apps_to_clean =
@@ -52,7 +57,7 @@ defmodule Mix.Tasks.Deps.Clean do
         true ->
           Mix.raise(
             "\"mix deps.clean\" expects dependencies as arguments or " <>
-              "a flag indicating which dependencies to clean. " <>
+              "an option indicating which dependencies to clean. " <>
               "The --all option will clean all dependencies while " <>
               "the --unused option cleans unused dependencies"
           )

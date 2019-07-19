@@ -80,7 +80,7 @@ defmodule Logger.Translator do
   end
 
   ## Erlang/OTP 20 and before
-  # TODO: This clauses can be removed when we support only Erlang/OTP 21+.
+  # TODO: These clauses can be removed when we support only Erlang/OTP 21+.
 
   def translate(min_level, :error, :format, message) do
     opts = Application.get_env(:logger, :translator_inspect_opts)
@@ -125,6 +125,19 @@ defmodule Logger.Translator do
             ["\n    Args: #{inspect(args, opts)}"]
 
         {:ok, msg, metadata}
+
+      {'Error in process ' ++ _, [pid, node, {reason, stack}]} ->
+        reason = Exception.normalize(:error, reason, stack)
+
+        msg = [
+          "Process ",
+          inspect(pid),
+          " on node ",
+          inspect(node),
+          " raised an exception" | format(:error, reason, stack)
+        ]
+
+        {:ok, msg, [crash_reason: exit_reason(:error, reason, stack)]}
 
       {'Error in process ' ++ _, [pid, {reason, stack}]} ->
         reason = Exception.normalize(:error, reason, stack)
@@ -319,11 +332,12 @@ defmodule Logger.Translator do
   defp sup_name({:global, name}), do: inspect(name)
   defp sup_name({:via, _mod, name}), do: inspect(name)
   defp sup_name({pid, mod}), do: [inspect(pid), " (", inspect(mod), ?)]
+  defp sup_name(unknown_name), do: inspect(unknown_name)
 
   defp sup_context(:start_error), do: "failed to start"
   defp sup_context(:child_terminated), do: "terminated"
   defp sup_context(:shutdown), do: "caused shutdown"
-  defp sup_context(:shutdown_error), do: "shutdown abnormally"
+  defp sup_context(:shutdown_error), do: "shut down abnormally"
 
   defp child_info(min_level, [{:mfargs, {mod, fun, args}} | debug]) do
     ["\nStart Call: ", format_mfa(mod, fun, args) | child_debug(min_level, debug)]
@@ -368,9 +382,10 @@ defmodule Logger.Translator do
       {:error_info, {kind, reason, stack}} | crashed
     ] = crashed
 
+    dictionary = crashed[:dictionary]
     reason = Exception.normalize(kind, reason, stack)
 
-    case crashed[:dictionary][:logger_metadata] || {true, []} do
+    case Keyword.get(dictionary, :logger_metadata, {true, []}) do
       {false, _} ->
         :skip
 
@@ -379,8 +394,14 @@ defmodule Logger.Translator do
           ["Process ", crash_name(pid, name), " terminating", format(kind, reason, stack)] ++
             [crash_info(min_level, extra ++ crashed, [?\n]), crash_linked(min_level, linked)]
 
-        crash_metadata = [crash_reason: exit_reason(kind, reason, stack)] ++ registered_name(name)
-        {:ok, msg, crash_metadata ++ extra ++ user_metadata}
+        extra =
+          if ancestors = crashed[:ancestors], do: [{:ancestors, ancestors} | extra], else: extra
+
+        extra =
+          if callers = dictionary[:"$callers"], do: [{:callers, callers} | extra], else: extra
+
+        extra = [{:crash_reason, exit_reason(kind, reason, stack)} | extra]
+        {:ok, msg, registered_name(name) ++ extra ++ user_metadata}
     end
   end
 
@@ -559,10 +580,7 @@ defmodule Logger.Translator do
   defp format_mfa(mod, fun, args),
     do: Exception.format_mfa(mod, fun, args)
 
-  defp exit_reason(:exit, reason, stack) do
-    if :erlang.system_info(:otp_release) >= '20', do: {reason, stack}, else: nil
-  end
-
+  defp exit_reason(:exit, reason, stack), do: {reason, stack}
   defp exit_reason(:error, reason, stack), do: {reason, stack}
   defp exit_reason(:throw, value, stack), do: {{:nocatch, value}, stack}
 

@@ -2,42 +2,11 @@ defmodule Logger.Utils do
   @moduledoc false
 
   @doc """
-  Computes the logging mode.
-
-  The result may be either :sync, :async or :discard.
-  """
-  @spec compute_mode(
-          mode,
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer()
-        ) :: mode
-        when mode: :sync | :async | :discard
-  def compute_mode(
-        mode,
-        messages,
-        async_threshold,
-        sync_threshold,
-        keep_threshold,
-        discard_threshold
-      ) do
-    case mode do
-      _ when messages >= discard_threshold -> :discard
-      :discard when messages > keep_threshold -> :discard
-      _ when messages >= sync_threshold -> :sync
-      :sync when messages > async_threshold -> :sync
-      _ -> :async
-    end
-  end
-
-  @doc """
   Truncates a `chardata` into `n` bytes.
 
   There is a chance we truncate in the middle of a grapheme
   cluster but we never truncate in the middle of a binary
-  codepoint. For this reason, truncation is not exact.
+  code point. For this reason, truncation is not exact.
   """
   @spec truncate(IO.chardata(), non_neg_integer) :: IO.chardata()
   def truncate(chardata, :infinity) when is_binary(chardata) or is_list(chardata) do
@@ -100,7 +69,7 @@ defmodule Logger.Utils do
 
   defp fix_binary(binary) do
     # Use a thirteen-bytes offset to look back in the binary.
-    # This should allow at least two codepoints of 6 bytes.
+    # This should allow at least two code points of 6 bytes.
     suffix_size = min(byte_size(binary), 13)
     prefix_size = byte_size(binary) - suffix_size
     <<prefix::binary-size(prefix_size), suffix::binary-size(suffix_size)>> = binary

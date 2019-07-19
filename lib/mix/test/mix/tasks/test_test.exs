@@ -123,24 +123,32 @@ defmodule Mix.Tasks.TestTest do
     end)
   end
 
-  test "--cover: in an umbrella application, reports on the coverage of each app's modules exactly once" do
-    in_fixture("umbrella_cover", fn ->
+  test "--cover: reports the coverage of each app's modules in an umbrella" do
+    in_fixture("umbrella_test", fn ->
       output = mix(["test", "--cover"])
 
-      occurrences_of_bar_coverage =
-        output
-        |> String.split("100.00% | Bar")
-        |> length()
-        |> (&(&1 - 1)).()
+      # For bar, we do regular --cover and also test protocols
+      assert output =~ """
+             Generating cover results ...
 
-      occurrences_of_foo_coverage =
-        output
-        |> String.split("100.00% | Foo")
-        |> length()
-        |> (&(&1 - 1)).()
+             Percentage | Module
+             -----------|--------------------------
+                100.00% | Bar
+                100.00% | Bar.Protocol.BitString
+             -----------|--------------------------
+                100.00% | Total
+             """
 
-      assert occurrences_of_bar_coverage == 1
-      assert occurrences_of_foo_coverage == 1
+      # For foo, we do regular --cover and test it does not include bar
+      assert output =~ """
+             Generating cover results ...
+
+             Percentage | Module
+             -----------|--------------------------
+                100.00% | Foo
+             -----------|--------------------------
+                100.00% | Total
+             """
     end)
   end
 
@@ -178,7 +186,7 @@ defmodule Mix.Tasks.TestTest do
 
       # `--failed` and `--stale` cannot be combined
       output = mix(["test", "--failed", "--stale"])
-      assert output =~ "Combining `--failed` and `--stale` is not supported"
+      assert output =~ "Combining --failed and --stale is not supported"
     end)
   after
     System.delete_env("PASS_FAILING_TESTS")
@@ -254,6 +262,74 @@ defmodule Mix.Tasks.TestTest do
       Port.command(port, "\n")
 
       assert receive_until_match(port, "seed", "") =~ "2 tests"
+    end)
+  end
+
+  test "raises an exception if line numbers are given with multiple files" do
+    Mix.env(:test)
+
+    in_fixture("test_failed", fn ->
+      Mix.Project.in_project(:test_only_failures, ".", fn _ ->
+        # fails if a line number is given for one file
+        assert_raise(
+          Mix.Error,
+          "Line numbers can only be used when running a single test file",
+          fn ->
+            Mix.Tasks.Test.run([
+              "test/only_failing_test_failed.exs",
+              "test/passing_and_failing_test_failed.exs:4"
+            ])
+          end
+        )
+
+        # fails if a line number is given for both files
+        assert_raise(
+          Mix.Error,
+          "Line numbers can only be used when running a single test file",
+          fn ->
+            Mix.Tasks.Test.run([
+              "test/only_failing_test_failed.exs:4",
+              "test/passing_and_failing_test_failed.exs:4"
+            ])
+          end
+        )
+      end)
+    end)
+  end
+
+  test "umbrella with file path" do
+    in_fixture("umbrella_test", fn ->
+      # Run false positive test first so at least the code is compiled
+      # and we can perform more aggressive assertions later
+      assert mix(["test", "apps/unknown_app/test"]) =~ """
+             ==> bar
+             Paths given to "mix test" did not match any directory/file: apps/unknown_app/test
+             ==> foo
+             Paths given to "mix test" did not match any directory/file: apps/unknown_app/test
+             """
+
+      output = mix(["test", "apps/bar/test/bar_tests.exs"])
+
+      assert output =~ """
+             ==> bar
+             .
+             """
+
+      refute output =~ "==> foo"
+      refute output =~ "Paths given to \"mix test\" did not match any directory/file"
+
+      output = mix(["test", "apps/bar/test/bar_tests.exs:10"])
+
+      assert output =~ """
+             ==> bar
+             Excluding tags: [:test]
+             Including tags: [line: \"10\"]
+
+             .
+             """
+
+      refute output =~ "==> foo"
+      refute output =~ "Paths given to \"mix test\" did not match any directory/file"
     end)
   end
 

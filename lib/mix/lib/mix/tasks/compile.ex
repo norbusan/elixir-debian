@@ -49,9 +49,11 @@ defmodule Mix.Tasks.Compile do
     * `--no-protocol-consolidation` - skips protocol consolidation
     * `--force` - forces compilation
     * `--return-errors` - returns error status and diagnostics instead of exiting on error
-    * `--erl-config` - path to an Erlang term file that will be loaded as mix config
+    * `--erl-config` - path to an Erlang term file that will be loaded as Mix config
 
   """
+
+  @impl true
   def run(["--list"]) do
     loadpaths!()
     _ = Mix.Task.load_all()
@@ -95,10 +97,6 @@ defmodule Mix.Tasks.Compile do
       |> List.wrap()
       |> Enum.map(&Mix.Task.Compiler.normalize(&1, :all))
       |> Enum.reduce({:noop, []}, &merge_diagnostics/2)
-
-    if res == :error and "--return-errors" not in args do
-      exit({:shutdown, 1})
-    end
 
     res =
       if consolidate_protocols?(res) and "--no-protocol-consolidation" not in args do
@@ -150,9 +148,7 @@ defmodule Mix.Tasks.Compile do
     Mix.Project.config()[:compilers] || Mix.compilers()
   end
 
-  @doc """
-  Returns manifests for all compilers.
-  """
+  @impl true
   def manifests do
     Enum.flat_map(compilers(), fn compiler ->
       module = Mix.Task.get("compile.#{compiler}")
@@ -176,7 +172,7 @@ defmodule Mix.Tasks.Compile do
   defp load_erl_config(opts) do
     if path = opts[:erl_config] do
       {:ok, terms} = :file.consult(path)
-      Mix.Config.persist(terms)
+      Application.put_all_env(terms, persistent: true)
     end
   end
 end

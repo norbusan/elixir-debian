@@ -25,7 +25,7 @@ defmodule Logger do
   system. For example, it may be helpful to log whenever a user is deleted.
 
       def delete_user(user) do
-        Logger.info "Deleting user from the system: #{inspect(user)}"
+        Logger.info("Deleting user from the system: #{inspect(user)}")
         # ...
       end
 
@@ -46,12 +46,17 @@ defmodule Logger do
 
   ## Levels
 
-  The supported levels are:
+  The supported levels, ordered by precedence, are:
 
     * `:debug` - for debug-related messages
     * `:info` - for information of any kind
     * `:warn` - for warnings
     * `:error` - for errors
+    
+  For example, `:info` takes precedence over `:debug`. If your log 
+  level is set to `:info`, `:info`, `:warn`, and `:error` will be 
+  printed to the console. If your log level is set to `:warn`, only 
+  `:warn` and `:error` will be printed.
 
   ## Configuration
 
@@ -133,15 +138,23 @@ defmodule Logger do
       `:sync_threshold` messages in its queue, `Logger` will change
       to *sync mode*, to apply backpressure to the clients.
       `Logger` will return to *async mode* once the number of messages
-      in the queue is reduced to `sync_threshold * 0.75` messages.
-      Defaults to 20 messages. `:sync_threshold` can be set to `0` to force *sync mode*.
+      in the queue is reduced to one below the `sync_threshold`.
+      Defaults to 20 messages. `:sync_threshold` can be set to `0` to
+      force *sync mode*.
 
     * `:discard_threshold` - if the `Logger` manager has more than
       `:discard_threshold` messages in its queue, `Logger` will change
       to *discard mode* and messages will be discarded directly in the
       clients. `Logger` will return to *sync mode* once the number of
-      messages in the queue is reduced to `discard_threshold * 0.75`
-      messages. Defaults to 500 messages.
+      messages in the queue is reduced to one below the `discard_threshold`.
+      Defaults to 500 messages.
+
+    * `:discard_threshold_periodic_check` - a periodic check that
+      checks and reports if logger is discarding messages. It logs a warn
+      message whenever the system is (or continues) in discard mode and
+      it logs a warn message whenever if the system was discarding messages
+      but stopped doing so after the previous check. By default it runs
+      every `30_000` milliseconds.
 
     * `:translator_inspect_opts` - when translating OTP reports and
       errors, the last message and state must be inspected in the
@@ -330,7 +343,7 @@ defmodule Logger do
         def format(level, message, timestamp, metadata) do
           # Custom formatting logic...
         rescue
-          _ -> "could not format: #{inspect({level, message, metadata}})"
+          _ -> "could not format: #{inspect({level, message, metadata})}"
         end
       end
 
@@ -342,7 +355,7 @@ defmodule Logger do
       the message being anything (and do something like the `rescue` in the example
       above)
     * the current timestamp: a term of type `t:Logger.Formatter.time/0`
-    * the medatata: a keyword list
+    * the metadata: a keyword list
 
   You can read more about formatting in `Logger.Formatter`.
 
@@ -501,10 +514,7 @@ defmodule Logger do
   The `Logger` level can be changed via `configure/1`.
   """
   @spec level() :: level
-  def level() do
-    %{level: level} = Logger.Config.__data__()
-    level
-  end
+  defdelegate level(), to: Logger.Config
 
   @doc """
   Compares log levels.
@@ -525,24 +535,15 @@ defmodule Logger do
 
   """
   @spec compare_levels(level, level) :: :lt | :eq | :gt
-  def compare_levels(level, level) do
-    :eq
-  end
-
-  def compare_levels(left, right) do
-    if level_to_number(left) > level_to_number(right), do: :gt, else: :lt
-  end
-
-  defp level_to_number(:debug), do: 0
-  defp level_to_number(:info), do: 1
-  defp level_to_number(:warn), do: 2
-  defp level_to_number(:error), do: 3
+  defdelegate compare_levels(left, right), to: Logger.Config
 
   @doc """
   Configures the logger.
 
   See the "Runtime Configuration" section in the `Logger` module
-  documentation for the available options.
+  documentation for the available options. The changes done here
+  are automatically persisted to the `:logger` application
+  environment.
   """
   @valid_options [
     :compile_time_application,
@@ -576,19 +577,23 @@ defmodule Logger do
   @doc """
   Adds a new backend.
 
+  Backends added by this function are not persisted. Therefore
+  if the Logger application or supervision tree is restarted,
+  the backend won't be available. If you need this guarantee,
+  then configure the backend via the application environment.
+
   ## Options
 
     * `:flush` - when `true`, guarantees all messages currently sent
       to `Logger` are processed before the backend is added
 
   """
-  @spec add_backend(atom, keyword) :: Supervisor.on_start_child()
+  @spec add_backend(backend, keyword) :: Supervisor.on_start_child()
   def add_backend(backend, opts \\ []) do
     _ = if opts[:flush], do: flush()
 
-    case Logger.WatcherSupervisor.watch(Logger, Logger.Config.translate_backend(backend), backend) do
+    case Logger.BackendSupervisor.watch(backend) do
       {:ok, _} = ok ->
-        Logger.Config.add_backend(backend)
         ok
 
       {:error, {:already_started, _pid}} ->
@@ -608,11 +613,10 @@ defmodule Logger do
       to `Logger` are processed before the backend is removed
 
   """
-  @spec remove_backend(atom, keyword) :: :ok | {:error, term}
+  @spec remove_backend(backend, keyword) :: :ok | {:error, term}
   def remove_backend(backend, opts \\ []) do
     _ = if opts[:flush], do: flush()
-    Logger.Config.remove_backend(backend)
-    Logger.WatcherSupervisor.unwatch(Logger, Logger.Config.translate_backend(backend))
+    Logger.BackendSupervisor.unwatch(backend)
   end
 
   @doc """
@@ -639,7 +643,8 @@ defmodule Logger do
   """
   @spec configure_backend(backend, keyword) :: term
   def configure_backend(backend, options) when is_list(options) do
-    :gen_event.call(Logger, Logger.Config.translate_backend(backend), {:configure, options})
+    backend = Logger.BackendSupervisor.translate_backend(backend)
+    :gen_event.call(Logger, backend, {:configure, options})
   end
 
   @doc """
@@ -663,12 +668,9 @@ defmodule Logger do
   def __should_log__(level) when level in @levels do
     case __metadata__() do
       {true, pdict} ->
-        %{mode: mode, level: min_level} = config = Logger.Config.__data__()
-
-        if compare_levels(level, min_level) != :lt and mode != :discard do
-          {level, config, pdict}
-        else
-          :error
+        case Logger.Config.log_data(level) do
+          {:discard, _config} -> :error
+          {mode, config} -> {level, mode, config, pdict}
         end
 
       {false, _} ->
@@ -677,8 +679,9 @@ defmodule Logger do
   end
 
   @doc false
-  def __do_log__({level, config, pdict}, chardata_or_fun, metadata) when is_list(metadata) do
-    %{utc_log: utc_log?, truncate: truncate, mode: mode} = config
+  def __do_log__({level, mode, config, pdict}, chardata_or_fun, metadata)
+      when is_list(metadata) do
+    %{utc_log: utc_log?, truncate: truncate} = config
     metadata = [pid: self()] ++ into_metadata(metadata, pdict)
 
     case normalize_message(chardata_or_fun, metadata) do
@@ -706,9 +709,9 @@ defmodule Logger do
 
   ## Examples
 
-      Logger.warn "knob turned too far to the right"
-      Logger.warn fn -> "dynamically calculated warning" end
-      Logger.warn fn -> {"dynamically calculated warning", [additional: :metadata]} end
+      Logger.warn("knob turned too far to the right")
+      Logger.warn(fn -> "dynamically calculated warning" end)
+      Logger.warn(fn -> {"dynamically calculated warning", [additional: :metadata]} end)
 
   """
   defmacro warn(chardata_or_fun, metadata \\ []) do
@@ -722,9 +725,9 @@ defmodule Logger do
 
   ## Examples
 
-      Logger.info "mission accomplished"
-      Logger.info fn -> "dynamically calculated info" end
-      Logger.info fn -> {"dynamically calculated info", [additional: :metadata]} end
+      Logger.info("mission accomplished")
+      Logger.info(fn -> "dynamically calculated info" end)
+      Logger.info(fn -> {"dynamically calculated info", [additional: :metadata]} end)
 
   """
   defmacro info(chardata_or_fun, metadata \\ []) do
@@ -738,9 +741,9 @@ defmodule Logger do
 
   ## Examples
 
-      Logger.error "oops"
-      Logger.error fn -> "dynamically calculated error" end
-      Logger.error fn -> {"dynamically calculated error", [additional: :metadata]} end
+      Logger.error("oops")
+      Logger.error(fn -> "dynamically calculated error" end)
+      Logger.error(fn -> {"dynamically calculated error", [additional: :metadata]} end)
 
   """
   defmacro error(chardata_or_fun, metadata \\ []) do
@@ -754,9 +757,9 @@ defmodule Logger do
 
   ## Examples
 
-      Logger.debug "hello?"
-      Logger.debug fn -> "dynamically calculated debug" end
-      Logger.debug fn -> {"dynamically calculated debug", [additional: :metadata]} end
+      Logger.debug("hello?")
+      Logger.debug(fn -> "dynamically calculated debug" end)
+      Logger.debug(fn -> {"dynamically calculated debug", [additional: :metadata]} end)
 
   """
   defmacro debug(chardata_or_fun, metadata \\ []) do
@@ -789,7 +792,7 @@ defmodule Logger do
         metadata = Keyword.merge(caller, metadata)
         {metadata, metadata}
       else
-        {metadata,
+        {[],
          quote do
            Keyword.merge(unquote(caller), unquote(metadata))
          end}
@@ -823,7 +826,7 @@ defmodule Logger do
     Enum.any?(matching, fn filter ->
       Enum.all?(filter, fn
         {:level_lower_than, min_level} ->
-          compare_levels(level, min_level) == :lt
+          Logger.Config.compare_levels(level, min_level) == :lt
 
         {k, v} when is_atom(k) ->
           Keyword.fetch(compile_metadata, k) == {:ok, v}
@@ -835,13 +838,11 @@ defmodule Logger do
     end)
   end
 
-  # TODO: Either deprecate compile_time_purge_level in favor of
-  # compile_time_purge_matching or document it again on 1.9 based
-  # on feedback
+  # TODO: Deprecate compile_time_purge_level on v1.9
   defp maybe_log(level, data, metadata, caller) do
     min_level = Application.get_env(:logger, :compile_time_purge_level, :debug)
 
-    if compare_levels(level, min_level) != :lt do
+    if Logger.Config.compare_levels(level, min_level) != :lt do
       macro_log(level, data, metadata, caller)
     else
       no_log(data, metadata)

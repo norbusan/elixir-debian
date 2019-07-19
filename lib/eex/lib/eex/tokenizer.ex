@@ -4,9 +4,13 @@ defmodule EEx.Tokenizer do
   @type content :: IO.chardata()
   @type line :: non_neg_integer
   @type marker :: '=' | '/' | '|' | ''
+  @type trimmed? :: boolean
   @type token ::
           {:text, content}
-          | {:expr | :start_expr | :middle_expr | :end_expr, line, marker, content}
+          | {:expr | :start_expr | :middle_expr | :end_expr, line, marker, content, trimmed?}
+
+  @spaces [?\s, ?\t]
+  @closing_brackets ')]}'
 
   @doc """
   Tokenizes the given charlist or binary.
@@ -14,10 +18,10 @@ defmodule EEx.Tokenizer do
   It returns {:ok, list} with the following tokens:
 
     * `{:text, content}`
-    * `{:expr, line, marker, content}`
-    * `{:start_expr, line, marker, content}`
-    * `{:middle_expr, line, marker, content}`
-    * `{:end_expr, line, marker, content}`
+    * `{:expr, line, marker, content, trimmed?}`
+    * `{:start_expr, line, marker, content, trimmed?}`
+    * `{:middle_expr, line, marker, content, trimmed?}`
+    * `{:end_expr, line, marker, content, trimmed?}`
 
   Or `{:error, line, error}` in case of errors.
   """
@@ -44,7 +48,7 @@ defmodule EEx.Tokenizer do
         error
 
       {:ok, _, new_line, rest} ->
-        {rest, new_line, buffer} = trim_if_needed(rest, new_line, opts, buffer, acc)
+        {_, rest, new_line, buffer} = trim_if_needed(rest, new_line, opts, buffer, acc)
         tokenize(rest, new_line, opts, buffer, acc)
     end
   end
@@ -58,9 +62,9 @@ defmodule EEx.Tokenizer do
 
       {:ok, expr, new_line, rest} ->
         token = token_name(expr)
-        {rest, new_line, buffer} = trim_if_needed(rest, new_line, opts, buffer, acc)
+        {trimmed?, rest, new_line, buffer} = trim_if_needed(rest, new_line, opts, buffer, acc)
         acc = tokenize_text(buffer, acc)
-        final = {token, line, marker, Enum.reverse(expr)}
+        final = {token, line, marker, Enum.reverse(expr), trimmed?}
         tokenize(rest, new_line, opts, [], [final | acc])
     end
   end
@@ -110,25 +114,28 @@ defmodule EEx.Tokenizer do
   #
   # Start tokens finish with "do" and "fn ->"
   # Middle tokens are marked with "->" or keywords
-  # End tokens contain only the end word and optionally ")"
+  # End tokens contain only the end word and optionally
+  # combinations of ")", "]" and "}".
 
-  defp token_name([h | t]) when h in [?\s, ?\t, ?)] do
+  defp token_name([h | t]) when h in @spaces do
     token_name(t)
   end
 
-  defp token_name('od' ++ [h | _]) when h in [?\s, ?\t, ?)] do
-    :start_expr
+  defp token_name('od' ++ [h | rest]) when h in @spaces or h in @closing_brackets do
+    case tokenize_rest(rest) do
+      {:ok, [{:end, _} | _]} -> :middle_expr
+      _ -> :start_expr
+    end
   end
 
   defp token_name('>-' ++ rest) do
-    rest = Enum.reverse(rest)
+    case tokenize_rest(rest) do
+      {:ok, [{:end, _} | _]} ->
+        :middle_expr
 
-    # Tokenize the remaining passing check_terminators as
-    # false, which relax the tokenizer to not error on
-    # unmatched pairs. Then, we check if there is a "fn"
-    # token and, if so, it is not followed by an "end"
-    # token. If this is the case, we are on a start expr.
-    case :elixir_tokenizer.tokenize(rest, 1, file: "eex", check_terminators: false) do
+      # Check if there is a "fn" token and, if so, it is not
+      # followed by an "end" token. If this is the case, we
+      # are on a start expr.
       {:ok, tokens} ->
         tokens = Enum.reverse(tokens)
         fn_index = fn_index(tokens)
@@ -148,10 +155,19 @@ defmodule EEx.Tokenizer do
   defp token_name('retfa' ++ t), do: check_spaces(t, :middle_expr)
   defp token_name('hctac' ++ t), do: check_spaces(t, :middle_expr)
   defp token_name('eucser' ++ t), do: check_spaces(t, :middle_expr)
-  defp token_name('dne' ++ t), do: check_spaces(t, :end_expr)
 
-  defp token_name(_) do
-    :expr
+  defp token_name(rest) do
+    case Enum.drop_while(rest, &(&1 in @spaces or &1 in @closing_brackets)) do
+      'dne' ++ t -> check_spaces(t, :end_expr)
+      _ -> :expr
+    end
+  end
+
+  # Tokenize the remaining passing check_terminators as false,
+  # which relax the tokenizer to not error on unmatched pairs.
+  # If the tokens start with an "end" we have a middle expr.
+  defp tokenize_rest(rest) do
+    :elixir_tokenizer.tokenize(Enum.reverse(rest), 1, file: "eex", check_terminators: false)
   end
 
   defp fn_index(tokens) do
@@ -167,7 +183,7 @@ defmodule EEx.Tokenizer do
   end
 
   defp check_spaces(string, token) do
-    if Enum.all?(string, &(&1 in [?\s, ?\t])) do
+    if Enum.all?(string, &(&1 in @spaces)) do
       token
     else
       :expr
@@ -189,24 +205,19 @@ defmodule EEx.Tokenizer do
   # only itself and whitespace, trim the whitespace around it,
   # including the line break following it if there is one.
   defp trim_if_needed(rest, line, opts, buffer, acc) do
-    original = {rest, line, buffer}
-
-    if opts[:trim] do
-      case {trim_left(buffer, acc), trim_right(rest, line)} do
-        {{true, new_buffer}, {true, new_rest, new_line}} ->
-          {new_rest, new_line, new_buffer}
-
-        _ ->
-          original
-      end
+    with true <- opts[:trim],
+         {true, new_buffer} <- trim_left(buffer, acc),
+         {true, new_rest, new_line} <- trim_right(rest, line) do
+      {true, new_rest, new_line, new_buffer}
     else
-      original
+      _ -> {false, rest, line, buffer}
     end
   end
 
   defp trim_left(buffer, acc) do
     case {trim_whitespace(buffer), acc} do
       {[?\n | _] = trimmed_buffer, _} -> {true, trimmed_buffer}
+      {[], [{_, _, _, _, true} | _]} -> {true, []}
       {[], []} -> {true, []}
       _ -> {false, buffer}
     end
@@ -221,7 +232,7 @@ defmodule EEx.Tokenizer do
     end
   end
 
-  defp trim_whitespace([h | t]) when h == ?\s or h == ?\t do
+  defp trim_whitespace([h | t]) when h in @spaces do
     trim_whitespace(t)
   end
 

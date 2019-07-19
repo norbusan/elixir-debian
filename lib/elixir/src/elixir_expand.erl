@@ -28,7 +28,7 @@ expand({'<<>>', Meta, Args}, E) ->
   elixir_bitstring:expand(Meta, Args, E, false);
 
 expand({'->', Meta, _Args}, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, unhandled_arrow_op);
+  form_error(Meta, E, ?MODULE, unhandled_arrow_op);
 
 %% __block__
 
@@ -55,7 +55,7 @@ expand({Kind, Meta, [{{'.', _, [Base, '{}']}, _, Refs} | Rest]}, E)
     [Opts] ->
       case lists:keymember(as, 1, Opts) of
         true ->
-          form_error(Meta, ?key(E, file), ?MODULE, as_in_multi_alias_call);
+          form_error(Meta, E, ?MODULE, as_in_multi_alias_call);
         false ->
           expand_multi_alias_call(Kind, Meta, Base, Refs, Opts, E)
       end
@@ -71,7 +71,7 @@ expand({alias, Meta, [Ref, Opts]}, E) ->
     is_atom(ERef) ->
       {ERef, expand_alias(Meta, true, ERef, EOpts, ET)};
     true ->
-      form_error(Meta, ?key(E, file), ?MODULE, {expected_compile_time_module, alias, Ref})
+      form_error(Meta, E, ?MODULE, {expected_compile_time_module, alias, Ref})
   end;
 
 expand({require, Meta, [Ref]}, E) ->
@@ -87,7 +87,7 @@ expand({require, Meta, [Ref, Opts]}, E) ->
       elixir_aliases:ensure_loaded(Meta, ERef, ET),
       {ERef, expand_require(Meta, ERef, EOpts, ET)};
     true ->
-      form_error(Meta, ?key(E, file), ?MODULE, {expected_compile_time_module, require, Ref})
+      form_error(Meta, E, ?MODULE, {expected_compile_time_module, require, Ref})
   end;
 
 expand({import, Meta, [Left]}, E) ->
@@ -104,7 +104,7 @@ expand({import, Meta, [Ref, Opts]}, E) ->
       {Functions, Macros} = elixir_import:import(Meta, ERef, EOpts, ET),
       {ERef, expand_require(Meta, ERef, EOpts, ET#{functions := Functions, macros := Macros})};
     true ->
-      form_error(Meta, ?key(E, file), ?MODULE, {expected_compile_time_module, import, Ref})
+      form_error(Meta, E, ?MODULE, {expected_compile_time_module, import, Ref})
   end;
 
 %% Compilation environment macros
@@ -131,24 +131,24 @@ expand({{'.', DotMeta, [{'__ENV__', Meta, Atom}, Field]}, CallMeta, []}, E) when
 %% Quote
 
 expand({Unquote, Meta, [_]}, E) when Unquote == unquote; Unquote == unquote_splicing ->
-  form_error(Meta, ?key(E, file), ?MODULE, {unquote_outside_quote, Unquote});
+  form_error(Meta, E, ?MODULE, {unquote_outside_quote, Unquote});
 
 expand({quote, Meta, [Opts]}, E) when is_list(Opts) ->
   case lists:keyfind(do, 1, Opts) of
     {do, Do} ->
       expand({quote, Meta, [lists:keydelete(do, 1, Opts), [{do, Do}]]}, E);
     false ->
-      form_error(Meta, ?key(E, file), ?MODULE, {missing_option, 'quote', [do]})
+      form_error(Meta, E, ?MODULE, {missing_option, 'quote', [do]})
   end;
 
 expand({quote, Meta, [_]}, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_args, 'quote'});
+  form_error(Meta, E, ?MODULE, {invalid_args, 'quote'});
 
 expand({quote, Meta, [Opts, Do]}, E) when is_list(Do) ->
   Exprs =
     case lists:keyfind(do, 1, Do) of
       {do, Expr} -> Expr;
-      false -> form_error(Meta, ?key(E, file), ?MODULE, {missing_option, 'quote', [do]})
+      false -> form_error(Meta, E, ?MODULE, {missing_option, 'quote', [do]})
     end,
 
   ValidOpts = [context, location, line, file, unquote, bind_quoted, generated],
@@ -158,7 +158,7 @@ expand({quote, Meta, [Opts, Do]}, E) when is_list(Do) ->
     {context, Ctx} when is_atom(Ctx) and (Ctx /= nil) ->
       Ctx;
     {context, Ctx} ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_context_opt_for_quote, Ctx});
+      form_error(Meta, E, ?MODULE, {invalid_context_opt_for_quote, Ctx});
     false ->
       case ?key(E, module) of
         nil -> 'Elixir';
@@ -196,26 +196,37 @@ expand({quote, Meta, [Opts, Do]}, E) when is_list(Do) ->
   Q = #elixir_quote{line=Line, file=File, unquote=Unquote,
                     context=Context, generated=Generated},
 
-  {Quoted, _Q} = elixir_quote:quote(Exprs, Binding, Q, ET),
+  Quoted = elixir_quote:quote(Meta, Exprs, Binding, Q, ET),
   expand(Quoted, ET);
 
 expand({quote, Meta, [_, _]}, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_args, 'quote'});
+  form_error(Meta, E, ?MODULE, {invalid_args, 'quote'});
 
 %% Functions
 
+expand({'&', Meta, [{super, SuperMeta, Args} = Expr]}, E) when is_list(Args) ->
+  assert_no_match_or_guard_scope(Meta, "&", E),
+
+  case resolve_super(Meta, length(Args), E) of
+    {Kind, Name, _} when Kind == def; Kind == defp ->
+      expand_fn_capture(Meta, {Name, SuperMeta, Args}, E);
+    _ ->
+      expand_fn_capture(Meta, Expr, E)
+  end;
+
+expand({'&', Meta, [{'/', _, [{super, _, Context}, Arity]} = Expr]}, E) when is_atom(Context), is_integer(Arity) ->
+  assert_no_match_or_guard_scope(Meta, "&", E),
+
+  case resolve_super(Meta, Arity, E) of
+    {Kind, Name, _} when Kind == def; Kind == defp ->
+      {{'&', Meta, [{'/', [], [{Name, [], Context}, Arity]}]}, E};
+    _ ->
+      expand_fn_capture(Meta, Expr, E)
+  end;
+
 expand({'&', Meta, [Arg]}, E) ->
   assert_no_match_or_guard_scope(Meta, "&", E),
-  case elixir_fn:capture(Meta, Arg, E) of
-    {{remote, Remote, Fun, Arity}, EE} ->
-      is_atom(Remote) andalso
-        elixir_lexical:record_remote(Remote, Fun, Arity, ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
-      {{'&', Meta, [{'/', [], [{{'.', [], [Remote, Fun]}, [], []}, Arity]}]}, EE};
-    {{local, Fun, Arity}, EE} ->
-      {{'&', Meta, [{'/', [], [{Fun, [], nil}, Arity]}]}, EE};
-    {expand, Expr, EE} ->
-      expand(Expr, EE)
-  end;
+  expand_fn_capture(Meta, Arg, E);
 
 expand({fn, Meta, Pairs}, E) ->
   assert_no_match_or_guard_scope(Meta, "fn", E),
@@ -260,26 +271,26 @@ expand({for, Meta, [_ | _] = Args}, E) ->
         {Args, []}
     end,
 
-  validate_opts(Meta, for, [do, into, uniq], Block, E),
+  validate_opts(Meta, for, [do, into, uniq, reduce], Block, E),
 
   {Expr, Opts} =
     case lists:keytake(do, 1, Block) of
       {value, {do, Do}, DoOpts} ->
         {Do, DoOpts};
       false ->
-        form_error(Meta, ?key(E, file), ?MODULE, {missing_option, for, [do]})
+        form_error(Meta, E, ?MODULE, {missing_option, for, [do]})
     end,
-
-  case lists:keyfind(uniq, 1, Opts) of
-    false -> ok;
-    {uniq, Value} when is_boolean(Value) -> ok;
-    {uniq, Value} -> form_error(Meta, ?key(E, file), ?MODULE, {for_invalid_uniq, Value})
-  end,
 
   {EOpts, EO} = expand(Opts, E),
   {ECases, EC} = lists:mapfoldl(fun expand_for/2, EO, Cases),
-  {EExpr, EE} = expand(Expr, EC),
   assert_generator_start(Meta, ECases, E),
+
+  {EExpr, EE} =
+    case validate_for_options(EOpts, false, false, false) of
+      {ok, MaybeReduce} -> expand_for_do_block(Meta, Expr, EC, MaybeReduce);
+      {error, Error} -> form_error(Meta, E, ?MODULE, Error)
+    end,
+
   {{for, Meta, ECases ++ [[{do, EExpr} | EOpts]]}, elixir_env:merge_and_check_unused_vars(E, EE)};
 
 %% With
@@ -292,34 +303,9 @@ expand({with, Meta, [_ | _] = Args}, E) ->
 
 expand({super, Meta, Args}, E) when is_list(Args) ->
   assert_no_match_or_guard_scope(Meta, "super", E),
-  Module = assert_module_scope(Meta, super, E),
-  Function = assert_function_scope(Meta, super, E),
-  {_, Arity} = Function,
-
-  case length(Args) of
-    Arity ->
-      {Kind, Name, SuperMeta} = elixir_overridable:super(Meta, Module, Function, E),
-
-      %% TODO: Remove this on Elixir v2.0 and make all GenServer callbacks optional
-      case lists:keyfind(context, 1, SuperMeta) of
-        {context, 'Elixir.GenServer'} ->
-          Message =
-            io_lib:format(
-              "calling super for GenServer callback ~ts/~B is deprecated",
-              [element(1, Function), Arity]
-            ),
-
-          elixir_errors:warn(?line(Meta), ?key(E, file), Message);
-
-        _ ->
-          ok
-      end,
-
-      {EArgs, EA} = expand_args(Args, E),
-      {{super, Meta, [{Kind, Name} | EArgs]}, EA};
-    _ ->
-      form_error(Meta, ?key(E, file), ?MODULE, wrong_number_of_args_for_super)
-  end;
+  {Kind, Name, _} = resolve_super(Meta, length(Args), E),
+  {EArgs, EA} = expand_args(Args, E),
+  {{super, [{super, {Kind, Name}} | Meta], EArgs}, EA};
 
 %% Vars
 
@@ -339,31 +325,31 @@ expand({'^', Meta, [Arg]}, #{context := match} = E) ->
 
       {{'^', Meta, [Var]}, EA};
     _ ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_arg_for_pin, Arg})
+      form_error(Meta, E, ?MODULE, {invalid_arg_for_pin, Arg})
   end;
 expand({'^', Meta, [Arg]}, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {pin_outside_of_match, Arg});
+  form_error(Meta, E, ?MODULE, {pin_outside_of_match, Arg});
 
 expand({'_', _Meta, Kind} = Var, #{context := match} = E) when is_atom(Kind) ->
   {Var, E};
 expand({'_', Meta, Kind}, E) when is_atom(Kind) ->
-  form_error(Meta, ?key(E, file), ?MODULE, unbound_underscore);
+  form_error(Meta, E, ?MODULE, unbound_underscore);
 
 expand({Name, Meta, Kind} = Var, #{context := match} = E) when is_atom(Name), is_atom(Kind) ->
   #{unused_vars := Unused, current_vars := Current, prematch_vars := Prematch} = E,
-  Pair = {Name, var_context(Meta, Kind)},
+  Pair = {Name, elixir_utils:var_context(Meta, Kind)},
   PrematchVersion = var_version(Prematch, Pair),
 
   EE =
     case Current of
       %% Variable is being overridden now
-      #{Pair := {PrematchVersion, _}} ->
+      #{Pair := PrematchVersion} ->
         NewUnused = var_unused(Pair, Meta, PrematchVersion + 1, Unused),
-        NewCurrent = Current#{Pair => {PrematchVersion + 1, term}},
+        NewCurrent = Current#{Pair => PrematchVersion + 1},
         E#{unused_vars := NewUnused, current_vars := NewCurrent};
 
       %% Variable was already overriden
-      #{Pair := {CurrentVersion, _}} ->
+      #{Pair := CurrentVersion} ->
         maybe_warn_underscored_var_repeat(Meta, Name, Kind, E),
         NewUnused = Unused#{{Pair, CurrentVersion} => false},
         E#{unused_vars := NewUnused};
@@ -372,17 +358,17 @@ expand({Name, Meta, Kind} = Var, #{context := match} = E) when is_atom(Name), is
       _ ->
         NewVars = ordsets:add_element(Pair, ?key(E, vars)),
         NewUnused = var_unused(Pair, Meta, 0, Unused),
-        NewCurrent = Current#{Pair => {0, term}},
+        NewCurrent = Current#{Pair => 0},
         E#{vars := NewVars, unused_vars := NewUnused, current_vars := NewCurrent}
     end,
 
   {Var, EE};
 expand({Name, Meta, Kind} = Var, E) when is_atom(Name), is_atom(Kind) ->
   #{unused_vars := Unused, current_vars := Current} = E,
-  Pair = {Name, var_context(Meta, Kind)},
+  Pair = {Name, elixir_utils:var_context(Meta, Kind)},
 
   case Current of
-    #{Pair := {Version, _}} ->
+    #{Pair := Version} ->
       maybe_warn_underscored_var_access(Meta, Name, Kind, E),
       UnusedKey = {Pair, Version},
 
@@ -396,22 +382,20 @@ expand({Name, Meta, Kind} = Var, E) when is_atom(Name), is_atom(Kind) ->
     _ ->
       case lists:keyfind(var, 1, Meta) of
         {var, true} ->
-          form_error(Meta, ?key(E, file), ?MODULE, {undefined_var_bang, Name, Kind});
+          form_error(Meta, E, ?MODULE, {undefined_var_bang, Name, Kind});
 
         _ ->
           case ?key(E, prematch_vars) of
             warn ->
-              Message =
-                io_lib:format("variable \"~ts\" does not exist and is being expanded to \"~ts()\","
-                  " please use parentheses to remove the ambiguity or change the variable name", [Name, Name]),
-              elixir_errors:warn(?line(Meta), ?key(E, file), Message),
+              %% TODO: Remove warn option on v2.0
+              elixir_errors:form_warn(Meta, E, ?MODULE, {unknown_variable, Name}),
               expand({Name, Meta, []}, E);
 
             raise ->
-              form_error(Meta, ?key(E, file), ?MODULE, {undefined_var, Name, Kind});
+              form_error(Meta, E, ?MODULE, {undefined_var, Name, Kind});
 
             pin ->
-              form_error(Meta, ?key(E, file), ?MODULE, {undefined_var_pin, Name, Kind});
+              form_error(Meta, E, ?MODULE, {undefined_var_pin, Name, Kind});
 
             apply ->
               expand({Name, Meta, []}, E)
@@ -445,7 +429,7 @@ expand({{'.', DotMeta, [Expr]}, Meta, Args}, E) when is_list(Args) ->
   {EExpr, EE} = expand(Expr, E),
   if
     is_atom(EExpr) ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_function_call, EExpr});
+      form_error(Meta, E, ?MODULE, {invalid_function_call, EExpr});
     true ->
       {EArgs, EA} = expand_args(Args, elixir_env:mergea(E, EE)),
       {{{'.', DotMeta, [EExpr]}, Meta, EArgs}, elixir_env:mergev(EE, EA)}
@@ -454,7 +438,7 @@ expand({{'.', DotMeta, [Expr]}, Meta, Args}, E) when is_list(Args) ->
 %% Invalid calls
 
 expand({_, Meta, Args} = Invalid, E) when is_list(Meta) and is_list(Args) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_call, Invalid});
+  form_error(Meta, E, ?MODULE, {invalid_call, Invalid});
 
 expand({_, _, _} = Tuple, E) ->
   form_error([{line, 0}], ?key(E, file), ?MODULE, {invalid_quoted_expr, Tuple});
@@ -486,9 +470,8 @@ expand(Pid, E) when is_pid(Pid) ->
     nil ->
       {Pid, E};
     Function ->
-      %% TODO: Make me an error on 2.0
-      elixir_errors:form_warn([], ?key(E, file), ?MODULE,
-                              {invalid_pid_in_function, Pid, Function}),
+      %% TODO: Make me an error on v2.0
+      elixir_errors:form_warn([], E, ?MODULE, {invalid_pid_in_function, Pid, Function}),
       {Pid, E}
   end;
 
@@ -520,9 +503,37 @@ expand_multi_alias_call(Kind, Meta, Base, Refs, Opts, E) ->
     (Ref, ER) when is_atom(Ref) ->
       expand({Kind, Meta, [elixir_aliases:concat([BaseRef, Ref]), Opts]}, ER);
     (Other, _ER) ->
-      form_error(Meta, ?key(E, file), ?MODULE, {expected_compile_time_module, Kind, Other})
+      form_error(Meta, E, ?MODULE, {expected_compile_time_module, Kind, Other})
   end,
   lists:mapfoldl(Fun, EB, Refs).
+
+resolve_super(Meta, Arity, E) ->
+  Module = assert_module_scope(Meta, super, E),
+  Function = assert_function_scope(Meta, super, E),
+
+  case Function of
+    {_, Arity} ->
+      {Kind, Name, SuperMeta} = elixir_overridable:super(Meta, Module, Function, E),
+      maybe_warn_deprecated_super_in_gen_server_callback(Meta, Function, SuperMeta, E),
+      {Kind, Name, SuperMeta};
+
+    _ ->
+      form_error(Meta, E, ?MODULE, wrong_number_of_args_for_super)
+  end.
+
+expand_fn_capture(Meta, Arg, E) ->
+  case elixir_fn:capture(Meta, Arg, E) of
+    {{remote, Remote, Fun, Arity}, EE} ->
+      is_atom(Remote) andalso
+        elixir_lexical:record_remote(Remote, Fun, Arity, ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
+      {{'&', Meta, [{'/', [], [{{'.', [], [Remote, Fun]}, [], []}, Arity]}]}, EE};
+    {{local, Fun, Arity}, #{function := nil}} ->
+      form_error(Meta, E, ?MODULE, {undefined_local_capture, Fun, Arity});
+    {{local, Fun, Arity}, EE} ->
+      {{'&', Meta, [{'/', [], [{Fun, [], nil}, Arity]}]}, EE};
+    {expand, Expr, EE} ->
+      expand(Expr, EE)
+  end.
 
 expand_list([{'|', Meta, [_, _] = Args}], Fun, Acc, List) ->
   {EArgs, EAcc} = lists:mapfoldl(Fun, Acc, Args),
@@ -553,7 +564,7 @@ expand_block([H | T], Acc, Meta, E) ->
   %% simply returning something as replacement.
   case is_useless_building(H, EH, Meta) of
     {UselessMeta, UselessTerm} ->
-      elixir_errors:form_warn(UselessMeta, ?key(E, file), ?MODULE, UselessTerm);
+      elixir_errors:form_warn(UselessMeta, E, ?MODULE, UselessTerm);
     false ->
       ok
   end,
@@ -598,8 +609,8 @@ expand_args([Arg], E) ->
 expand_args(Args, #{context := match} = E) ->
   lists:mapfoldl(fun expand/2, E, Args);
 expand_args(Args, E) ->
-  {EArgs, {EC, EV}} = lists:mapfoldl(fun expand_arg/2, {E, E}, Args),
-  {EArgs, elixir_env:mergea(EV, EC)}.
+  {EArgs, {_EC, EV}} = lists:mapfoldl(fun expand_arg/2, {E, E}, Args),
+  {EArgs, EV}.
 
 %% Match/var helpers
 
@@ -611,20 +622,14 @@ var_unused({_Name, Kind} = Pair, Meta, Version, Unused) ->
 
 var_version(Map, Pair) ->
   case Map of
-    #{Pair := {Version, _}} -> Version;
+    #{Pair := Version} -> Version;
     _ -> -1
-  end.
-
-var_context(Meta, Kind) ->
-  case lists:keyfind(counter, 1, Meta) of
-    {counter, Counter} -> Counter;
-    false -> Kind
   end.
 
 maybe_warn_underscored_var_repeat(Meta, Name, Kind, E) ->
   case should_warn(Meta) andalso atom_to_list(Name) of
     "_" ++ _ ->
-      elixir_errors:form_warn(Meta, ?key(E, file), ?MODULE, {underscored_var_repeat, Name, Kind});
+      elixir_errors:form_warn(Meta, E, ?MODULE, {underscored_var_repeat, Name, Kind});
     _ ->
       ok
   end.
@@ -632,7 +637,17 @@ maybe_warn_underscored_var_repeat(Meta, Name, Kind, E) ->
 maybe_warn_underscored_var_access(Meta, Name, Kind, E) ->
   case (Kind == nil) andalso should_warn(Meta) andalso atom_to_list(Name) of
     "_" ++ _ ->
-      elixir_errors:form_warn(Meta, ?key(E, file), ?MODULE, {underscored_var_access, Name});
+      elixir_errors:form_warn(Meta, E, ?MODULE, {underscored_var_access, Name});
+    _ ->
+      ok
+  end.
+
+%% TODO: Remove this on Elixir v2.0 and make all GenServer callbacks optional
+maybe_warn_deprecated_super_in_gen_server_callback(Meta, Function, SuperMeta, E) ->
+  case lists:keyfind(context, 1, SuperMeta) of
+    {context, 'Elixir.GenServer'} ->
+      elixir_errors:form_warn(Meta, E, ?MODULE, {super_in_genserver, Function});
+
     _ ->
       ok
   end.
@@ -694,6 +709,42 @@ generated_case_clauses([{do, Clauses}]) ->
   RClauses = [{'->', ?generated(Meta), Args} || {'->', Meta, Args} <- Clauses],
   [{do, RClauses}].
 
+%% Comprehensions
+
+validate_for_options([{into, _} = Pair | Opts], _Into, Uniq, Reduce) ->
+  validate_for_options(Opts, Pair, Uniq, Reduce);
+validate_for_options([{uniq, Boolean} = Pair | Opts], Into, _Uniq, Reduce) when is_boolean(Boolean) ->
+  validate_for_options(Opts, Into, Pair, Reduce);
+validate_for_options([{uniq, Value} | _], _, _, _) ->
+  {error, {for_invalid_uniq, Value}};
+validate_for_options([{reduce, _} = Pair | Opts], Into, Uniq, _Reduce) ->
+  validate_for_options(Opts, Into, Uniq, Pair);
+validate_for_options([], Into, Uniq, {reduce, _}) when Into /= false; Uniq /= false ->
+  {error, for_conflicting_reduce_into_uniq};
+validate_for_options([], _Into, _Uniq, Reduce) ->
+  {ok, Reduce}.
+
+expand_for_do_block(Meta, Expr, E, false) ->
+  case Expr of
+    [{'->', _, _} | _] -> form_error(Meta, E, ?MODULE, for_without_reduce_bad_block);
+    _ -> expand(Expr, E)
+  end;
+expand_for_do_block(Meta, Clauses, E, {reduce, _}) ->
+  Transformer = fun({_, _, [Left, _Right]} = Clause, Acc) ->
+    case Left of
+      [_] ->
+        {EClause, EAcc} = elixir_clauses:clause(Meta, fn, fun elixir_clauses:head/2, Clause, Acc),
+        {EClause, elixir_env:merge_and_check_unused_vars(Acc, EAcc)};
+      _ ->
+        form_error(Meta, E, ?MODULE, for_with_reduce_bad_block)
+    end
+  end,
+
+  case Clauses of
+    [{'->', _, _} | _] -> lists:mapfoldl(Transformer, E, Clauses);
+    _ -> form_error(Meta, E, ?MODULE, for_with_reduce_bad_block)
+  end.
+
 %% Locals
 
 assert_no_ambiguous_op(Name, Meta, [Arg], E) ->
@@ -702,7 +753,7 @@ assert_no_ambiguous_op(Name, Meta, [Arg], E) ->
       Pair = {Name, Kind},
       case ?key(E, current_vars) of
         #{Pair := _} ->
-          form_error(Meta, ?key(E, file), ?MODULE, {op_ambiguity, Name, Arg});
+          form_error(Meta, E, ?MODULE, {op_ambiguity, Name, Arg});
         _ ->
           ok
       end;
@@ -720,7 +771,7 @@ assert_no_clauses(Name, Meta, Args, E) ->
 assert_arg_with_no_clauses(Name, Meta, [{Key, Value} | Rest], E) when is_atom(Key) ->
   case Value of
     [{'->', _, _} | _] ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_clauses, Name});
+      form_error(Meta, E, ?MODULE, {invalid_clauses, Name});
     _ ->
       assert_arg_with_no_clauses(Name, Meta, Rest, E)
   end;
@@ -728,19 +779,19 @@ assert_arg_with_no_clauses(_Name, _Meta, _Arg, _E) ->
   ok.
 
 expand_local(Meta, Name, Args, #{function := nil} = E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {undefined_function, Name, Args});
+  form_error(Meta, E, ?MODULE, {undefined_function, Name, Args});
 expand_local(Meta, Name, Args, #{context := Context} = E) when Context == match; Context == guard ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_local_invocation, Context, {Name, Meta, Args}});
+  form_error(Meta, E, ?MODULE, {invalid_local_invocation, Context, {Name, Meta, Args}});
 expand_local(Meta, Name, Args, #{module := Module, function := Function} = E) ->
   assert_no_clauses(Name, Meta, Args, E),
 
-  elixir_locals:record_local({Name, length(Args)}, Module, Function),
+  elixir_locals:record_local({Name, length(Args)}, Module, Function, Meta, false),
   {EArgs, EA} = expand_args(Args, E),
   {{Name, Meta, EArgs}, EA}.
 
 %% Remote
 
-expand_remote(Receiver, DotMeta, Right, Meta, Args, #{context := Context} = E, EL) ->
+expand_remote(Receiver, DotMeta, Right, Meta, Args, #{context := Context} = E, EL) when is_atom(Receiver) or is_tuple(Receiver) ->
   assert_no_clauses(Right, Meta, Args, E),
 
   Arity = length(Args),
@@ -748,44 +799,36 @@ expand_remote(Receiver, DotMeta, Right, Meta, Args, #{context := Context} = E, E
     elixir_lexical:record_remote(Receiver, Right, Arity,
                                  ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
   {EArgs, EA} = expand_args(Args, E),
-  Rewritten = elixir_rewrite:rewrite(Receiver, DotMeta, Right, Meta, EArgs),
-  check_erlang_operator_args(Rewritten, Args, Context, E),
-  case allowed_in_context(Rewritten, Arity, Context) of
-    true ->
+  case rewrite(Context, Receiver, DotMeta, Right, Meta, EArgs) of
+    {ok, Rewritten} ->
+      maybe_warn_comparison(Rewritten, Args, E),
       {Rewritten, elixir_env:mergev(EL, EA)};
-    false ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_remote_invocation, Context, Receiver, Right, Arity})
-  end.
-
-allowed_in_context({{'.', _, [erlang, Right]}, _, _}, Arity, match) ->
-  elixir_utils:match_op(Right, Arity);
-allowed_in_context(_, _Arity, match) ->
-  false;
-allowed_in_context({{'.', _, [erlang, Right]}, _, _}, Arity, guard) ->
-  erl_internal:guard_bif(Right, Arity) orelse elixir_utils:guard_op(Right, Arity);
-allowed_in_context(_, _Arity, guard) ->
-  false;
-allowed_in_context(_, _, _) ->
-  true.
-
-check_erlang_operator_args({{'.', _, [erlang, '++']}, Meta, [ELeft, _]}, [Left, _], match, E) ->
-  case is_proper_list(ELeft) of
-    false -> form_error(Meta, ?key(E, file), ?MODULE, {invalid_arg_for_lists_concatenation, Left});
-    true -> ok
+    {error, Error} -> form_error(Meta, E, elixir_rewrite, Error)
   end;
-check_erlang_operator_args({{'.', _, [erlang, Op]}, Meta, [ELeft, ERight]}, [Left, Right], _, E)
+expand_remote(Receiver, DotMeta, Right, Meta, Args, E, _) ->
+  Call = {{'.', DotMeta, [Receiver, Right]}, Meta, Args},
+  form_error(Meta, E, ?MODULE, {invalid_call, Call}).
+
+rewrite(match, Receiver, DotMeta, Right, Meta, EArgs) ->
+  elixir_rewrite:match_rewrite(Receiver, DotMeta, Right, Meta, EArgs);
+rewrite(guard, Receiver, DotMeta, Right, Meta, EArgs) ->
+  elixir_rewrite:guard_rewrite(Receiver, DotMeta, Right, Meta, EArgs);
+rewrite(_, Receiver, DotMeta, Right, Meta, EArgs) ->
+  {ok, elixir_rewrite:rewrite(Receiver, DotMeta, Right, Meta, EArgs)}.
+
+maybe_warn_comparison({{'.', _, [erlang, Op]}, Meta, [ELeft, ERight]}, [Left, Right], E)
     when Op =:= '>'; Op =:= '<'; Op =:= '=<'; Op =:= '>=' ->
   case is_struct_comparison(ELeft, ERight, Left, Right) of
     false ->
       case is_nested_comparison(Op, ELeft, ERight, Left, Right) of
         false -> ok;
         CompExpr ->
-          elixir_errors:form_warn(Meta, ?key(E, file), ?MODULE, {nested_comparison, CompExpr})
+          elixir_errors:form_warn(Meta, E, ?MODULE, {nested_comparison, CompExpr})
       end;
     StructExpr ->
-      elixir_errors:form_warn(Meta, ?key(E, file), ?MODULE, {struct_comparison, StructExpr})
+      elixir_errors:form_warn(Meta, E, ?MODULE, {struct_comparison, StructExpr})
   end;
-check_erlang_operator_args(_, _, _, _) ->
+maybe_warn_comparison(_, _, _) ->
   ok.
 
 is_struct_comparison(ELeft, ERight, Left, Right) ->
@@ -806,12 +849,6 @@ is_struct_expression({'%{}', _, KVs}) ->
     false -> false
   end;
 is_struct_expression(_Other) -> false.
-
-is_proper_list([]) -> true;
-is_proper_list([{'|', _, [_, Tail]}]) -> is_proper_list(Tail);
-is_proper_list([_ | Tail]) -> is_proper_list(Tail);
-is_proper_list({'++', _, [_, Tail]}) -> is_proper_list(Tail);
-is_proper_list(_) -> false.
 
 is_nested_comparison(Op, ELeft, ERight, Left, Right) ->
   NestedExpr = {elixir_utils:erlang_comparison_op_to_elixir(Op), [], [Left, Right]},
@@ -837,11 +874,11 @@ expand_opts(Meta, Kind, Allowed, Opts, E) ->
 
 validate_opts(Meta, Kind, Allowed, Opts, E) when is_list(Opts) ->
   [begin
-    form_error(Meta, ?key(E, file), ?MODULE, {unsupported_option, Kind, Key})
+    form_error(Meta, E, ?MODULE, {unsupported_option, Kind, Key})
   end || {Key, _} <- Opts, not lists:member(Key, Allowed)];
 
 validate_opts(Meta, Kind, _Allowed, Opts, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {options_are_not_keyword, Kind, Opts}).
+  form_error(Meta, E, ?MODULE, {options_are_not_keyword, Kind, Opts}).
 
 no_alias_opts(Opts) when is_list(Opts) ->
   case lists:keyfind(as, 1, Opts) of
@@ -883,22 +920,22 @@ expand_as({as, nil}, _Meta, _IncludeByDefault, Ref, _E) ->
   Ref;
 expand_as({as, Atom}, Meta, _IncludeByDefault, _Ref, E) when is_atom(Atom), not is_boolean(Atom) ->
   case atom_to_list(Atom) of
-    "Elixir." ++ Rest ->
+    "Elixir." ++ ([FirstLetter | _] = Rest) when FirstLetter >= $A, FirstLetter =< $Z ->
       case string:tokens(Rest, ".") of
-        [Rest] ->
+        [_] ->
           Atom;
         _ ->
-          form_error(Meta, ?key(E, file), ?MODULE, {invalid_alias_for_as, nested_alias, Atom})
+          form_error(Meta, E, ?MODULE, {invalid_alias_for_as, nested_alias, Atom})
       end;
     _ ->
-      form_error(Meta, ?key(E, file), ?MODULE, {invalid_alias_for_as, not_alias, Atom})
+      form_error(Meta, E, ?MODULE, {invalid_alias_for_as, not_alias, Atom})
   end;
 expand_as(false, _Meta, IncludeByDefault, Ref, _E) ->
   if IncludeByDefault -> elixir_aliases:last(Ref);
      true -> Ref
   end;
 expand_as({as, Other}, Meta, _IncludeByDefault, _Ref, E) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {invalid_alias_for_as, not_alias, Other}).
+  form_error(Meta, E, ?MODULE, {invalid_alias_for_as, not_alias, Other}).
 
 %% Aliases
 
@@ -923,7 +960,7 @@ expand_aliases({'__aliases__', Meta, _} = Alias, E, Report) ->
             elixir_lexical:record_remote(Receiver, ?key(E, function), ?key(E, lexical_tracker)),
           {Receiver, EA};
         false ->
-          form_error(Meta, ?key(E, file), ?MODULE, {invalid_alias, Alias})
+          form_error(Meta, E, ?MODULE, {invalid_alias, Alias})
       end
   end.
 
@@ -952,12 +989,12 @@ assert_generator_start(_, [{'<-', _, [_, _]} | _], _) ->
 assert_generator_start(_, [{'<<>>', _, [{'<-', _, [_, _]}]} | _], _) ->
   ok;
 assert_generator_start(Meta, _, E) ->
-  elixir_errors:form_error(Meta, ?key(E, file), ?MODULE, for_generator_start).
+  elixir_errors:form_error(Meta, E, ?MODULE, for_generator_start).
 
 %% Assertions
 
 refute_parallel_bitstring_match({'<<>>', _, _}, {'<<>>', Meta, _} = Arg, E, true) ->
-  form_error(Meta, ?key(E, file), ?MODULE, {parallel_bitstring_match, Arg});
+  form_error(Meta, E, ?MODULE, {parallel_bitstring_match, Arg});
 refute_parallel_bitstring_match(Left, {'=', _Meta, [MatchLeft, MatchRight]}, E, Parallel) ->
   refute_parallel_bitstring_match(Left, MatchLeft, E, true),
   refute_parallel_bitstring_match(Left, MatchRight, E, Parallel);
@@ -1028,7 +1065,7 @@ assert_contextual_var(Meta, Name, #{contextual_vars := Vars, file := File}, Erro
 assert_no_underscore_clause_in_cond([{do, Clauses}], E) when is_list(Clauses) ->
   case lists:last(Clauses) of
     {'->', Meta, [[{'_', _, Atom}], _]} when is_atom(Atom) ->
-      form_error(Meta, ?key(E, file), ?MODULE, underscore_in_cond);
+      form_error(Meta, E, ?MODULE, underscore_in_cond);
     _Other ->
       ok
   end;
@@ -1056,6 +1093,12 @@ format_error({invalid_args, Construct}) ->
   io_lib:format("invalid arguments for \"~ts\"", [Construct]);
 format_error({for_invalid_uniq, Value}) ->
   io_lib:format(":uniq option for comprehensions only accepts a boolean, got: ~ts", ['Elixir.Macro':to_string(Value)]);
+format_error(for_conflicting_reduce_into_uniq) ->
+  "cannot use :reduce alongside :into/:uniq in comprehension";
+format_error(for_with_reduce_bad_block) ->
+  "when using :reduce with comprehensions, the do block must be written using acc -> expr clauses, where each clause expects the accumulator as a single argument";
+format_error(for_without_reduce_bad_block) ->
+  "the do block was written using acc -> expr clauses but the :reduce option was not given";
 format_error(for_generator_start) ->
   "for comprehensions must start with a generator";
 format_error(unhandled_arrow_op) ->
@@ -1075,9 +1118,6 @@ format_error(wrong_number_of_args_for_super) ->
   "super must be called with the same number of arguments as the current definition";
 format_error({invalid_arg_for_pin, Arg}) ->
   io_lib:format("invalid argument for unary operator ^, expected an existing variable, got: ^~ts",
-                ['Elixir.Macro':to_string(Arg)]);
-format_error({invalid_arg_for_lists_concatenation, Arg}) ->
-  io_lib:format("invalid argument for ++ operator inside a match, expected a literal proper list, got: ~ts",
                 ['Elixir.Macro':to_string(Arg)]);
 format_error({pin_outside_of_match, Arg}) ->
   io_lib:format("cannot use ^~ts outside of match clauses", ['Elixir.Macro':to_string(Arg)]);
@@ -1117,7 +1157,7 @@ format_error({op_ambiguity, Name, Arg}) ->
   io_lib:format(Message, [Name, 'Elixir.Macro':to_string(Arg), Name]);
 format_error({invalid_clauses, Name}) ->
   Message =
-    "the function \"~ts\" cannot handle clauses with the -> operator because it is not macro. "
+    "the function \"~ts\" cannot handle clauses with the -> operator because it is not a macro. "
     "Please make sure you are invoking the proper name and that it is a macro",
   io_lib:format(Message, [Name]);
 format_error({invalid_alias_for_as, Reason, Value}) ->
@@ -1133,13 +1173,17 @@ format_error({invalid_function_call, Expr}) ->
 format_error({invalid_call, Call}) ->
   io_lib:format("invalid call ~ts", ['Elixir.Macro':to_string(Call)]);
 format_error({invalid_quoted_expr, Expr}) ->
-  io_lib:format("invalid quoted expression: ~ts", ['Elixir.Kernel':inspect(Expr, [])]);
+  Message =
+    "invalid quoted expression: ~ts\n\n"
+    "Please make sure your quoted expressions are made of valid AST nodes. "
+    "If you would like to introduce a value into the AST, such as a four-element "
+    "tuple or a map, make sure to call Macro.escape/1 before",
+  io_lib:format(Message, ['Elixir.Kernel':inspect(Expr, [])]);
 format_error({invalid_local_invocation, Context, {Name, _, Args} = Call}) ->
-  io_lib:format("cannot invoke local ~ts/~B inside ~ts, called as: ~ts",
-                [Name, length(Args), Context, 'Elixir.Macro':to_string(Call)]);
-format_error({invalid_remote_invocation, Context, Receiver, Right, Arity}) ->
-  io_lib:format("cannot invoke remote function ~ts.~ts/~B inside ~ts",
-                ['Elixir.Macro':to_string(Receiver), Right, Arity, Context]);
+  Message =
+    "cannot find or invoke local ~ts/~B inside ~ts. "
+    "Only macros can be invoked in a ~ts and they must be defined before their invocation. Called as: ~ts",
+  io_lib:format(Message, [Name, length(Args), Context, Context, 'Elixir.Macro':to_string(Call)]);
 format_error({invalid_pid_in_function, Pid, {Name, Arity}}) ->
   io_lib:format("cannot compile PID ~ts inside quoted expression for function ~ts/~B",
                 ['Elixir.Kernel':inspect(Pid, []), Name, Arity]);
@@ -1191,11 +1235,17 @@ format_error({nested_comparison, CompExpr}) ->
                 "Instead, consider joining together each comparison segment with an \"and\", e.g.\n\n"
                 "     x < y and y < z\n\n"
                 "You wrote: ~ts", [String]);
-
+format_error({undefined_local_capture, Fun, Arity}) ->
+  io_lib:format("undefined function ~ts/~B", [Fun, Arity]);
 format_error(caller_not_allowed) ->
   "__CALLER__ is available only inside defmacro and defmacrop";
 format_error(stacktrace_not_allowed) ->
   "__STACKTRACE__ is available only inside catch and rescue clauses of try expressions";
+format_error({unknown_variable, Name}) ->
+  io_lib:format("variable \"~ts\" does not exist and is being expanded to \"~ts()\","
+                " please use parentheses to remove the ambiguity or change the variable name", [Name, Name]);
+format_error({super_in_genserver, {Name, Arity}}) ->
+  io_lib:format("calling super for GenServer callback ~ts/~B is deprecated", [Name, Arity]);
 format_error({parallel_bitstring_match, Expr}) ->
   Message =
     "binary patterns cannot be matched in parallel using \"=\", excess pattern: ~ts",

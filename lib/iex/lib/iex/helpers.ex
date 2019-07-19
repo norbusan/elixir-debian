@@ -38,8 +38,10 @@ defmodule IEx.Helpers do
     * `open/1`         - opens the source for the given module or function in your editor
     * `pid/1`          - creates a PID from a string
     * `pid/3`          - creates a PID with the 3 integer arguments passed
-    * `ref/1`          - creates a Reference from a string
-    * `ref/4`          - creates a Reference with the 4 integer arguments passed
+    * `port/1`         - creates a port from a string
+    * `port/2`         - creates a port with the 2 non-negative integers passed
+    * `ref/1`          - creates a reference from a string
+    * `ref/4`          - creates a reference with the 4 integer arguments passed
     * `pwd/0`          - prints the current working directory
     * `r/1`            - recompiles the given module's source file
     * `recompile/0`    - recompiles the current project
@@ -143,8 +145,8 @@ defmodule IEx.Helpers do
 
   It expects a list of files to compile and an optional path to write
   the compiled code to. By default files are in-memory compiled.
-  To write compiled files to a current directory use empty string "" for the path.
-  When compiling one file, there is no need to wrap it in a list.
+  To write compiled files to the current directory, an empty string
+  can be given.
 
   It returns the names of the compiled modules.
 
@@ -152,8 +154,14 @@ defmodule IEx.Helpers do
 
   ## Examples
 
+  In the example below, we pass a directory to where the `c/2` function will
+  write the compiled `.beam` files to. This directory is typically named "ebin"
+  in Erlang/Elixir systems:
+
       iex> c(["foo.ex", "bar.ex"], "ebin")
       [Foo, Bar]
+
+  When compiling one file, there is no need to wrap it in a list:
 
       iex> c("baz.ex")
       [Baz]
@@ -238,7 +246,7 @@ defmodule IEx.Helpers do
   end
 
   @doc """
-  Opens the given module, module/function/arity or `{file, line}`.
+  Opens the given `module`, `module.function/arity`, or `{file, line}`.
 
   This function uses the `ELIXIR_EDITOR` environment variable
   and falls back to `EDITOR` if the former is not available.
@@ -291,14 +299,14 @@ defmodule IEx.Helpers do
 
   @doc """
   Prints the documentation for the given module
-  or for the given function/arity pair.
+  or for the given `function/arity` pair.
 
   ## Examples
 
       iex> h(Enum)
 
-  It also accepts functions in the format `fun/arity`
-  and `module.fun/arity`, for example:
+  It also accepts functions in the format `function/arity`
+  and `module.function/arity`, for example:
 
       iex> h(receive/1)
       iex> h(Enum.all?/2)
@@ -434,7 +442,7 @@ defmodule IEx.Helpers do
   old version was properly purged before).
 
   This function is useful when you know the bytecode for module
-  has been updated in the filesystem and you want to tell the VM
+  has been updated in the file system and you want to tell the VM
   to load it.
   """
   def l(module) when is_atom(module) do
@@ -485,12 +493,13 @@ defmodule IEx.Helpers do
     |> Protocol.extract_protocols()
     |> Enum.uniq()
     |> Enum.reject(fn protocol -> is_nil(protocol.impl_for(term)) end)
+    |> Enum.sort()
     |> Enum.map_join(", ", &inspect/1)
   end
 
   @runtime_info_topics [:system, :memory, :allocators, :limits, :applications]
   @doc """
-  Prints vm/runtime information such as versions, memory usage and statistics.
+  Prints VM/runtime information such as versions, memory usage and statistics.
   Additional topics are available via `runtime_info/1`.
   """
   @doc since: "1.5.0"
@@ -580,10 +589,7 @@ defmodule IEx.Helpers do
     print_uptime()
     print_entry("Run queue", :erlang.statistics(:run_queue))
 
-    if :erlang.system_info(:otp_release) >= '20' do
-      print_percentage("Atoms", :atom_count, :atom_limit)
-    end
-
+    print_percentage("Atoms", :atom_count, :atom_limit)
     print_percentage("ETS", :ets_count, :ets_limit)
     print_percentage("Ports", :port_count, :port_limit)
     print_percentage("Processes", :process_count, :process_limit)
@@ -704,7 +710,7 @@ defmodule IEx.Helpers do
   Prints the current working directory.
   """
   def pwd do
-    IO.puts(IEx.color(:eval_info, System.cwd!()))
+    IO.puts(IEx.color(:eval_info, File.cwd!()))
     dont_display_result()
   end
 
@@ -825,8 +831,8 @@ defmodule IEx.Helpers do
   Respawns the current shell by starting a new shell process.
   """
   def respawn do
-    if whereis = IEx.Server.whereis() do
-      send(whereis, {:respawn, self()})
+    if iex_server = Process.get(:iex_server) do
+      send(iex_server, {:respawn, self()})
     end
 
     dont_display_result()
@@ -849,8 +855,8 @@ defmodule IEx.Helpers do
   """
   @doc since: "1.5.0"
   def continue do
-    if whereis = IEx.Server.whereis() do
-      send(whereis, {:continue, self()})
+    if iex_server = Process.get(:iex_server) do
+      send(iex_server, {:continue, self()})
     end
 
     dont_display_result()
@@ -943,9 +949,9 @@ defmodule IEx.Helpers do
 
   @doc """
   Sets the number of pending stops in the breakpoint
-  with the given id to zero.
+  with the given `id` to zero.
 
-  Returns `:ok` if there is such breakpoint id. `:not_found`
+  Returns `:ok` if there is such breakpoint ID. `:not_found`
   otherwise.
 
   Note the module remains "instrumented" on reset. If you would
@@ -993,7 +999,7 @@ defmodule IEx.Helpers do
 
       77:
       78:   def recompile do
-      79:     require IEx; IEx.pry
+      79:     require IEx; IEx.pry()
       80:     if mix_started?() do
       81:       config = Mix.Project.config
 
@@ -1043,8 +1049,8 @@ defmodule IEx.Helpers do
   expanded:
 
       # This raises a File.Error if ~/.iex.exs doesn't exist.
-      if ("~/.iex.exs" |> Path.expand |> File.exists?) do
-        import_file "~/.iex.exs"
+      if "~/.iex.exs" |> Path.expand() |> File.exists?() do
+        import_file("~/.iex.exs")
       end
 
   This macro addresses this issue by checking if the file exists or not
@@ -1067,10 +1073,17 @@ defmodule IEx.Helpers do
   end
 
   @doc """
-  Evaluates the contents of the file at `path` as if it was directly typed into
+  Injects the contents of the file at `path` as if it was typed into
   the shell.
 
-  `path` has to be a literal string. `path` is automatically expanded via
+  This would be the equivalent of getting all of the file contents and
+  packing it all into a single line in IEx and executing it.
+
+  By default, the contents of a `.iex.exs` file in the same directory
+  as you are starting IEx are automatically imported. See the section
+  for ".iex.exs" in the `IEx` module docs for more information.
+
+  `path` has to be a literal string and is automatically expanded via
   `Path.expand/1`.
 
   ## Examples
@@ -1079,7 +1092,7 @@ defmodule IEx.Helpers do
       value = 13
 
       # in the shell
-      iex(1)> import_file "~/file.exs"
+      iex(1)> import_file("~/file.exs")
       13
       iex(2)> value
       13
@@ -1109,7 +1122,7 @@ defmodule IEx.Helpers do
   ## Example
 
       # In ~/.iex.exs
-      import_if_available Ecto.Query
+      import_if_available(Ecto.Query)
 
   """
   defmacro import_if_available(quoted_module, opts \\ []) do
@@ -1131,7 +1144,7 @@ defmodule IEx.Helpers do
   ## Example
 
       # In ~/.iex.exs
-      use_if_available Phoenix.HTML
+      use_if_available(Phoenix.HTML)
 
   """
   @doc since: "1.7.0"
@@ -1200,12 +1213,45 @@ defmodule IEx.Helpers do
   end
 
   @doc """
+  Creates a Port from `string`.
+
+  ## Examples
+
+      iex> port("0.4")
+      #Port<0.4>
+
+  """
+  @doc since: "1.8.0"
+  def port(string) when is_binary(string) do
+    :erlang.list_to_port('#Port<#{string}>')
+  end
+
+  @doc """
+  Creates a Port from two non-negative integers.
+
+  ## Examples
+
+      iex> port(0, 8080)
+      #Port<0.8080>
+      iex> port(0, 443)
+      #Port<0.443>
+
+  """
+  @doc since: "1.8.0"
+  def port(major, minor)
+      when is_integer(major) and major >= 0 and is_integer(minor) and minor >= 0 do
+    :erlang.list_to_port(
+      '#Port<' ++ Integer.to_charlist(major) ++ '.' ++ Integer.to_charlist(minor) ++ '>'
+    )
+  end
+
+  @doc """
   Creates a Reference from `string`.
 
   ## Examples
 
-      iex> ref("0.21.32.43")
-      #Reference<0.21.32.43>
+      iex> ref("0.1.2.3")
+      #Reference<0.1.2.3>
 
   """
   @doc since: "1.6.0"
@@ -1213,16 +1259,25 @@ defmodule IEx.Helpers do
     :erlang.list_to_ref('#Ref<#{string}>')
   end
 
+  @doc """
+  Creates a Reference from its 4 non-negative integers components.
+
+  ## Examples
+
+      iex> ref(0, 1, 2, 3)
+      #Reference<0.1.2.3>
+
+  """
   @doc since: "1.6.0"
   def ref(w, x, y, z)
       when is_integer(w) and w >= 0 and is_integer(x) and x >= 0 and is_integer(y) and y >= 0 and
              is_integer(z) and z >= 0 do
     :erlang.list_to_ref(
-      '<' ++
+      '#Ref<' ++
         Integer.to_charlist(w) ++
         '.' ++
         Integer.to_charlist(x) ++
-        '.' ++ '.' ++ Integer.to_charlist(y) ++ '.' ++ '.' ++ Integer.to_charlist(z) ++ '.' ++ '>'
+        '.' ++ Integer.to_charlist(y) ++ '.' ++ Integer.to_charlist(z) ++ '>'
     )
   end
 
@@ -1240,8 +1295,11 @@ defmodule IEx.Helpers do
   ## Examples
 
       iex> nl(HelloWorld)
-      {:ok, [{:node1@easthost, :loaded, HelloWorld},
-             {:node1@westhost, :loaded, HelloWorld}]}
+      {:ok,
+       [
+         {:node1@easthost, :loaded, HelloWorld},
+         {:node1@westhost, :loaded, HelloWorld}
+       ]}
 
       iex> nl(NoSuchModuleExists)
       {:error, :nofile}

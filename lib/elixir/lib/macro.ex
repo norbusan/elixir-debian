@@ -95,7 +95,7 @@ defmodule Macro do
   `div/2` function, so that the AST for that function will become `{:div, [],
   [100, 5]}` (`div(100, 5)`).
   """
-  @spec unpipe(Macro.t()) :: [Macro.t()]
+  @spec unpipe(t()) :: [t()]
   def unpipe(expr) do
     :lists.reverse(unpipe(expr, []))
   end
@@ -111,7 +111,7 @@ defmodule Macro do
   @doc """
   Pipes `expr` into the `call_args` at the given `position`.
   """
-  @spec pipe(Macro.t(), Macro.t(), integer) :: Macro.t() | no_return
+  @spec pipe(t(), t(), integer) :: t()
   def pipe(expr, call_args, position)
 
   def pipe(expr, {:&, _, _} = call_args, _integer) do
@@ -131,13 +131,17 @@ defmodule Macro do
     raise ArgumentError, bad_pipe(expr, call_args)
   end
 
+  def pipe(expr, {unquote, _, []}, _integer) when unquote in [:unquote, :unquote_splicing] do
+    raise ArgumentError,
+          "cannot pipe #{to_string(expr)} into the special form #{unquote}/1 " <>
+            "since #{unquote}/1 is used to build the Elixir AST itself"
+  end
+
   # {:fn, _, _} is what we get when we pipe into an anonymous function without
   # calling it, e.g., `:foo |> (fn x -> x end)`.
   def pipe(expr, {:fn, _, _}, _integer) do
-    expr_str = to_string(expr)
-
     raise ArgumentError,
-          "cannot pipe #{expr_str} into an anonymous function without" <>
+          "cannot pipe #{to_string(expr)} into an anonymous function without" <>
             " calling the function; use something like (fn ... end).() or" <>
             " define the anonymous function as a regular private function"
   end
@@ -162,7 +166,7 @@ defmodule Macro do
 
   defp bad_pipe(expr, call_args) do
     "cannot pipe #{to_string(expr)} into #{to_string(call_args)}, " <>
-      "can only pipe into local calls foo(), remote calls Foo.bar() or anonymous functions calls foo.()"
+      "can only pipe into local calls foo(), remote calls Foo.bar() or anonymous function calls foo.()"
   end
 
   @doc """
@@ -198,15 +202,19 @@ defmodule Macro do
   ## Examples
 
       iex> Macro.generate_arguments(2, __MODULE__)
-      [{:var1, [], __MODULE__}, {:var2, [], __MODULE__}]
+      [{:arg1, [], __MODULE__}, {:arg2, [], __MODULE__}]
 
   """
   @doc since: "1.5.0"
-  def generate_arguments(0, _), do: []
+  @spec generate_arguments(0, context :: atom) :: []
+  @spec generate_arguments(pos_integer, context) :: [{atom, [], context}, ...] when context: atom
+  def generate_arguments(amount, context)
+
+  def generate_arguments(0, context) when is_atom(context), do: []
 
   def generate_arguments(amount, context)
       when is_integer(amount) and amount > 0 and is_atom(context) do
-    for id <- 1..amount, do: Macro.var(String.to_atom("var" <> Integer.to_string(id)), context)
+    for id <- 1..amount, do: var(String.to_atom("arg" <> Integer.to_string(id)), context)
   end
 
   @doc """
@@ -342,7 +350,7 @@ defmodule Macro do
       :error
 
   """
-  @spec decompose_call(Macro.t()) :: {atom, [Macro.t()]} | {Macro.t(), atom, [Macro.t()]} | :error
+  @spec decompose_call(t()) :: {atom, [t()]} | {t(), atom, [t()]} | :error
   def decompose_call(ast)
 
   def decompose_call({{:., _, [remote, function]}, _, args})
@@ -380,7 +388,7 @@ defmodule Macro do
       nodes. Note this option changes the semantics of escaped code and
       it should only be used when escaping ASTs, never values. Defaults
       to false.
-      
+
       As an example, `ExUnit` stores the AST of every assertion, so when
       an assertion fails we can show code snippets to users. Without this
       option, each time the test module is compiled, we get a different
@@ -389,7 +397,7 @@ defmodule Macro do
       the metadata, we ensure that the module is deterministic and reduce
       the amount of data `ExUnit` needs to keep around.
 
-  ## Comparison to `Kernel.quote/2`
+  ## Comparison to `Kernel.SpecialForms.quote/2`
 
   The `escape/2` function is sometimes confused with `Kernel.SpecialForms.quote/2`,
   because the above examples behave the same with both. The key difference is
@@ -415,11 +423,29 @@ defmodule Macro do
   bound), while `Kernel.SpecialForms.quote/2` produces syntax trees for
   expressions.
   """
-  @spec escape(term, keyword) :: Macro.t()
+  @spec escape(term, keyword) :: t()
   def escape(expr, opts \\ []) do
     unquote = Keyword.get(opts, :unquote, false)
     kind = if Keyword.get(opts, :prune_metadata, false), do: :prune_metadata, else: :default
-    elem(:elixir_quote.escape(expr, kind, unquote), 0)
+    :elixir_quote.escape(expr, kind, unquote)
+  end
+
+  @doc """
+  Expands the struct given by `module` in the given `env`.
+
+  This is useful when a struct needs to be expanded at
+  compilation time and the struct being expanded may or may
+  not have been compiled. This function is even capable of
+  expanding structs defined under the module being compiled.
+
+  It will raise `CompileError` if the struct is not available.
+  """
+  @doc since: "1.8.0"
+  @spec struct!(module, Macro.Env.t()) :: %{__struct__: module} when module: module()
+  def struct!(module, env) when is_atom(module) do
+    if module == env.module do
+      Module.get_attribute(module, :struct)
+    end || :elixir_map.load_struct([line: env.line], module, [], env)
   end
 
   @doc """
@@ -480,7 +506,7 @@ defmodule Macro do
 
   In this setup, Elixir will escape the following: `\0`, `\a`, `\b`,
   `\d`, `\e`, `\f`, `\n`, `\r`, `\s`, `\t` and `\v`. Bytes can be
-  given as hexadecimals via `\xNN` and Unicode Codepoints as
+  given as hexadecimals via `\xNN` and Unicode code points as
   `\uNNNN` escapes.
 
   This function is commonly used on sigil implementations
@@ -509,7 +535,7 @@ defmodule Macro do
   ## Map
 
   The map must be a function. The function receives an integer
-  representing the codepoint of the character it wants to unescape.
+  representing the code point of the character it wants to unescape.
   Here is the default mapping function implemented by Elixir:
 
       def unescape_map(unicode), do: true
@@ -525,20 +551,20 @@ defmodule Macro do
       def unescape_map(?s), do: ?\s
       def unescape_map(?t), do: ?\t
       def unescape_map(?v), do: ?\v
-      def unescape_map(e),  do: e
+      def unescape_map(e), do: e
 
   If the `unescape_map/1` function returns `false`, the char is
   not escaped and the backslash is kept in the string.
 
-  Hexadecimals and Unicode codepoints will be escaped if the map
-  function returns `true` for `?x`. Unicode codepoints if the map
+  Hexadecimals and Unicode code points will be escaped if the map
+  function returns `true` for `?x`. Unicode code points if the map
   function returns `true` for `?u`.
 
   ## Examples
 
   Using the `unescape_map/1` function defined above is easy:
 
-      Macro.unescape_string "example\\n", &unescape_map(&1)
+      Macro.unescape_string("example\\n", &unescape_map(&1))
 
   """
   @spec unescape_string(String.t(), (non_neg_integer -> non_neg_integer | false)) :: String.t()
@@ -587,11 +613,11 @@ defmodule Macro do
       "one + two"
 
   """
-  @spec to_string(Macro.t(), (Macro.t(), String.t() -> String.t())) :: String.t()
+  @spec to_string(t(), (t(), String.t() -> String.t())) :: String.t()
   def to_string(tree, fun \\ fn _ast, string -> string end)
 
   # Variables
-  def to_string({var, _, atom} = ast, fun) when is_atom(atom) do
+  def to_string({var, _, context} = ast, fun) when is_atom(var) and is_atom(context) do
     fun.(ast, Atom.to_string(var))
   end
 
@@ -736,9 +762,13 @@ defmodule Macro do
       {list, last} = split_last(args)
 
       result =
-        case kw_blocks?(last) do
-          true -> call_to_string_with_args(target, list, fun) <> kw_blocks_to_string(last, fun)
-          false -> call_to_string_with_args(target, args, fun)
+        if kw_blocks?(last) do
+          case list do
+            [] -> call_to_string(target, fun) <> kw_blocks_to_string(last, fun)
+            _ -> call_to_string_with_args(target, list, fun) <> kw_blocks_to_string(last, fun)
+          end
+        else
+          call_to_string_with_args(target, args, fun)
         end
 
       fun.(ast, result)
@@ -782,9 +812,10 @@ defmodule Macro do
     Kernel.inspect(value, limit: :infinity, printable_limit: :infinity)
   end
 
-  defp bitpart_to_string({:::, _, [left, right]} = ast, fun) do
+  defp bitpart_to_string({:"::", _, [left, right]} = ast, fun) do
     result =
-      op_to_string(left, fun, :::, :left) <> "::" <> bitmods_to_string(right, fun, :::, :right)
+      op_to_string(left, fun, :"::", :left) <>
+        "::" <> bitmods_to_string(right, fun, :"::", :right)
 
     fun.(ast, result)
   end
@@ -817,7 +848,7 @@ defmodule Macro do
   # Check if we have an interpolated string.
   defp interpolated?({:<<>>, _, [_ | _] = parts}) do
     Enum.all?(parts, fn
-      {:::, _, [{{:., _, [Kernel, :to_string]}, _, [_]}, {:binary, _, _}]} -> true
+      {:"::", _, [{{:., _, [Kernel, :to_string]}, _, [_]}, {:binary, _, _}]} -> true
       binary when is_binary(binary) -> true
       _ -> false
     end)
@@ -830,7 +861,7 @@ defmodule Macro do
   defp interpolate({:<<>>, _, parts}, fun) do
     parts =
       Enum.map_join(parts, "", fn
-        {:::, _, [{{:., _, [Kernel, :to_string]}, _, [arg]}, {:binary, _, _}]} ->
+        {:"::", _, [{{:., _, [Kernel, :to_string]}, _, [arg]}, {:binary, _, _}]} ->
           "\#{" <> to_string(arg, fun) <> "}"
 
         binary when is_binary(binary) ->
@@ -1111,9 +1142,11 @@ defmodule Macro do
     * Module attributes reader (`@foo`)
 
   If the expression cannot be expanded, it returns the expression
-  itself. Notice that `expand_once/2` performs the expansion just
-  once and it is not recursive. Check `expand/2` for expansion
-  until the node can no longer be expanded.
+  itself. This function does not traverse the AST, only the root
+  node is expanded.
+
+  `expand_once/2` performs the expansion just once. Check `expand/2`
+  to perform expansion until the node can no longer be expanded.
 
   ## Examples
 
@@ -1165,7 +1198,7 @@ defmodule Macro do
 
       defmacro defmodule_with_length(name, do: block) do
         expanded = Macro.expand(name, __CALLER__)
-        length   = length(Atom.to_charlist(expanded))
+        length = length(Atom.to_charlist(expanded))
 
         quote do
           defmodule unquote(name) do
@@ -1252,7 +1285,7 @@ defmodule Macro do
 
       case expand do
         {:ok, receiver, quoted} ->
-          next = :erlang.unique_integer()
+          next = :elixir_module.next_counter(module)
           {:elixir_quote.linify_with_context_counter(0, {receiver, next}, quoted), true}
 
         {:ok, Kernel, op, [arg]} when op in [:+, :-] ->
@@ -1283,7 +1316,7 @@ defmodule Macro do
 
         case expand do
           {:ok, receiver, quoted} ->
-            next = :erlang.unique_integer()
+            next = :elixir_module.next_counter(env.module)
             {:elixir_quote.linify_with_context_counter(0, {receiver, next}, quoted), true}
 
           :error ->
@@ -1332,19 +1365,22 @@ defmodule Macro do
   Receives an AST node and expands it until it can no longer
   be expanded.
 
+  Note this function does not traverse the AST, only the root
+  node is expanded.
+
   This function uses `expand_once/2` under the hood. Check
   it out for more information and examples.
   """
-  def expand(tree, env) do
-    expand_until({tree, true}, env)
+  def expand(ast, env) do
+    expand_until({ast, true}, env)
   end
 
-  defp expand_until({tree, true}, env) do
-    expand_until(do_expand_once(tree, env), env)
+  defp expand_until({ast, true}, env) do
+    expand_until(do_expand_once(ast, env), env)
   end
 
-  defp expand_until({tree, false}, _env) do
-    tree
+  defp expand_until({ast, false}, _env) do
+    ast
   end
 
   @doc """
@@ -1382,6 +1418,7 @@ defmodule Macro do
       "Hello10"
 
   """
+  @spec underscore(atom | String.t()) :: String.t()
   def underscore(atom) when is_atom(atom) do
     "Elixir." <> rest = Atom.to_string(atom)
     underscore(rest)

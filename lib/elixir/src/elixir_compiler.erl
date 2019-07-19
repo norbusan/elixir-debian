@@ -1,7 +1,7 @@
 %% Elixir compiler front-end to the Erlang backend.
 -module(elixir_compiler).
--export([get_opt/1, string/2, quoted/2, bootstrap/0,
-         file/1, file_to_path/2, eval_forms/3]).
+-export([get_opt/1, string/3, quoted/3, bootstrap/0,
+         file/2, file_to_path/3, eval_forms/3]).
 -include("elixir.hrl").
 
 get_opt(Key) ->
@@ -11,32 +11,34 @@ get_opt(Key) ->
     error -> false
   end.
 
-string(Contents, File) ->
+string(Contents, File, Callback) ->
   Forms = elixir:'string_to_quoted!'(Contents, 1, File, []),
-  quoted(Forms, File).
+  quoted(Forms, File, Callback).
 
-quoted(Forms, File) ->
+quoted(Forms, File, Callback) ->
   Previous = get(elixir_module_binaries),
 
   try
     put(elixir_module_binaries, []),
     elixir_lexical:run(File, fun(Pid) ->
       Env = elixir:env_for_eval([{line, 1}, {file, File}]),
-      eval_forms(Forms, [], Env#{lexical_tracker := Pid})
+      eval_forms(Forms, [], Env#{lexical_tracker := Pid}),
+      Callback(File, Pid)
     end),
     lists:reverse(get(elixir_module_binaries))
   after
     put(elixir_module_binaries, Previous)
   end.
 
-file(File) ->
+file(File, Callback) ->
   {ok, Bin} = file:read_file(File),
-  string(elixir_utils:characters_to_list(Bin), File).
+  string(elixir_utils:characters_to_list(Bin), File, Callback).
 
-file_to_path(File, Dest) when is_binary(File), is_binary(Dest) ->
-  Comp = file(File),
-  _ = [binary_to_path(X, Dest) || X <- Comp],
-  Comp.
+file_to_path(File, Dest, Callback) when is_binary(File), is_binary(Dest) ->
+  file(File, fun(CallbackFile, CallbackLexical) ->
+    _ = [binary_to_path(Mod, Dest) || Mod <- get(elixir_module_binaries)],
+    Callback(CallbackFile, CallbackLexical)
+  end).
 
 %% Evaluates the given code through the Erlang compiler.
 %% It may end-up evaluating the code if it is deemed a
@@ -52,20 +54,28 @@ eval_forms(Forms, Vars, E) ->
       compile(Forms, Vars, E)
   end.
 
-compile(Forms, Vars, #{line := Line, file := File} = E) ->
+compile(Quoted, Vars, E) ->
+  Args = list_to_tuple([V || {_, _, _, V} <- Vars]),
+  {Expanded, EE} = elixir_expand:expand(Quoted, E),
+  elixir_env:check_unused_vars(EE),
+
+  {Module, Fun, Purgeable} =
+    elixir_erl_compiler:spawn(fun spawned_compile/3, [Expanded, Vars, E]),
+
+  {dispatch(Module, Fun, Args, Purgeable), EE}.
+
+spawned_compile(ExExprs, Vars, #{line := Line, file := File} = E) ->
   Dict = [{{Name, Kind}, {0, Value}} || {Name, Kind, Value, _} <- Vars],
   S = elixir_env:env_to_scope_with_vars(E, Dict),
-  {Expr, EE, _S} = elixir:quoted_to_erl(Forms, E, S),
-  elixir_env:check_unused_vars(EE),
+  {ErlExprs, _} = elixir_erl_pass:translate(ExExprs, S),
 
   Module = retrieve_compiler_module(),
   Fun  = code_fun(?key(E, module)),
-  Form = code_mod(Fun, Expr, Line, File, Module, Vars),
-  Args = list_to_tuple([V || {_, _, _, V} <- Vars]),
+  Forms = code_mod(Fun, ErlExprs, Line, File, Module, Vars),
 
-  {Module, Binary} = elixir_erl_compiler:noenv_forms(Form, File, [nowarn_nomatch]),
+  {Module, Binary} = elixir_erl_compiler:noenv_forms(Forms, File, [nowarn_nomatch]),
   code:load_binary(Module, "", Binary),
-  {dispatch(Module, Fun, Args, is_purgeable(Module, Binary)), EE}.
+  {Module, Fun, is_purgeable(Module, Binary)}.
 
 dispatch(Module, Fun, Args, Purgeable) ->
   Res = Module:Fun(Args),
@@ -112,19 +122,19 @@ allows_fast_compilation(_) ->
 
 bootstrap() ->
   {ok, _} = application:ensure_all_started(elixir),
-  Update = fun(Old) -> maps:merge(Old, #{docs => false, relative_paths => false}) end,
+  Update = fun(Old) -> maps:merge(Old, #{docs => false, relative_paths => false, ignore_module_conflict => true}) end,
   _ = elixir_config:update(compiler_options, Update),
   _ = elixir_config:put(bootstrap, true),
   [bootstrap_file(File) || File <- bootstrap_main()].
 
 bootstrap_file(File) ->
   try
-    Lists = file(filename:absname(File)),
+    Lists = file(filename:absname(File), fun(_, _) -> ok end),
     _ = [binary_to_path(X, "lib/elixir/ebin") || X <- Lists],
     io:format("Compiled ~ts~n", [File])
   catch
-    Kind:Reason ->
-      io:format("~p: ~p~nstacktrace: ~p~n", [Kind, Reason, erlang:get_stacktrace()]),
+    ?WITH_STACKTRACE(Kind, Reason, Stacktrace)
+      io:format("~p: ~p~nstacktrace: ~p~n", [Kind, Reason, Stacktrace]),
       erlang:halt(1)
   end.
 

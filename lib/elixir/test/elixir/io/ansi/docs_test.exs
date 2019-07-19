@@ -24,8 +24,21 @@ defmodule IO.ANSI.DocsTest do
   end
 
   test "metadata is formatted" do
-    result = format_metadata(%{since: "1.2.3", deprecated: "Use that other one", author: "Alice"})
-    assert result == "\e[33mdeprecated:\e[0m Use that other one\n\e[33msince:\e[0m 1.2.3\n\n"
+    result =
+      format_metadata(%{
+        since: "1.2.3",
+        deprecated: "Use that other one",
+        author: "Alice",
+        delegate_to: {Foo, :bar, 3}
+      })
+
+    assert result == """
+           \e[33mdelegate_to:\e[0m Foo.bar/3
+           \e[33mdeprecated:\e[0m Use that other one
+           \e[33msince:\e[0m 1.2.3
+
+           """
+
     assert format_metadata(%{author: "Alice"}) == ""
   end
 
@@ -224,6 +237,11 @@ defmodule IO.ANSI.DocsTest do
     assert result == "\e[36munit \e[0msize\n\e[0m"
   end
 
+  test "backtick does not escape characters" do
+    result = format("`Ctrl+\\ `")
+    assert result == "\e[36mCtrl+\\ \e[0m\n\e[0m"
+  end
+
   test "star/underscore/backtick with leading escape" do
     result = format("\\_unit_")
     assert result == "_unit_\n\e[0m"
@@ -284,8 +302,12 @@ defmodule IO.ANSI.DocsTest do
   test "escaping of underlines within links" do
     result = format("(https://en.wikipedia.org/wiki/ANSI_escape_code)")
     assert result == "(https://en.wikipedia.org/wiki/ANSI_escape_code)\n\e[0m"
+
     result = format("[ANSI escape code](https://en.wikipedia.org/wiki/ANSI_escape_code)")
     assert result == "ANSI escape code (https://en.wikipedia.org/wiki/ANSI_escape_code)\n\e[0m"
+
+    result = format("(ftp://example.com/ANSI_escape_code.zip)")
+    assert result == "(ftp://example.com/ANSI_escape_code.zip)\n\e[0m"
   end
 
   test "escaping of underlines within links does not escape surrounding text" do
@@ -293,6 +315,15 @@ defmodule IO.ANSI.DocsTest do
 
     assert result ==
              "\e[4memphasis\e[0m (https://en.wikipedia.org/wiki/ANSI_escape_code) more \e[4memphasis\e[0m\n\e[0m"
+  end
+
+  test "escaping of underlines within links avoids false positives" do
+    assert format("`https_proxy`") == "\e[36mhttps_proxy\e[0m\n\e[0m"
+  end
+
+  test "escaping of several Markdown links in one line" do
+    assert format("[List](`List`) (`[1, 2, 3]`), [Map](`Map`)") ==
+             "List (\e[36mList\e[0m) (\e[36m[1, 2, 3]\e[0m), Map (\e[36mMap\e[0m)\n\e[0m"
   end
 
   test "lone thing that looks like a table line isn't" do
@@ -342,7 +373,7 @@ defmodule IO.ANSI.DocsTest do
   end
 
   test "one reference link label per line" do
-    assert format("  [id]: //example.com\n  [Elixir]:  http://elixir-lang.org") ==
-             "  [id]: //example.com\n  [Elixir]:  http://elixir-lang.org"
+    assert format("  [id]: //example.com\n  [Elixir]:  https://elixir-lang.org") ==
+             "  [id]: //example.com\n  [Elixir]:  https://elixir-lang.org"
   end
 end

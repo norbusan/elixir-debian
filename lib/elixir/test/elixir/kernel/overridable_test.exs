@@ -17,6 +17,14 @@ defmodule Kernel.Overridable do
     x + y
   end
 
+  def capture_super(x) do
+    x
+  end
+
+  defmacro capture_super_macro(x) do
+    x
+  end
+
   def many_clauses(0) do
     11
   end
@@ -25,11 +33,28 @@ defmodule Kernel.Overridable do
     13
   end
 
+  def locals do
+    undefined_function()
+  end
+
+  def multiple_overrides do
+    [1]
+  end
+
+  def public_to_private do
+    :public
+  end
+
   defoverridable sample: 0,
                  with_super: 0,
                  without_super: 0,
                  super_with_multiple_args: 2,
-                 many_clauses: 1
+                 capture_super: 1,
+                 capture_super_macro: 1,
+                 many_clauses: 1,
+                 locals: 0,
+                 multiple_overrides: 0,
+                 public_to_private: 0
 
   true = Module.overridable?(__MODULE__, {:without_super, 0})
   true = Module.overridable?(__MODULE__, {:with_super, 0})
@@ -46,6 +71,14 @@ defmodule Kernel.Overridable do
     super(x, y * 2)
   end
 
+  def capture_super(x) do
+    Enum.map(1..x, &super(&1)) ++ Enum.map(1..x, &super/1)
+  end
+
+  defmacro capture_super_macro(x) do
+    Enum.map(1..x, &super(&1)) ++ Enum.map(1..x, &super/1)
+  end
+
   def many_clauses(2) do
     17
   end
@@ -56,6 +89,28 @@ defmodule Kernel.Overridable do
 
   def many_clauses(x) do
     super(x)
+  end
+
+  def locals do
+    :ok
+  end
+
+  def multiple_overrides do
+    [2 | super()]
+  end
+
+  defp public_to_private do
+    :private
+  end
+
+  def test_public_to_private do
+    public_to_private()
+  end
+
+  defoverridable multiple_overrides: 0
+
+  def multiple_overrides do
+    [3 | super()]
   end
 
   ## Macros
@@ -178,8 +233,25 @@ defmodule Kernel.OverridableTest do
     assert Overridable.without_super() == :without_super
   end
 
+  test "public overridable overridden as private function" do
+    assert Overridable.test_public_to_private() == :private
+    refute {:public_to_private, 0} in Overridable.module_info(:exports)
+  end
+
+  test "overridable locals are ignored without super" do
+    assert Overridable.locals() == :ok
+  end
+
   test "calling super with multiple args" do
     assert Overridable.super_with_multiple_args(1, 2) == 5
+  end
+
+  test "calling super using function captures" do
+    assert Overridable.capture_super(5) == [1, 2, 3, 4, 5, 1, 2, 3, 4, 5]
+  end
+
+  test "calling super of an overridable macro using function captures" do
+    assert Overridable.capture_super_macro(5) == [1, 2, 3, 4, 5, 1, 2, 3, 4, 5]
   end
 
   test "overridable with many clauses" do
@@ -192,6 +264,10 @@ defmodule Kernel.OverridableTest do
   test "overridable definitions are private" do
     refute {:"with_super (overridable 0)", 0} in Overridable.module_info(:exports)
     refute {:"with_super (overridable 1)", 0} in Overridable.module_info(:exports)
+  end
+
+  test "multiple overrides" do
+    assert Overridable.multiple_overrides() == [3, 2, 1]
   end
 
   test "overridable macros" do
@@ -216,6 +292,124 @@ defmodule Kernel.OverridableTest do
     end
 
     purge(Kernel.OverridableOrder.Forwarding)
+  end
+
+  test "invalid super call with different arity" do
+    message =
+      "nofile:4: super must be called with the same number of arguments as the current definition"
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableSuper.DifferentArities do
+        def bar(a), do: a
+        defoverridable bar: 1
+        def bar(_), do: super()
+      end
+      """)
+    end
+  end
+
+  test "invalid super capture with different arity" do
+    message =
+      "nofile:4: super must be called with the same number of arguments as the current definition"
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableSuperCapture.DifferentArities do
+        def bar(a), do: a
+        defoverridable bar: 1
+        def bar(_), do: (&super/0).()
+      end
+      """)
+    end
+  end
+
+  test "does not allow to override a macro as a function" do
+    message =
+      "nofile:4: cannot override macro (defmacro, defmacrop) foo/0 in module " <>
+        "Kernel.OverridableMacro.FunctionOverride as a function (def, defp)"
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableMacro.FunctionOverride do
+        defmacro foo(), do: :ok
+        defoverridable foo: 0
+        def foo(), do: :invalid
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableMacro.FunctionOverride)
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableMacro.FunctionOverride do
+        defmacro foo(), do: :ok
+        defoverridable foo: 0
+        def foo(), do: :invalid
+        defoverridable foo: 0
+        def foo(), do: :invalid
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableMacro.FunctionOverride)
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableMacro.FunctionOverride do
+        defmacro foo(), do: :ok
+        defoverridable foo: 0
+        def foo(), do: super()
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableMacro.FunctionOverride)
+  end
+
+  test "does not allow to override a function as a macro" do
+    message =
+      "nofile:4: cannot override function (def, defp) foo/0 in module " <>
+        "Kernel.OverridableFunction.MacroOverride as a macro (defmacro, defmacrop)"
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableFunction.MacroOverride do
+        def foo(), do: :ok
+        defoverridable foo: 0
+        defmacro foo(), do: :invalid
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableFunction.MacroOverride)
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableFunction.MacroOverride do
+        def foo(), do: :ok
+        defoverridable foo: 0
+        defmacro foo(), do: :invalid
+        defoverridable foo: 0
+        defmacro foo(), do: :invalid
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableFunction.MacroOverride)
+
+    assert_raise CompileError, message, fn ->
+      Code.eval_string("""
+      defmodule Kernel.OverridableFunction.MacroOverride do
+        def foo(), do: :ok
+        defoverridable foo: 0
+        defmacro foo(), do: super()
+      end
+      """)
+    end
+
+    purge(Kernel.OverridableFunction.MacroOverride)
   end
 
   test "undefined functions can't be marked as overridable" do

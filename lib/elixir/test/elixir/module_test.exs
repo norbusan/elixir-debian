@@ -259,12 +259,24 @@ defmodule ModuleTest do
     assert {:module, :root_defmodule, _, _} = result
   end
 
-  test "defmodule with alias as atom" do
+  test "does not leak alias from atom" do
     defmodule :"Elixir.ModuleTest.RawModule" do
       def hello, do: :world
     end
 
-    assert RawModule.hello() == :world
+    refute __ENV__.aliases[Elixir.ModuleTest]
+    refute __ENV__.aliases[Elixir.RawModule]
+    assert ModuleTest.RawModule.hello() == :world
+  end
+
+  test "does not leak alias from non-atom alias" do
+    defmodule __MODULE__.NonAtomAlias do
+      def hello, do: :world
+    end
+
+    refute __ENV__.aliases[Elixir.ModuleTest]
+    refute __ENV__.aliases[Elixir.NonAtomAlias]
+    assert Elixir.ModuleTest.NonAtomAlias.hello() == :world
   end
 
   test "create" do
@@ -277,7 +289,7 @@ defmodule ModuleTest do
     assert ModuleCreateSample.world()
   end
 
-  test "create with Elixir as a name" do
+  test "create with a reserved module name" do
     contents =
       quote do
         def world, do: true
@@ -302,15 +314,19 @@ defmodule ModuleTest do
     assert ModuleHygiene.test() == [1, 2, 3]
   end
 
-  test "ensure function clauses are ordered" do
+  test "ensure function clauses are sorted (to avoid non-determinism in module vsn)" do
     {_, _, binary, _} =
       defmodule Ordered do
         def foo(:foo), do: :bar
         def baz(:baz), do: :bat
       end
 
-    atoms = :beam_lib.chunks(binary, [:atoms])
-    assert :erlang.phash2(atoms) == 61_635_213
+    {:ok, {ModuleTest.Ordered, [abstract_code: {:raw_abstract_v1, abstract_code}]}} =
+      :beam_lib.chunks(binary, [:abstract_code])
+
+    # We need to traverse functions instead of using :exports as exports are sorted
+    funs = for {:function, _, name, arity, _} <- abstract_code, do: {name, arity}
+    assert funs == [__info__: 1, baz: 1, foo: 1]
   end
 
   test "create with generated true does not emit warnings" do
@@ -326,29 +342,25 @@ defmodule ModuleTest do
     assert ModuleCreateGenerated.world()
   end
 
-  # TODO: Remove this check once we depend only on 20
-  if :erlang.system_info(:otp_release) >= '20' do
-    test "uses the new debug_info chunk" do
-      {:module, ModuleCreateDebugInfo, binary, _} =
-        Module.create(ModuleCreateDebugInfo, :ok, __ENV__)
+  test "uses the debug_info chunk" do
+    {:module, ModuleCreateDebugInfo, binary, _} =
+      Module.create(ModuleCreateDebugInfo, :ok, __ENV__)
 
-      {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} =
-        :beam_lib.chunks(binary, [:debug_info])
+    {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} =
+      :beam_lib.chunks(binary, [:debug_info])
 
-      {:ok, map} = backend.debug_info(:elixir_v1, ModuleCreateDebugInfo, data, [])
-      assert map.module == ModuleCreateDebugInfo
-    end
+    {:ok, map} = backend.debug_info(:elixir_v1, ModuleCreateDebugInfo, data, [])
+    assert map.module == ModuleCreateDebugInfo
+  end
 
-    test "uses the new debug_info chunk even if debug_info is set to false" do
-      {:module, ModuleCreateNoDebugInfo, binary, _} =
-        Module.create(ModuleCreateNoDebugInfo, quote(do: @compile({:debug_info, false})), __ENV__)
+  test "uses the debug_info chunk even if debug_info is set to false" do
+    {:module, ModuleCreateNoDebugInfo, binary, _} =
+      Module.create(ModuleCreateNoDebugInfo, quote(do: @compile({:debug_info, false})), __ENV__)
 
-      {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} =
-        :beam_lib.chunks(binary, [:debug_info])
+    {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} =
+      :beam_lib.chunks(binary, [:debug_info])
 
-      assert backend.debug_info(:elixir_v1, ModuleCreateNoDebugInfo, data, []) ==
-               {:error, :missing}
-    end
+    assert backend.debug_info(:elixir_v1, ModuleCreateNoDebugInfo, data, []) == {:error, :missing}
   end
 
   test "no function in module body" do
@@ -413,5 +425,41 @@ defmodule ModuleTest do
     end
   after
     purge(Foo)
+  end
+
+  test "raise when called with already compiled module" do
+    message =
+      "could not call Module.get_attribute/2 because the module Enum is already compiled. " <>
+        "Use the Module.__info__/1 callback or Code.fetch_docs/1 instead"
+
+    assert_raise ArgumentError, message, fn ->
+      Module.get_attribute(Enum, :moduledoc)
+    end
+  end
+
+  describe "get_attribute/3" do
+    test "returns a list when the attribute is marked as `accummulate: true`" do
+      in_module do
+        Module.register_attribute(__MODULE__, :value, accumulate: true)
+        Module.put_attribute(__MODULE__, :value, 1)
+        assert Module.get_attribute(__MODULE__, :value) == [1]
+        Module.put_attribute(__MODULE__, :value, 2)
+        assert Module.get_attribute(__MODULE__, :value) == [2, 1]
+      end
+    end
+
+    test "returns the value of the attribute if it exists" do
+      in_module do
+        Module.put_attribute(__MODULE__, :attribute, 1)
+        assert Module.get_attribute(__MODULE__, :attribute) == 1
+        assert Module.get_attribute(__MODULE__, :attribute, :default) == 1
+      end
+    end
+
+    test "returns the passed default if the attribute does not exist" do
+      in_module do
+        assert Module.get_attribute(__MODULE__, :attribute, :default) == :default
+      end
+    end
   end
 end

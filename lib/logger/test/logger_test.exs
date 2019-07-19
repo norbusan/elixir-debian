@@ -41,7 +41,6 @@ defmodule LoggerTest do
 
   test "add_backend/1 and remove_backend/1" do
     assert :ok = Logger.remove_backend(:console)
-    assert Application.get_env(:logger, :backends) == []
     assert Logger.remove_backend(:console) == {:error, :not_found}
 
     assert capture_log(fn ->
@@ -49,15 +48,18 @@ defmodule LoggerTest do
            end) == ""
 
     assert {:ok, _pid} = Logger.add_backend(:console)
-    assert Application.get_env(:logger, :backends) == [:console]
     assert Logger.add_backend(:console) == {:error, :already_present}
-    assert Application.get_env(:logger, :backends) == [:console]
   end
 
   test "add_backend/1 with {module, id}" do
     assert {:ok, _} = Logger.add_backend({MyBackend, :hello})
     assert {:error, :already_present} = Logger.add_backend({MyBackend, :hello})
     assert :ok = Logger.remove_backend({MyBackend, :hello})
+  end
+
+  test "add_backend/1 with unknown backend" do
+    assert {:error, {{:EXIT, {:undef, [_ | _]}}, _}} =
+             Logger.add_backend({UnknownBackend, :hello})
   end
 
   test "logs or writes to stderr on failed backends" do
@@ -76,6 +78,9 @@ defmodule LoggerTest do
              wait_for_handler(Logger, {MyBackend, :hello})
            end) =~
              ":gen_event handler {LoggerTest.MyBackend, :hello} installed in Logger terminating"
+
+    # Flush logs before reattaching to avoid OTP reports
+    Logger.flush()
   after
     Logger.remove_backend({MyBackend, :hello})
     Logger.add_backend(:console)
@@ -252,11 +257,13 @@ defmodule LoggerTest do
 
   test "remove unused calls at compile time based on matching metadata" do
     Logger.configure(
+      compile_time_application: :sample_app,
       compile_time_purge_matching: [
         [module: LoggerTest.PurgeMatching, function: "two_filters/0"],
         [function: "one_filter/0"],
         [custom: true],
-        [function: "level_filter/0", level_lower_than: :info]
+        [function: "level_filter/0", level_lower_than: :warn],
+        [application: :sample_app, level_lower_than: :info]
       ]
     )
 
@@ -274,12 +281,16 @@ defmodule LoggerTest do
       end
 
       def level_filter do
-        Logger.debug("debug_filter")
         Logger.info("info_filter")
+        Logger.warn("warn_filter")
       end
 
       def works do
-        Logger.debug("works")
+        Logger.info("works")
+      end
+
+      def log(level, metadata \\ []) do
+        Logger.log(level, "ok", metadata)
       end
     end
 
@@ -287,9 +298,13 @@ defmodule LoggerTest do
     assert capture_log(fn -> assert PurgeMatching.one_filter() == :ok end) == ""
     assert capture_log(fn -> assert PurgeMatching.two_filters() == :ok end) == ""
     assert capture_log(fn -> assert PurgeMatching.custom_filters() == :ok end) == ""
-    assert capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "info_filter"
-    refute capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "debug_filter"
+    assert capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "warn_filter"
+    refute capture_log(fn -> assert PurgeMatching.level_filter() == :ok end) =~ "info_filter"
+
+    capture_log(fn -> assert PurgeMatching.log(:info) == :ok end)
+    capture_log(fn -> assert PurgeMatching.log(:debug) == :ok end)
   after
+    Logger.configure(compile_time_application: nil)
     Logger.configure(compile_time_purge_matching: [])
   end
 
@@ -372,9 +387,9 @@ defmodule LoggerTest do
   end
 
   test "logging something that is not a binary or chardata fails right away" do
-    assert_raise Protocol.UndefinedError, "protocol String.Chars not implemented for %{}", fn ->
-      Logger.log(:debug, %{})
-    end
+    assert_raise Protocol.UndefinedError,
+                 "protocol String.Chars not implemented for %{} of type Map",
+                 fn -> Logger.log(:debug, %{}) end
 
     message =
       "cannot truncate chardata because it contains something that is not valid chardata: %{}"
@@ -416,14 +431,59 @@ defmodule LoggerTest do
     assert Application.get_env(:logger, :discard_threshold) == 10_000
     assert Application.get_env(:logger, :translator_inspect_opts) == [limit: 3]
 
-    logger_data = Logger.Config.__data__()
-    assert logger_data.truncate == 4048
-    assert logger_data.utc_log == true
+    {_, log_data} = Logger.Config.log_data(:debug)
+    assert log_data.utc_log == true
+
+    translation_data = Logger.Config.translation_data()
+    assert translation_data.truncate == 4048
   after
     Logger.configure(sync_threshold: 20)
     Logger.configure(truncate: 8096)
     Logger.configure(utc_log: false)
     Logger.configure(discard_threshold: 500)
     Logger.configure(translator_inspect_opts: [])
+  end
+
+  test "logs when discarding messages" do
+    assert :ok = Logger.configure(discard_threshold: 5)
+
+    log =
+      capture_log(fn ->
+        :sys.suspend(Logger)
+        for _ <- 1..10, do: Logger.warn("warning!")
+        :sys.resume(Logger)
+        Logger.flush()
+
+        # This is a private message but the simplest way to test this functionality
+        send(Logger, {Logger.Config, :update_counter})
+
+        # We need to flush twice. Once for the send and another for the log in send
+        Logger.flush()
+        Logger.flush()
+      end)
+
+    assert log =~ ~r"\[warn\]  Attempted to log \d+ messages, which is above :discard_threshold"
+    assert log =~ ~r"\[warn\]  Attempted to log \d+ messages, which is below :discard_threshold"
+  after
+    :sys.resume(Logger)
+    assert :ok = Logger.configure(discard_threshold: 500)
+  end
+
+  test "restarts Logger.Config on Logger exits" do
+    Process.whereis(Logger) |> Process.exit(:kill)
+    wait_for_logger()
+    wait_for_handler(Logger, Logger.Config)
+  end
+
+  test "updates config on config_change/3" do
+    :ok = Logger.configure(level: :debug)
+
+    try do
+      Application.put_env(:logger, :level, :error)
+      assert Logger.App.config_change([level: :error], [], []) === :ok
+      assert Logger.level() === :error
+    after
+      Logger.configure(level: :debug)
+    end
   end
 end

@@ -140,6 +140,35 @@ defmodule FileTest do
       end
     end
 
+    test "rename! file to existing file default behaviour" do
+      src = tmp_fixture_path("file.txt")
+      dest = tmp_path("tmp.file")
+
+      File.write!(dest, "hello")
+
+      try do
+        assert File.exists?(dest)
+        assert File.rename!(src, dest) == :ok
+        refute File.exists?(src)
+        assert File.read!(dest) == "FOO\n"
+      after
+        File.rm_rf(src)
+        File.rm_rf(dest)
+      end
+    end
+
+    test "rename! with invalid file" do
+      src = tmp_fixture_path("invalid.txt")
+      dest = tmp_path("tmp.file")
+
+      message =
+        "could not rename from #{inspect(src)} to #{inspect(dest)}: no such file or directory"
+
+      assert_raise File.RenameError, message, fn ->
+        File.rename!(src, dest)
+      end
+    end
+
     test "rename dir to existing file" do
       src = tmp_fixture_path("cp_r")
       dest = tmp_path("tmp.file")
@@ -1858,7 +1887,7 @@ defmodule FileTest do
 
   test "invalid_cd!" do
     message =
-      ~r"\Acould not set current working directory to #{inspect(fixture_path("file.txt"))}: (not a directory|no such file or directory)"
+      ~r"\Acould not set current working directory to #{inspect(fixture_path("file.txt"))}: (not a directory|no such file or directory|I/O error)"
 
     assert_raise File.Error, message, fn ->
       File.cd!(fixture_path("file.txt"))
@@ -1886,11 +1915,25 @@ defmodule FileTest do
     end
   end
 
-  test "touch with timestamp" do
-    fixture = tmp_path("tmp_test.txt")
+  test "touch with erlang timestamp" do
+    fixture = tmp_path("tmp_erlang_touch.txt")
 
     try do
-      assert File.touch!(fixture) == :ok
+      assert File.touch!(fixture, :erlang.universaltime()) == :ok
+      stat = File.stat!(fixture)
+
+      assert File.touch!(fixture, last_year()) == :ok
+      assert stat.mtime > File.stat!(fixture).mtime
+    after
+      File.rm(fixture)
+    end
+  end
+
+  test "touch with posix timestamp" do
+    fixture = tmp_path("tmp_posix_touch.txt")
+
+    try do
+      assert File.touch!(fixture, System.os_time(:second)) == :ok
       stat = File.stat!(fixture)
 
       assert File.touch!(fixture, last_year()) == :ok
@@ -1909,11 +1952,7 @@ defmodule FileTest do
     assert io_error?(File.touch(fixture))
   end
 
-  test "touch! with success" do
-    assert File.touch!(fixture_path()) == :ok
-  end
-
-  test "touch! with failure" do
+  test "touch! raises" do
     fixture = fixture_path("file.txt/bar")
 
     message =
@@ -2019,15 +2058,7 @@ defmodule FileTest do
   end
 
   defp last_year do
-    last_year(:calendar.local_time())
-  end
-
-  defp last_year({{year, 2, 29}, time}) do
-    {{year - 1, 2, 28}, time}
-  end
-
-  defp last_year({{year, month, day}, time}) do
-    {{year - 1, month, day}, time}
+    System.os_time(:second) - 365 * 24 * 60 * 60
   end
 
   defp io_error?(result) do

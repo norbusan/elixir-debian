@@ -16,10 +16,11 @@ defmodule Mix.Tasks.Deps.Loadpaths do
 
     * `--no-deps-check` - does not check or compile deps, only load available ones
     * `--no-compile` - does not compile dependencies
-    * `--no-load-deps` - do not load deps from the code path
+    * `--no-load-deps` - does not load deps from the code path
 
   """
 
+  @impl true
   def run(args) do
     all = Mix.Dep.load_and_cache()
 

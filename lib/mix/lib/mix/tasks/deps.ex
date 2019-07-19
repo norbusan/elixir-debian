@@ -33,7 +33,8 @@ defmodule Mix.Tasks.Deps do
 
   By specifying such dependencies, Mix will automatically install
   Hex (if it wasn't previously installed) and download a package
-  suitable to your project.
+  suitable to your project. Note Hex expects the dependency
+  requirement to always be given and it will warn otherwise.
 
   Mix also supports Git and path dependencies:
 
@@ -79,6 +80,11 @@ defmodule Mix.Tasks.Deps do
       can either be a single environment (like `:dev`) or a list of environments
       (like `[:dev, :test]`)
 
+    * `:targets` - the dependency is made available only for the given targets.
+      By default the dependency will be available in all environments. The value
+      of this option can either be a single target (like `:host`) or a list of
+      environments (like `[:host, :rpi3]`)
+
     * `:override` - if set to `true` the dependency will override any other
       definitions of itself by other dependencies
 
@@ -94,7 +100,7 @@ defmodule Mix.Tasks.Deps do
 
     * `:runtime` - whether the dependency is part of runtime applications.
       If the `:applications` key is not provided in `def application` in your
-      mix.exs file, Mix will automatically included all dependencies as a runtime
+      `mix.exs` file, Mix will automatically include all dependencies as a runtime
       application, except if `runtime: false` is given. Defaults to true.
 
     * `:system_env` - an enumerable of key-value tuples of binaries to be set
@@ -103,7 +109,7 @@ defmodule Mix.Tasks.Deps do
   ### Git options (`:git`)
 
     * `:git` - the Git repository URI
-    * `:github` - a shortcut for specifying Git repos from GitHub, uses `git:`
+    * `:github` - a shortcut for specifying Git repos from GitHub, uses `:git`
     * `:ref` - the reference to checkout (may be a branch, a commit SHA or a tag)
     * `:branch` - the Git branch to checkout
     * `:tag` - the Git tag to checkout
@@ -140,14 +146,15 @@ defmodule Mix.Tasks.Deps do
 
   It supports the following options:
 
-    * `--all` - checks all dependencies, regardless of specified environment
+    * `--all` - lists all dependencies, regardless of specified environment
 
   """
-  @spec run(OptionParser.argv()) :: :ok
+
+  @impl true
   def run(args) do
     Mix.Project.get!()
     {opts, _, _} = OptionParser.parse(args, switches: [all: :boolean])
-    loaded_opts = if opts[:all], do: [], else: [env: Mix.env()]
+    loaded_opts = if opts[:all], do: [], else: [env: Mix.env(), target: Mix.target()]
 
     shell = Mix.shell()
 

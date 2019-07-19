@@ -5,7 +5,7 @@ defmodule IEx.InteractionTest do
 
   test "whole output" do
     assert capture_io("IO.puts \"Hello world\"", fn ->
-             IEx.Server.start([dot_iex_path: ""], {IEx, :dont_display_result, []})
+             IEx.Server.run(dot_iex_path: "")
            end) =~
              "Interactive Elixir (#{System.version()}) - press Ctrl+C to exit (type h() ENTER for help)" <>
                "\niex(1)> Hello world\n:ok\niex(2)>"
@@ -144,44 +144,49 @@ defmodule IEx.InteractionTest do
              ~r"\*\* \(exit\) exited in: :gen_server\.call\(#PID<\d+\.\d+\.\d+>, :hello\)\n\s{4}\*\* \(EXIT\) :bye"
   end
 
-  # TODO: Remove this check once we depend only on 20
-  if :erlang.system_info(:otp_release) >= '20' do
-    test "blames function clause error" do
-      content = capture_iex("Access.fetch(:foo, :bar)")
-      assert content =~ "** (FunctionClauseError) no function clause matching in Access.fetch/2"
-      assert content =~ "The following arguments were given to Access.fetch/2"
-      assert content =~ ":foo"
-      assert content =~ "def fetch(-%module{} = container-, key)"
-      assert content =~ ~r"\(elixir\) lib/access\.ex:\d+: Access\.fetch/2"
-    end
+  test "blames function clause error" do
+    content = capture_iex("Access.fetch(:foo, :bar)")
+    assert content =~ "** (FunctionClauseError) no function clause matching in Access.fetch/2"
+    assert content =~ "The following arguments were given to Access.fetch/2"
+    assert content =~ ":foo"
+    assert content =~ "def fetch(-%module{} = container-, key)"
+    assert content =~ ~r"\(elixir\) lib/access\.ex:\d+: Access\.fetch/2"
   end
 
   ## .iex file loading
 
   describe ".iex" do
     test "no .iex" do
-      capture_io(:stderr, fn ->
-        assert "** (CompileError) iex:1: undefined function my_variable/0" <> _ =
-                 capture_iex("my_variable")
-      end)
+      assert "** (CompileError) iex:1: undefined function my_variable/0" <> _ =
+               capture_iex("my_variable")
     end
 
     test "single .iex" do
-      File.write!("dot-iex", "my_variable = 144")
-      assert capture_iex("my_variable", [], dot_iex_path: "dot-iex") == "144"
-    after
-      File.rm("dot-iex")
+      path = write_dot_iex!("dot-iex", "my_variable = 144")
+      assert capture_iex("my_variable", [], dot_iex_path: path) == "144"
     end
 
     test "nested .iex" do
-      File.write!("dot-iex-1", "nested_var = 13\nimport IO")
-      File.write!("dot-iex", "import_file \"dot-iex-1\"\nmy_variable=14")
+      write_dot_iex!("dot-iex-1", "nested_var = 13\nimport IO")
+      path = write_dot_iex!("dot-iex", "import_file \"tmp/dot-iex-1\"\nmy_variable=14")
 
       input = "nested_var\nmy_variable\nputs \"hello\""
-      assert capture_iex(input, [], dot_iex_path: "dot-iex") == "13\n14\nhello\n:ok"
-    after
-      File.rm("dot-iex-1")
-      File.rm("dot-iex")
+      assert capture_iex(input, [], dot_iex_path: path) == "13\n14\nhello\n:ok"
     end
+
+    test "malformed .iex" do
+      path = write_dot_iex!("dot-iex", "malformed")
+
+      assert capture_iex("1 + 2", [], dot_iex_path: path) =~
+               "dot-iex:1: undefined function malformed/0"
+    end
+  end
+
+  defp write_dot_iex!(name, contents) do
+    dir = "#{__DIR__}/../../tmp"
+    File.mkdir_p!(dir)
+    path = Path.join(dir, name)
+    File.write!(path, contents)
+    path
   end
 end

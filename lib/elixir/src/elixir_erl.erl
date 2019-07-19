@@ -1,19 +1,9 @@
 %% Compiler backend to Erlang.
 -module(elixir_erl).
--export([elixir_to_erl/1, definition_to_anonymous/4, compile/1,
-         get_ann/1, remote/4, add_beam_chunks/2, debug_info/4,
-         scope/1, format_error/1]).
+-export([elixir_to_erl/1, definition_to_anonymous/4, compile/1, consolidate/3,
+         get_ann/1, debug_info/4, scope/1, format_error/1]).
 -include("elixir.hrl").
-
-%% TODO: Remove extra chunk functionality when OTP 20+.
-
-add_beam_chunks(Bin, []) when is_binary(Bin) ->
-  Bin;
-add_beam_chunks(Bin, NewChunks) when is_binary(Bin), is_list(NewChunks) ->
-  {ok, _, OldChunks} = beam_lib:all_chunks(Bin),
-  Chunks = [{binary_to_list(K), V} || {K, V} <- NewChunks] ++ OldChunks,
-  {ok, NewBin} = beam_lib:build_module(Chunks),
-  NewBin.
+-define(typespecs, 'Elixir.Kernel.Typespec').
 
 %% debug_info callback
 
@@ -27,14 +17,20 @@ debug_info(erlang_v1, _Module, {elixir_v1, Map, Specs}, _Opts) ->
 debug_info(core_v1, _Module, {elixir_v1, Map, Specs}, Opts) ->
   {Prefix, Forms, _, _, _, _} = dynamic_form(Map),
   #{compile_opts := CompileOpts} = Map,
+  AllOpts = CompileOpts ++ Opts,
 
   %% Do not rely on elixir_erl_compiler because we don't
   %% warnings nor the other functionality provided there.
-  try compile:noenv_forms(Prefix ++ Specs ++ Forms, [core, return | CompileOpts] ++ Opts) of
-    {ok, _, Core, _} -> {ok, Core};
-    _What -> {error, failed_conversion}
-  catch
-    error:_ -> {error, failed_conversion}
+  case elixir_erl_compiler:erl_to_core(Prefix ++ Specs ++ Forms, AllOpts) of
+    {ok, CoreForms, _} ->
+      try compile:noenv_forms(CoreForms, [?NO_SPAWN_COMPILER_PROCESS, from_core, core, return | AllOpts]) of
+        {ok, _, Core, _} -> {ok, Core};
+        _What -> {error, failed_conversion}
+      catch
+        error:_ -> {error, failed_conversion}
+      end;
+    _ ->
+      {error, failed_conversion}
   end;
 debug_info(_, _, _, _) ->
   {error, unknown_format}.
@@ -48,14 +44,6 @@ get_ann([{generated, true} | T], _, Line) -> get_ann(T, true, Line);
 get_ann([{line, Line} | T], Gen, _) when is_integer(Line) -> get_ann(T, Gen, Line);
 get_ann([_ | T], Gen, Line) -> get_ann(T, Gen, Line);
 get_ann([], Gen, Line) -> erl_anno:set_generated(Gen, Line).
-
-%% Builds a remote call annotation.
-
-remote(Ann, Module, Function, Args) when is_atom(Module), is_atom(Function), is_list(Args) ->
-  {call, Ann,
-    {remote, Ann, {atom, Ann, Module}, {atom, Ann, Function}},
-    Args
-  }.
 
 %% Converts an Elixir definition to an anonymous function.
 
@@ -91,7 +79,7 @@ elixir_to_erl([]) ->
 elixir_to_erl(<<>>) ->
   {bin, 0, []};
 elixir_to_erl(Tree) when is_list(Tree) ->
-  elixir_to_erl_cons1(Tree, []);
+  elixir_to_erl_cons(Tree);
 elixir_to_erl(Tree) when is_atom(Tree) ->
   {atom, 0, Tree};
 elixir_to_erl(Tree) when is_integer(Tree) ->
@@ -120,43 +108,55 @@ elixir_to_erl(Function) when is_function(Function) ->
       error(badarg)
   end;
 elixir_to_erl(Pid) when is_pid(Pid) ->
-  elixir_erl:remote(0, erlang, binary_to_term,
-    [elixir_erl:elixir_to_erl(term_to_binary(Pid))]);
+  ?remote(0, erlang, binary_to_term, [elixir_erl:elixir_to_erl(term_to_binary(Pid))]);
 elixir_to_erl(_Other) ->
   error(badarg).
 
-elixir_to_erl_cons1([H | T], Acc) -> elixir_to_erl_cons1(T, [H | Acc]);
-elixir_to_erl_cons1(Other, Acc) -> elixir_to_erl_cons2(Acc, elixir_to_erl(Other)).
-
-elixir_to_erl_cons2([H | T], Acc) ->
-  elixir_to_erl_cons2(T, {cons, 0, elixir_to_erl(H), Acc});
-elixir_to_erl_cons2([], Acc) ->
-  Acc.
+elixir_to_erl_cons([H | T]) -> {cons, 0, elixir_to_erl(H), elixir_to_erl_cons(T)};
+elixir_to_erl_cons(T) -> elixir_to_erl(T).
 
 %% Returns a scope for translation.
 
 scope(_Meta) ->
   #elixir_erl{}.
 
-%% Compilation hook.
+%% Static compilation hook, used in protocol consolidation
 
-compile(#{module := Module, line := Line} = Map) ->
+consolidate(Map, TypeSpecs, Chunks) ->
+  {Prefix, Forms, _Def, _Defmacro, _Macros, _Deprecated} = dynamic_form(Map),
+  load_form(Map, Prefix, Forms, TypeSpecs, Chunks).
+
+%% Dynamic compilation hook, used in regular compiler
+
+compile(#{module := Module} = Map) ->
   {Set, Bag} = elixir_module:data_tables(Module),
-  {Prefix, Forms, Def, Defmacro, Macros, Deprecated} = dynamic_form(Map),
-  {Types, Callbacks, TypeSpecs} = typespecs_form(Map, Set, Bag, Macros),
 
+  TranslatedTypespecs =
+    case elixir_config:get(bootstrap) andalso
+          (code:ensure_loaded(?typespecs) /= {module, ?typespecs}) of
+      true -> {[], [], [], [], []};
+      false -> ?typespecs:translate_typespecs_for_module(Set, Bag)
+    end,
+
+  elixir_erl_compiler:spawn(fun spawned_compile/4, [Map, Set, Bag, TranslatedTypespecs]).
+
+spawned_compile(Map, Set, _Bag, TranslatedTypespecs) ->
+  {Prefix, Forms, Def, Defmacro, Macros, Deprecated} = dynamic_form(Map),
+  {Types, Callbacks, TypeSpecs} = typespecs_form(Map, TranslatedTypespecs, Macros),
+
+  #{module := Module, line := Line} = Map,
   DocsChunk = docs_chunk(Set, Module, Line, Def, Defmacro, Types, Callbacks),
   DeprecatedChunk = deprecated_chunk(Deprecated),
-  Chunks = lists:flatten([DocsChunk, DeprecatedChunk]),
+  Chunks = DocsChunk ++ DeprecatedChunk,
 
   load_form(Map, Prefix, Forms, TypeSpecs, Chunks).
 
-dynamic_form(#{module := Module, line := Line, file := File, attributes := Attributes,
+dynamic_form(#{module := Module, line := Line, relative_file := RelativeFile, attributes := Attributes,
                definitions := Definitions, unreachable := Unreachable, compile_opts := Opts} = Map) ->
   {Def, Defmacro, Macros, Exports, Functions} =
     split_definition(Definitions, Unreachable, [], [], [], [], {[], []}),
 
-  Location = {elixir_utils:characters_to_list(elixir_utils:relative_to_cwd(File)), Line},
+  Location = {elixir_utils:characters_to_list(RelativeFile), Line},
   Prefix = [{attribute, Line, file, Location},
             {attribute, Line, module, Module},
             {attribute, Line, compile, [no_auto_import | Opts]}],
@@ -243,7 +243,7 @@ translate_clause(Kind, {Meta, Args, Guards, Body}) ->
         true  ->
           FBody = {'match', Ann,
             {'var', Ann, '__CALLER__'},
-            elixir_erl:remote(Ann, elixir_env, linify, [{var, Ann, '_@CALLER'}])
+            ?remote(Ann, elixir_env, linify, [{var, Ann, '_@CALLER'}])
           },
           setelement(5, MClause, [FBody | element(5, TClause)]);
         false ->
@@ -268,43 +268,14 @@ add_info_function(Line, Module, Def, Defmacro, Deprecated) ->
   AllowedArgs = lists:map(fun(Atom) -> {atom, Line, Atom} end, AllowedAttrs),
 
   Spec =
-    %% TODO: Remove this check once we depend only on 20
-    case erlang:system_info(otp_release) of
-      "19" ->
-        {attribute, Line, spec, {{'__info__', 1},
-          [{type, Line, 'fun', [
-            {type, Line, product, [
-              {type, Line, union, AllowedArgs}
-            ]},
-            {type, Line, union, [
-              {type, Line, atom, []},
-              {type, Line, list, [
-                {type, Line, union, [
-                  {type, Line, tuple, [
-                    {type, Line, atom, []},
-                    {type, Line, any, []}
-                  ]},
-                  {type, Line, tuple, [
-                    {type, Line, atom, []},
-                    {type, Line, byte, []},
-                    {type, Line, integer, []}
-                  ]}
-                ]}
-              ]}
-            ]}
-          ]}]
-        }};
-
-      _ ->
-        {attribute, Line, spec, {{'__info__', 1},
-          [{type, Line, 'fun', [
-            {type, Line, product, [
-              {type, Line, union, AllowedArgs}
-            ]},
-            {type, Line, any, []}
-          ]}]
-        }}
-    end,
+    {attribute, Line, spec, {{'__info__', 1},
+      [{type, Line, 'fun', [
+        {type, Line, product, [
+          {type, Line, union, AllowedArgs}
+        ]},
+        {type, Line, any, []}
+      ]}]
+    }},
 
   Info =
     {function, 0, '__info__', 1, [
@@ -329,7 +300,7 @@ macros_info(Defmacro) ->
   {clause, 0, [{atom, 0, macros}], [], [elixir_erl:elixir_to_erl(lists:sort(Defmacro))]}.
 
 get_module_info(Module, Key) ->
-  Call = remote(0, erlang, get_module_info, [{atom, 0, Module}, {var, 0, 'Key'}]),
+  Call = ?remote(0, erlang, get_module_info, [{atom, 0, Module}, {var, 0, 'Key'}]),
   {clause, 0, [{match, 0, {var, 0, 'Key'}, {atom, 0, Key}}], [], [Call]}.
 
 deprecated_info(Deprecated) ->
@@ -337,25 +308,24 @@ deprecated_info(Deprecated) ->
 
 % Typespecs
 
-typespecs_form(Map, Set, Bag, MacroNames) ->
-  case elixir_config:get(bootstrap) of
-    true ->
-      {[], [], []};
-    false ->
-      {Types, Specs, Callbacks, MacroCallbacks, OptionalCallbacks} =
-        'Elixir.Kernel.Typespec':translate_typespecs_for_module(Set, Bag),
+typespecs_form(Map, TranslatedTypespecs, MacroNames) ->
+  {Types, Specs, Callbacks, MacroCallbacks, OptionalCallbacks} = TranslatedTypespecs,
 
-      AllCallbacks = Callbacks ++ MacroCallbacks,
-      MacroCallbackNames = [NameArity || {_, NameArity, _, _} <- MacroCallbacks],
-      validate_behaviour_info_and_attributes(Map, AllCallbacks),
-      validate_optional_callbacks(Map, AllCallbacks, OptionalCallbacks),
+  AllCallbacks = Callbacks ++ MacroCallbacks,
+  MacroCallbackNames = [NameArity || {_, NameArity, _, _} <- MacroCallbacks],
+  validate_behaviour_info_and_attributes(Map, AllCallbacks),
+  validate_optional_callbacks(Map, AllCallbacks, OptionalCallbacks),
 
-      Forms0 = [],
-      Forms1 = types_form(Types, Forms0),
-      Forms2 = callspecs_form(spec, Specs, [], MacroNames, Forms1, Map),
-      Forms3 = callspecs_form(callback, AllCallbacks, OptionalCallbacks, MacroCallbackNames, Forms2, Map),
-      {Types, AllCallbacks, Forms3}
-  end.
+  Forms0 = [],
+  Forms1 = types_form(Types, Forms0),
+  Forms2 = callspecs_form(spec, Specs, [], MacroNames, Forms1, Map),
+  Forms3 = callspecs_form(callback, AllCallbacks, OptionalCallbacks, MacroCallbackNames, Forms2, Map),
+
+  AllCallbacksWithoutSpecs = lists:usort([
+    {Kind, Name, Arity} || {Kind, {Name, Arity}, _Line, _Spec} <- AllCallbacks
+  ]),
+
+  {Types, AllCallbacksWithoutSpecs, Forms3}.
 
 %% Types
 
@@ -406,8 +376,8 @@ callspecs_form(_Kind, [], _Optional, _Macros, Forms, _ModuleMap) ->
 callspecs_form(Kind, Entries, Optional, Macros, Forms, ModuleMap) ->
   #{unreachable := Unreachable} = ModuleMap,
 
-  SpecsMap =
-    lists:foldl(fun({_, NameArity, Line, Spec}, Acc) ->
+  {SpecsMap, Signatures} =
+    lists:foldl(fun({_, NameArity, Line, Spec}, {Acc, NA}) ->
       case Kind of
         spec -> validate_spec_for_existing_function(ModuleMap, NameArity, Line);
         _ -> ok
@@ -416,15 +386,16 @@ callspecs_form(Kind, Entries, Optional, Macros, Forms, ModuleMap) ->
       case lists:member(NameArity, Unreachable) of
         false ->
           case Acc of
-            #{NameArity := List} -> Acc#{NameArity := [{Spec, Line} | List]};
-            #{} -> Acc#{NameArity => [{Spec, Line}]}
+            #{NameArity := List} -> {Acc#{NameArity := [{Spec, Line} | List]}, NA};
+            #{} -> {Acc#{NameArity => [{Spec, Line}]}, [NameArity | NA]}
           end;
         true ->
-          Acc
+          {Acc, NA}
       end
-    end, #{}, Entries),
+    end, {#{}, []}, Entries),
 
-  maps:fold(fun(NameArity, ExprsLines, Acc) ->
+  lists:foldl(fun(NameArity, Acc) ->
+    #{NameArity := ExprsLines} = SpecsMap,
     {Exprs, Lines} = lists:unzip(ExprsLines),
     Line = lists:min(Lines),
 
@@ -445,7 +416,7 @@ callspecs_form(Kind, Entries, Optional, Macros, Forms, ModuleMap) ->
       false ->
         [{attribute, Line, Kind, {Key, lists:reverse(Value)}} | Acc]
     end
-  end, Forms, SpecsMap).
+  end, Forms, lists:sort(Signatures)).
 
 spec_for_macro({type, Line, 'fun', [{type, _, product, Args} | T]}) ->
   NewArgs = [{type, Line, term, []} | Args],
@@ -470,47 +441,25 @@ attributes_form(Line, Attributes, Forms) ->
 % Loading forms
 
 load_form(#{file := File, compile_opts := Opts} = Map, Prefix, Forms, Specs, Chunks) ->
-  {ExtraChunks, CompileOpts} = extra_chunks(Chunks, debug_opts(Map, Specs, Opts)),
+  CompileOpts = extra_chunks_opts(Chunks, debug_opts(Map, Specs, Opts)),
   {_, Binary} = elixir_erl_compiler:forms(Prefix ++ Specs ++ Forms, File, CompileOpts),
-  add_beam_chunks(Binary, ExtraChunks).
+  Binary.
 
 debug_opts(Map, Specs, Opts) ->
-  case {supports_debug_tuple(), include_debug_opts(Opts)} of
-    {true, true} -> [{debug_info, {?MODULE, {elixir_v1, Map, Specs}}}];
-    {true, false} -> [{debug_info, {?MODULE, none}}];
-    {false, true} -> [debug_info];
-    {false, false} -> []
+  case take_debug_opts(Opts) of
+    {true, Rest} -> [{debug_info, {?MODULE, {elixir_v1, Map, Specs}}} | Rest];
+    {false, Rest} -> [{debug_info, {?MODULE, none}} | Rest]
   end.
 
-include_debug_opts(Opts) ->
+take_debug_opts(Opts) ->
   case proplists:get_value(debug_info, Opts) of
-    true -> true;
-    false -> false;
-    undefined -> elixir_compiler:get_opt(debug_info)
+    true -> {true, proplists:delete(debug_info, Opts)};
+    false -> {false, proplists:delete(debug_info, Opts)};
+    undefined -> {elixir_compiler:get_opt(debug_info), Opts}
   end.
 
-supports_debug_tuple() ->
-  case erlang:system_info(otp_release) of
-    "18" -> false;
-    "19" -> false;
-    _ -> true
-  end.
-
-extra_chunks(Chunks, Opts) ->
-  Supported = supports_extra_chunks_option(),
-
-  case Chunks of
-    [] -> {[], Opts};
-    _ when Supported -> {[], [{extra_chunks, Chunks} | Opts]};
-    _ -> {Chunks, Opts}
-  end.
-
-supports_extra_chunks_option() ->
-  case erlang:system_info(otp_release) of
-    "18" -> false;
-    "19" -> false;
-    _ -> true
-  end.
+extra_chunks_opts([], Opts) -> Opts;
+extra_chunks_opts(Chunks, Opts) -> [{extra_chunks, Chunks} | Opts].
 
 docs_chunk(Set, Module, Line, Def, Defmacro, Types, Callbacks) ->
   case elixir_compiler:get_opt(docs) of
@@ -575,8 +524,7 @@ get_callback_docs(Set, Callbacks) ->
     [],
     doc_value(Doc),
     Meta
-   } || {Kind, {Name, Arity}, _, _} <- Callbacks,
-        {Key, Line, Doc, Meta} <- ets:lookup(Set, {Kind, Name, Arity})].
+   } || Callback <- Callbacks, {Key, Line, Doc, Meta} <- ets:lookup(Set, Callback)].
 
 get_type_docs(Set, Types) ->
   [{Key,
@@ -589,6 +537,9 @@ get_type_docs(Set, Types) ->
 
 signature_to_binary(_Module, Name, _Signature) when Name == '__aliases__'; Name == '__block__' ->
   <<(atom_to_binary(Name, utf8))/binary, "(args)">>;
+
+signature_to_binary(_Module, fn, _Signature) ->
+  <<"fn">>;
 
 signature_to_binary(_Module, Name, _Signature)
     when Name == '__CALLER__'; Name == '__DIR__'; Name == '__ENV__';

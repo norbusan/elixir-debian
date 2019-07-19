@@ -86,7 +86,7 @@ defmodule Supervisor.Spec do
   In this case the supervisor will only be restarted if its child specification was defined with
   the `:restart` option is set to `:permanent` (the default).
 
-  ### Shutdown values (:shutdown)
+  ### Shutdown values (`:shutdown`)
 
   The following shutdown values are supported in the `:shutdown` option:
 
@@ -94,14 +94,14 @@ defmodule Supervisor.Spec do
       using `Process.exit(child, :kill)`
 
     * `:infinity` - if the child process is a supervisor, this is a mechanism
-      to give the subtree enough time to shutdown; it can also be used with
+      to give the subtree enough time to shut down; it can also be used with
       workers with care
 
-    * any integer - the value of `:shutdown` can also be any integer meaning
+    * a non-negative integer - the amount of time in milliseconds
       that the supervisor tells the child process to terminate by calling
       `Process.exit(child, :shutdown)` and then waits for an exit signal back.
-      If no exit signal is received within the specified time (the value of this
-      option, in milliseconds), the child process is unconditionally terminated
+      If no exit signal is received within the specified time,
+      the child process is unconditionally terminated
       using `Process.exit(child, :kill)`
 
   """
@@ -109,7 +109,7 @@ defmodule Supervisor.Spec do
   @moduledoc deprecated:
                "Use the new child specifications outlined in the Supervisor module instead"
 
-  # TODO: Deprecate all functions in this module on Elixir v1.8.
+  # TODO: Deprecate all functions in this module on Elixir v1.9.
   # Also deprecate entry in Supervisor.Default.
 
   @typedoc "Supported strategies"
@@ -127,7 +127,7 @@ defmodule Supervisor.Spec do
   @typedoc "Supported module values"
   @type modules :: :dynamic | [module]
 
-  @typedoc "Supported id values"
+  @typedoc "Supported ID values"
   @type child_id :: term
 
   @typedoc "The supervisor specification"
@@ -135,8 +135,8 @@ defmodule Supervisor.Spec do
           {child_id, start_fun :: {module, atom, [term]}, restart, shutdown, worker, modules}
 
   @doc """
-  Receives a list of children (workers or supervisors) to
-  supervise and a set of options.
+  Receives a list of `children` (workers or supervisors) to
+  supervise and a set of `options`.
 
   Returns a tuple containing the supervisor specification. This tuple can be
   used as the return value of the `c:init/1` callback when implementing a
@@ -196,7 +196,7 @@ defmodule Supervisor.Spec do
   defp assert_unique_ids([id | rest]) do
     if id in rest do
       raise ArgumentError,
-            "duplicated id #{inspect(id)} found in the supervisor specification, " <>
+            "duplicated ID #{inspect(id)} found in the supervisor specification, " <>
               "please explicitly pass the :id option when defining this worker/supervisor"
     else
       assert_unique_ids(rest)
@@ -216,14 +216,16 @@ defmodule Supervisor.Spec do
   By default, the function `start_link` is invoked on the given
   module. Overall, the default values for the options are:
 
-      [id: module,
-       function: :start_link,
-       restart: :permanent,
-       shutdown: 5000,
-       modules: [module]]
+      [
+        id: module,
+        function: :start_link,
+        restart: :permanent,
+        shutdown: 5000,
+        modules: [module]
+      ]
 
-  Check the documentation for the `Supervisor.Spec` module for more
-  information on the options.
+  See the "Supervisor and worker options" section in the `Supervisor.Spec` module for more
+  information on the available options.
   """
   @spec worker(
           module,
@@ -242,19 +244,21 @@ defmodule Supervisor.Spec do
   Defines the given `module` as a supervisor which will be started
   with the given arguments.
 
-      supervisor(ExUnit.Runner, [], restart: :permanent)
+      supervisor(module, [], restart: :permanent)
 
   By default, the function `start_link` is invoked on the given
   module. Overall, the default values for the options are:
 
-      [id: module,
-       function: :start_link,
-       restart: :permanent,
-       shutdown: :infinity,
-       modules: [module]]
+      [
+        id: module,
+        function: :start_link,
+        restart: :permanent,
+        shutdown: :infinity,
+        modules: [module]
+      ]
 
-  Check the documentation for the `Supervisor.Spec` module for more
-  information on the options.
+  See the "Supervisor and worker options" section in the `Supervisor.Spec` module for more
+  information on the available options.
   """
   @spec supervisor(
           module,

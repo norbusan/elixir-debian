@@ -29,7 +29,7 @@ defmodule Mix.Tasks.Run do
   needed, unless you pass `--no-compile`.
 
   If for some reason the application needs to be configured before it is
-  started, the `--no-start` flag can be used and you are then responsible
+  started, the `--no-start` option can be used and you are then responsible
   for starting all applications by using functions such as
   `Application.ensure_all_started/1`. For more information about the
   application life-cycle and dynamically configuring applications, see
@@ -45,7 +45,6 @@ defmodule Mix.Tasks.Run do
 
   ## Command-line options
 
-    * `--config`, `-c`  - loads the given configuration file
     * `--eval`, `-e` - evaluates the given code
     * `--require`, `-r` - executes the given pattern/file
     * `--parallel`, `-p` - makes all requires parallel
@@ -60,6 +59,7 @@ defmodule Mix.Tasks.Run do
 
   """
 
+  @impl true
   def run(args) do
     {opts, head} =
       OptionParser.parse_head!(
@@ -83,7 +83,7 @@ defmodule Mix.Tasks.Run do
       )
 
     run(args, opts, head, &Code.eval_string/1, &Code.require_file/1)
-    unless Keyword.get(opts, :halt, true), do: Process.sleep(:infinity)
+    unless Keyword.get(opts, :halt, true), do: System.no_halt(true)
     Mix.Task.reenable("run")
     :ok
   end
@@ -97,7 +97,6 @@ defmodule Mix.Tasks.Run do
           (String.t() -> term())
         ) :: :ok
   def run(args, opts, head, expr_evaluator, file_evaluator) do
-    # TODO: Remove on v2.0
     opts =
       Enum.flat_map(opts, fn
         {:parallel_require, value} ->
@@ -135,7 +134,7 @@ defmodule Mix.Tasks.Run do
         Mix.raise(
           "Cannot execute \"mix run\" without a Mix.Project, " <>
             "please ensure you are running Mix in a directory with a mix.exs file " <>
-            "or pass the --no-mix-exs flag"
+            "or pass the --no-mix-exs option"
         )
     end
 
@@ -155,6 +154,12 @@ defmodule Mix.Tasks.Run do
   defp process_config(opts) do
     Enum.each(opts, fn
       {:config, value} ->
+        # TODO: Remove on v2.0.
+        IO.warn(
+          "the --config flag is deprecated. If you need to handle multiple configurations, " <>
+            "it is preferrable to dynamically import them in your config files"
+        )
+
         Mix.Task.run("loadconfig", [value])
 
       _ ->

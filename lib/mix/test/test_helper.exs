@@ -2,19 +2,24 @@ Mix.start()
 Mix.shell(Mix.Shell.Process)
 Application.put_env(:mix, :colors, enabled: false)
 
-exclude = if match?({:win32, _}, :os.type()), do: [unix: true], else: [windows: true]
-ExUnit.start(trace: "--trace" in System.argv(), exclude: exclude)
+Logger.remove_backend(:console)
+Application.put_env(:logger, :backends, [])
+
+os_exclude = if match?({:win32, _}, :os.type()), do: [unix: true], else: [windows: true]
+epmd_exclude = if match?({_, 0}, System.cmd("epmd", ["-daemon"])), do: [], else: [epmd: true]
+ExUnit.start(trace: "--trace" in System.argv(), exclude: epmd_exclude ++ os_exclude)
 
 unless {1, 7, 4} <= Mix.SCM.Git.git_version() do
   IO.puts(:stderr, "Skipping tests with git sparse checkouts...")
   ExUnit.configure(exclude: :git_sparse)
 end
 
-# Clear proxy variables that may affect tests
+# Clear environment variables that may affect tests
 System.delete_env("http_proxy")
 System.delete_env("https_proxy")
 System.delete_env("HTTP_PROXY")
 System.delete_env("HTTPS_PROXY")
+System.delete_env("MIX_ENV")
 
 defmodule MixTest.Case do
   use ExUnit.CaseTemplate
@@ -31,27 +36,22 @@ defmodule MixTest.Case do
     end
   end
 
-  setup config do
-    if apps = config[:apps] do
-      Logger.remove_backend(:console)
-    end
+  @apps Enum.map(Application.loaded_applications(), &elem(&1, 0))
 
+  setup do
     on_exit(fn ->
       Application.start(:logger)
       Mix.env(:dev)
+      Mix.target(:host)
       Mix.Task.clear()
       Mix.Shell.Process.flush()
       Mix.ProjectStack.clear_cache()
       Mix.ProjectStack.clear_stack()
       delete_tmp_paths()
 
-      if apps do
-        for app <- apps do
-          Application.stop(app)
-          Application.unload(app)
-        end
-
-        Logger.add_backend(:console, flush: true)
+      for {app, _, _} <- Application.loaded_applications(), app not in @apps do
+        Application.stop(app)
+        Application.unload(app)
       end
     end)
 
@@ -63,7 +63,7 @@ defmodule MixTest.Case do
   end
 
   def fixture_path(extension) do
-    Path.join(fixture_path(), extension |> to_string() |> String.replace(":", ""))
+    Path.join(fixture_path(), remove_colons(extension))
   end
 
   def tmp_path do
@@ -71,7 +71,13 @@ defmodule MixTest.Case do
   end
 
   def tmp_path(extension) do
-    Path.join(tmp_path(), extension |> to_string() |> String.replace(":", ""))
+    Path.join(tmp_path(), remove_colons(extension))
+  end
+
+  defp remove_colons(term) do
+    term
+    |> to_string()
+    |> String.replace(":", "")
   end
 
   def purge(modules) do
@@ -116,7 +122,7 @@ defmodule MixTest.Case do
       :code.set_path(get_path)
 
       for {mod, file} <- :code.all_loaded() -- previous,
-          file == [] or (is_list(file) and :lists.prefix(flag, file)) do
+          file == [] or (is_list(file) and List.starts_with?(file, flag)) do
         purge([mod])
       end
     end
@@ -175,6 +181,8 @@ end
 home = MixTest.Case.tmp_path(".mix")
 File.mkdir_p!(home)
 System.put_env("MIX_HOME", home)
+System.delete_env("XDG_DATA_HOME")
+System.delete_env("XDG_CONFIG_HOME")
 
 rebar = System.get_env("REBAR") || Path.expand("fixtures/rebar", __DIR__)
 File.cp!(rebar, Path.join(home, "rebar"))
@@ -206,7 +214,7 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[init])
+    System.cmd("git", ~w[-c core.hooksPath='' init])
     System.cmd("git", ~w[config user.email "mix@example.com"])
     System.cmd("git", ~w[config user.name "mix-repo"])
     System.cmd("git", ~w[add .])
@@ -297,7 +305,7 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[init])
+    System.cmd("git", ~w[-c core.hooksPath='' init])
     System.cmd("git", ~w[config user.email "mix@example.com"])
     System.cmd("git", ~w[config user.name "mix-repo"])
     System.cmd("git", ~w[add .])
@@ -352,7 +360,7 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[init])
+    System.cmd("git", ~w[-c core.hooksPath='' init])
     System.cmd("git", ~w[config user.email "mix@example.com"])
     System.cmd("git", ~w[config user.name "mix-repo"])
     System.cmd("git", ~w[add .])

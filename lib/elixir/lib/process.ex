@@ -14,10 +14,18 @@ defmodule Process do
 
   While this module provides low-level conveniences to work with processes,
   developers typically use abstractions such as `Agent`, `GenServer`,
-  `Registry`, `Supervisor` and `Task`  for building their systems and
+  `Registry`, `Supervisor` and `Task` for building their systems and
   resort to this module for gathering information, trapping exits, links
   and monitoring.
   """
+
+  @typedoc """
+  A process destination.
+
+  A remote or local PID, a local port, a locally registered name, or a tuple in
+  the form of `{registered_name, node}` for a registered name at another node.
+  """
+  @type dest :: pid | port | (registered_name :: atom) | {registered_name :: atom, node}
 
   @doc """
   Tells whether the given process is alive on the local node.
@@ -30,15 +38,6 @@ defmodule Process do
 
   Inlined by the compiler.
   """
-
-  @typedoc """
-  A process destination.
-
-  A remote or local PID, a local port, a locally registered name, or a tuple in
-  the form of `{registered_name, node}` for a registered name at another node.
-  """
-  @type dest :: pid | port | registered_name :: atom | {registered_name :: atom, node}
-
   @spec alive?(pid) :: boolean
   defdelegate alive?(pid), to: :erlang, as: :is_process_alive
 
@@ -53,6 +52,17 @@ defmodule Process do
   @doc """
   Returns the value for the given `key` in the process dictionary,
   or `default` if `key` is not set.
+
+  ## Examples
+
+      # Assuming :locale was not set
+      iex> Process.get(:locale, "pt")
+      "pt"
+      iex> Process.put(:locale, "fr")
+      nil
+      iex> Process.get(:locale, "pt")
+      "fr"
+
   """
   @spec get(term, default :: term) :: term
   def get(key, default \\ nil) do
@@ -66,6 +76,17 @@ defmodule Process do
   Returns all keys in the process dictionary.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      # Assuming :locale was not set
+      iex> :locale in Process.get_keys()
+      false
+      iex> Process.put(:locale, "pt")
+      nil
+      iex> :locale in Process.get_keys()
+      true
+
   """
   @spec get_keys() :: [term]
   defdelegate get_keys(), to: :erlang
@@ -82,15 +103,15 @@ defmodule Process do
   Stores the given `key`-`value` pair in the process dictionary.
 
   The return value of this function is the value that was previously stored
-  under `key`, or `nil` in case no value was stored under `key`.
+  under `key`, or `nil` in case no value was stored under it.
 
   ## Examples
 
       # Assuming :locale was not set
-      Process.put(:locale, "en")
-      #=> nil
-      Process.put(:locale, "fr")
-      #=> "en"
+      iex> Process.put(:locale, "en")
+      nil
+      iex> Process.put(:locale, "fr")
+      "en"
 
   """
   @spec put(term, term) :: term | nil
@@ -106,11 +127,11 @@ defmodule Process do
 
   ## Examples
 
-      Process.put(:comments, ["comment", "other comment"])
-      Process.delete(:comments)
-      #=> ["comment", "other comment"]
-      Process.delete(:comments)
-      #=> nil
+      iex> Process.put(:comments, ["comment", "other comment"])
+      iex> Process.delete(:comments)
+      ["comment", "other comment"]
+      iex> Process.delete(:comments)
+      nil
 
   """
   @spec delete(term) :: term | nil
@@ -170,10 +191,10 @@ defmodule Process do
 
   In other words, **do not**:
 
-      Task.start_link fn ->
+      Task.start_link(fn ->
         do_something()
         ...
-      end
+      end)
 
       # Wait until work is done
       Process.sleep(2000)
@@ -181,16 +202,18 @@ defmodule Process do
   But **do**:
 
       parent = self()
-      Task.start_link fn ->
+
+      Task.start_link(fn ->
         do_something()
-        send parent, :work_is_done
+        send(parent, :work_is_done)
         ...
-      end
+      end)
 
       receive do
         :work_is_done -> :ok
       after
-        30_000 -> :timeout # Optional timeout
+        # Optional timeout
+        30_000 -> :timeout
       end
 
   For cases like the one above, `Task.async/1` and `Task.await/2` are
@@ -199,9 +222,9 @@ defmodule Process do
   Similarly, if you are waiting for a process to terminate,
   monitor that process instead of sleeping. **Do not**:
 
-      Task.start_link fn ->
+      Task.start_link(fn ->
         ...
-      end
+      end)
 
       # Wait until task terminates
       Process.sleep(2000)
@@ -209,15 +232,17 @@ defmodule Process do
   Instead **do**:
 
       {:ok, pid} =
-        Task.start_link fn ->
+        Task.start_link(fn ->
           ...
-        end
+        end)
 
       ref = Process.monitor(pid)
+
       receive do
         {:DOWN, ^ref, _, _, _} -> :task_is_down
       after
-        30_000 -> :timeout # Optional timeout
+        # Optional timeout
+        30_000 -> :timeout
       end
 
   """
@@ -267,6 +292,9 @@ defmodule Process do
   If `dest` is an atom, it must be the name of a registered process
   which is looked up at the time of delivery. No error is produced if the name does
   not refer to a process.
+
+  The message is not sent immediately. Therefore, `dest` can receive other messages
+  in-between even when `time` is `0`.
 
   This function returns a timer reference, which can be read with `read_timer/1`
   or canceled with `cancel_timer/1`.
@@ -373,6 +401,14 @@ defmodule Process do
   check `:erlang.spawn_opt/4`.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      Process.spawn(fn -> 1 + 2 end, [:monitor])
+      #=> {#PID<0.93.0>, #Reference<0.18808174.1939079169.202418>}
+      Process.spawn(fn -> 1 + 2 end, [:link])
+      #=> #PID<0.95.0>
+
   """
   @spec spawn((() -> any), spawn_opts) :: pid | {pid, reference}
   defdelegate spawn(fun, opts), to: :erlang, as: :spawn_opt
@@ -412,12 +448,26 @@ defmodule Process do
   If the process is already dead when calling `Process.monitor/1`, a
   `:DOWN` message is delivered immediately.
 
-  See [the need for monitoring](http://elixir-lang.org/getting-started/mix-otp/genserver.html#the-need-for-monitoring)
-  for an example. See `:erlang.monitor/2` for more info.
+  See [the need for monitoring](https://elixir-lang.org/getting-started/mix-otp/genserver.html#the-need-for-monitoring)
+  for an example. See `:erlang.monitor/2` for more information.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      pid = spawn(fn -> 1 + 2 end)
+      #=> #PID<0.118.0>
+      Process.monitor(pid)
+      #=> #Reference<0.906660723.3006791681.40191>
+      Process.exit(pid, :kill)
+      #=> true
+      receive do
+        msg -> msg
+      end
+      #=> {:DOWN, #Reference<0.906660723.3006791681.40191>, :process, #PID<0.118.0>, :noproc}
+
   """
-  @spec monitor(pid | {name :: atom, node :: atom} | name :: atom) :: reference
+  @spec monitor(pid | {name, node} | name) :: reference when name: atom
   def monitor(item) do
     :erlang.monitor(:process, item)
   end
@@ -429,9 +479,17 @@ defmodule Process do
   obtained by calling `monitor/1`, that monitoring is turned off.
   If the monitoring is already turned off, nothing happens.
 
-  See `:erlang.demonitor/2` for more info.
+  See `:erlang.demonitor/2` for more information.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      pid = spawn(fn -> 1 + 2 end)
+      ref = Process.monitor(pid)
+      Process.demonitor(ref)
+      #=> true
+
   """
   @spec demonitor(reference, options :: [:flush | :info]) :: boolean
   defdelegate demonitor(monitor_ref, options \\ []), to: :erlang
@@ -444,9 +502,15 @@ defmodule Process do
   alive. This means that for such process, `alive?/1` will return `false` but
   its PID will be part of the list of PIDs returned by this function.
 
-  See `:erlang.processes/0` for more info.
+  See `:erlang.processes/0` for more information.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      Process.list()
+      #=> [#PID<0.0.0>, #PID<0.1.0>, #PID<0.2.0>, #PID<0.3.0>, ...]
+
   """
   @spec list() :: [pid]
   defdelegate list(), to: :erlang, as: :processes
@@ -469,7 +533,7 @@ defmodule Process do
   emit an exit signal to all its other linked processes. The behaviour when
   `pid1` is trapping exits is described in `exit/2`.
 
-  See `:erlang.link/1` for more info.
+  See `:erlang.link/1` for more information.
 
   Inlined by the compiler.
   """
@@ -485,7 +549,7 @@ defmodule Process do
 
   The return value of this function is always `true`.
 
-  See `:erlang.unlink/1` for more info.
+  See `:erlang.unlink/1` for more information.
 
   Inlined by the compiler.
   """
@@ -511,6 +575,15 @@ defmodule Process do
     * `false`
     * `true`
     * `:undefined`
+
+  ## Examples
+
+      Process.register(self(), :test)
+      #=> true
+      send(:test, :hello)
+      #=> :hello
+      send(:wrong_name, :hello)
+      #=> ** (ArgumentError) argument error
 
   """
   @spec register(pid | port, atom) :: true
@@ -539,6 +612,16 @@ defmodule Process do
   to any PID or port.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      #=> true
+      Process.unregister(:test)
+      #=> true
+      Process.unregister(:wrong_name)
+      #=> ** (ArgumentError) argument error
+
   """
   @spec unregister(atom) :: true
   defdelegate unregister(name), to: :erlang
@@ -547,7 +630,16 @@ defmodule Process do
   Returns the PID or port identifier registered under `name` or `nil` if the
   name is not registered.
 
-  See `:erlang.whereis/1` for more info.
+  See `:erlang.whereis/1` for more information.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      Process.whereis(:test)
+      #=> #PID<0.84.0>
+      Process.whereis(:wrong_name)
+      #=> nil
+
   """
   @spec whereis(atom) :: pid | port | nil
   def whereis(name) do
@@ -558,6 +650,12 @@ defmodule Process do
   Returns the PID of the group leader for the calling process.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      Process.group_leader()
+      #=> #PID<0.53.0>
+
   """
   @spec group_leader() :: pid
   defdelegate group_leader(), to: :erlang
@@ -579,6 +677,13 @@ defmodule Process do
   Returns a list of names which have been registered using `register/2`.
 
   Inlined by the compiler.
+
+  ## Examples
+
+      Process.register(self(), :test)
+      Process.registered()
+      #=> [:test, :elixir_config, :inet_db, ...]
+
   """
   @spec registered() :: [atom]
   defdelegate registered(), to: :erlang
@@ -594,7 +699,7 @@ defmodule Process do
 
   Returns the old value of `flag`.
 
-  See `:erlang.process_flag/2` for more info.
+  See `:erlang.process_flag/2` for more information.
 
   Inlined by the compiler.
   """
@@ -621,7 +726,7 @@ defmodule Process do
   The allowed values for `flag` are only a subset of those allowed in `flag/2`,
   namely `:save_calls`.
 
-  See `:erlang.process_flag/3` for more info.
+  See `:erlang.process_flag/3` for more information.
 
   Inlined by the compiler.
   """
@@ -634,7 +739,7 @@ defmodule Process do
 
   Use this only for debugging information.
 
-  See `:erlang.process_info/1` for more info.
+  See `:erlang.process_info/1` for more information.
   """
   @spec info(pid) :: keyword | nil
   def info(pid) do
@@ -645,7 +750,7 @@ defmodule Process do
   Returns information about the process identified by `pid`,
   or returns `nil` if the process is not alive.
 
-  See `:erlang.process_info/2` for more info.
+  See `:erlang.process_info/2` for more information.
   """
   @spec info(pid, atom | [atom]) :: {atom, term} | [{atom, term}] | nil
   def info(pid, spec)
@@ -670,7 +775,7 @@ defmodule Process do
   which is useful if the process does not expect to receive any messages
   in the near future.
 
-  See `:erlang.hibernate/3` for more info.
+  See `:erlang.hibernate/3` for more information.
 
   Inlined by the compiler.
   """

@@ -1,12 +1,12 @@
 %% Convenience functions used throughout elixir source code
 %% for ast manipulation and querying.
 -module(elixir_utils).
--export([get_line/1, split_last/1, noop/0,
+-export([get_line/1, split_last/1, noop/0, var_context/2,
   characters_to_list/1, characters_to_binary/1, relative_to_cwd/1,
   macro_name/1, returns_boolean/1, caller/4, meta_keep/1,
-  read_file_type/1, read_link_type/1, read_posix_mtime_and_size/1,
+  read_file_type/1, read_file_type/2, read_link_type/1, read_posix_mtime_and_size/1,
   change_posix_time/2, change_universal_time/2,
-  guard_op/2, match_op/2, extract_splat_guards/1, extract_guards/1,
+  guard_op/2, extract_splat_guards/1, extract_guards/1,
   erlang_comparison_op_to_elixir/1]).
 -include("elixir.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -15,13 +15,6 @@
 
 macro_name(Macro) ->
   list_to_atom("MACRO-" ++ atom_to_list(Macro)).
-
-% Operators
-
-match_op('++', 2) -> true;
-match_op('+', 1) -> true;
-match_op('-', 1) -> true;
-match_op(_, _) -> false.
 
 guard_op('andalso', 2) ->
   true;
@@ -43,6 +36,12 @@ erlang_comparison_op_to_elixir('=<') -> '<=';
 erlang_comparison_op_to_elixir('=:=') -> '===';
 erlang_comparison_op_to_elixir('=/=') -> '!==';
 erlang_comparison_op_to_elixir(Other) -> Other.
+
+var_context(Meta, Kind) ->
+  case lists:keyfind(counter, 1, Meta) of
+    {counter, Counter} -> Counter;
+    false -> Kind
+  end.
 
 % Extract guards
 
@@ -71,7 +70,10 @@ split_last([H], Acc)     -> {lists:reverse(Acc), H};
 split_last([H | T], Acc) -> split_last(T, [H | Acc]).
 
 read_file_type(File) ->
-  case file:read_file_info(File) of
+  read_file_type(File, []).
+
+read_file_type(File, Opts) ->
+  case file:read_file_info(File, [{time, posix} | Opts]) of
     {ok, #file_info{type=Type}} -> {ok, Type};
     {error, _} = Error -> Error
   end.
@@ -107,18 +109,23 @@ relative_to_cwd(Path) ->
 characters_to_list(Data) when is_list(Data) ->
   Data;
 characters_to_list(Data) ->
-  case elixir_config:safe_get(bootstrap, true) of
-    true  -> unicode:characters_to_list(Data);
-    false -> 'Elixir.String':to_charlist(Data)
+  case unicode:characters_to_list(Data) of
+    Result when is_list(Result) -> Result;
+    {error, Encoded, Rest} -> conversion_error(invalid, Encoded, Rest);
+    {incomplete, Encoded, Rest} -> conversion_error(incomplete, Encoded, Rest)
   end.
 
 characters_to_binary(Data) when is_binary(Data) ->
   Data;
 characters_to_binary(Data) ->
-  case elixir_config:safe_get(bootstrap, true) of
-    true -> unicode:characters_to_binary(Data);
-    false -> 'Elixir.List':to_string(Data)
+  case unicode:characters_to_binary(Data) of
+    Result when is_binary(Result) -> Result;
+    {error, Encoded, Rest} -> conversion_error(invalid, Encoded, Rest);
+    {incomplete, Encoded, Rest} -> conversion_error(incomplete, Encoded, Rest)
   end.
+
+conversion_error(Kind, Encoded, Rest) ->
+  error('Elixir.UnicodeConversionError':exception([{encoded, Encoded}, {rest, Rest}, {kind, Kind}])).
 
 %% Returns the caller as a stacktrace entry.
 caller(Line, File, nil, _) ->

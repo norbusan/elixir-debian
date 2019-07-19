@@ -4,7 +4,7 @@ defmodule Mix.Task.Compiler do
 
   A Mix compiler task can be defined by simply using `Mix.Task.Compiler`
   in a module whose name starts with `Mix.Tasks.Compile.` and defining
-  the `run/1` function:
+  the [`run/1`](`c:run/1`) function:
 
       defmodule Mix.Tasks.Compile.MyLanguage do
         use Mix.Task.Compiler
@@ -14,7 +14,7 @@ defmodule Mix.Task.Compiler do
         end
       end
 
-  The `run/1` function returns an atom indicating the status of the
+  The [`run/1`](`c:run/1`) function returns an atom indicating the status of the
   compilation, and optionally can also return a list of "diagnostics"
   such as warnings or compilation errors. Doing this enables code
   editors to display issues inline without having to analyze the
@@ -64,7 +64,7 @@ defmodule Mix.Task.Compiler do
     a range specified as `{start_line, start_col, end_line, end_col}`,
     or `nil` if unknown.
 
-    Line numbers are 1-based, and column numbers in a range are 0-based and refer
+    Line numbers are one-based, and column numbers in a range are zero-based and refer
     to the cursor position at the start of the character at that index. For example,
     to indicate that a diagnostic applies to the first `n` characters of the
     first line, the range would be `{1, 0, 1, n}`.
@@ -83,10 +83,7 @@ defmodule Mix.Task.Compiler do
   produces errors, warnings, or any other diagnostic information,
   it should return a tuple with the status and a list of diagnostics.
   """
-  @callback run([binary]) ::
-              :ok
-              | :noop
-              | {:ok | :noop | :error, [Diagnostic.t()]}
+  @callback run([binary]) :: {:ok | :noop | :error, [Diagnostic.t()]}
 
   @doc """
   Lists manifest files for the compiler.
@@ -113,6 +110,7 @@ defmodule Mix.Task.Compiler do
   end
 
   # Normalize the compiler result to a diagnostic tuple.
+  # TODO: Deprecate :ok and :noop on v1.9
   @doc false
   def normalize(result, name) do
     case result do
@@ -124,9 +122,8 @@ defmodule Mix.Task.Compiler do
 
       _ ->
         Mix.shell().error(
-          "[warning] Mix compiler #{inspect(name)} was supposed to return " <>
-            ":ok | :noop | {:ok | :noop | :error, [diagnostic]} but it " <>
-            "returned #{inspect(result)}"
+          "warning: Mix compiler #{inspect(name)} was supposed to return " <>
+            "{:ok | :noop | :error, [diagnostic]} but it returned #{inspect(result)}"
         )
 
         {:noop, []}

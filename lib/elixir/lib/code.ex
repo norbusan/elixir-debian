@@ -26,9 +26,17 @@ defmodule Code do
   times. This is common in scripts.
 
   `compile_file/2` must be used when you are interested in the modules defined in a
-  file, without tracking. `eval_file/2` should be used when you are intested on
+  file, without tracking. `eval_file/2` should be used when you are interested in
   the result of evaluating the file rather than the modules it defines.
   """
+
+  @available_compiler_options [
+    :docs,
+    :debug_info,
+    :ignore_module_conflict,
+    :relative_paths,
+    :warnings_as_errors
+  ]
 
   @doc """
   Lists all required files.
@@ -46,7 +54,7 @@ defmodule Code do
     :elixir_code_server.call(:required)
   end
 
-  # TODO: Deprecate me on 1.9
+  # TODO: Deprecate on v1.9
   @doc false
   def loaded_files do
     required_files()
@@ -78,7 +86,7 @@ defmodule Code do
     :elixir_code_server.cast({:unrequire_files, files})
   end
 
-  # TODO: Deprecate me on 1.9
+  # TODO: Deprecate on v1.9
   @doc false
   def unload_files(files) do
     unrequire_files(files)
@@ -264,6 +272,13 @@ defmodule Code do
       expects a valid `Version` which is usually the minimum Elixir
       version supported by the project.
 
+    * `:force_do_end_blocks` (since v1.9.0) - when `true`, converts all
+      inline usages of `do: ...`,  `else: ...` and friends into `do/end`
+      blocks. Defaults to `false`. Notice this option is convergent:
+      once you set it to `true`, all keywords will be converted. If you
+      set it to `false` later on, `do/end` blocks won't be converted
+      back to keywords.
+
   ## Design principles
 
   The formatter was designed under three principles.
@@ -409,14 +424,14 @@ defmodule Code do
       broken into multiple lines if they are followed by a newline in the
       opening bracket and preceded by a new line in the closing bracket
 
-    * Pipeline operators, like `|>` and others with the same precedence,
-      will span multiple lines if they spanned multiple lines in the input
+    * Newlines before certain operators (such as the pipeline operators)
+      and before other operators (such as comparison operators)
 
   The behaviours above are not guaranteed. We may remove or add new
   rules in the future. The goal of documenting them is to provide better
   understanding on what to expect from the formatter.
 
-  ### Multi-line lists, maps, tuples, etc
+  ### Multi-line lists, maps, tuples, etc.
 
   You can force lists, tuples, bitstrings, maps, structs and function
   calls to have one entry per line by adding a newline after the opening
@@ -650,6 +665,12 @@ defmodule Code do
       when non-existing atoms are found by the tokenizer.
       Defaults to `false`.
 
+    * `:static_atom_encoder` - The static atom encoder function, see
+      "The `:static_atom_encoder` function" section below. This option
+      overrides the `:existing_atoms_only` behaviour for static atoms
+      but `:existing_atoms_only` is still used for dynamic atoms, such
+      as atoms with interpolations.
+
     * `:warn_on_unnecessary_quotes` - when `false`, does not warn
       when atoms, keywords or calls have unnecessary quotes on
       them. Defaults to `true`.
@@ -659,6 +680,37 @@ defmodule Code do
   The opposite of converting a string to its quoted form is
   `Macro.to_string/2`, which converts a quoted form to a string/binary
   representation.
+
+  ## The `:static_atom_encoder` function
+
+  When `static_atom_encoder: &my_encoder/2` is passed as an argument,
+  `my_encoder/2` is called every time the tokenizer needs to create a
+  "static" atom. Static atoms are atoms in the AST that function as
+  aliases, remote calls, local calls, variable names, regular atoms
+  and keyword lists.
+
+  The encoder function will receive the atom name (as a binary) and a
+  keyword list with the current file, line and column. It must return
+  `{:ok, token :: term} | {:error, reason :: binary}`.
+
+  The encoder function is supposed to create an atom from the given
+  string. It is required to return either `{:ok, term}`, where term is
+  an atom. It is possible to return something else than an atom,
+  however, in that case the AST is no longer "valid" in that it cannot
+  be used to compile or evaluate Elixir code. A use case for this is
+  if you want to use the Elixir parser in a user-facing situation, but
+  you don't want to exhaust the atom table.
+
+  The atom encoder is not called for *all* atoms that are present in
+  the AST. It won't be invoked for the following atoms:
+
+    * operators (`:+`, `:-`, and so on)
+
+    * syntax keywords (`fn`, `do`, `else`, and so on)
+
+    * atoms containing interpolation (`:"\#{1 + 1} is two"`), as these
+      atoms are constructed at runtime.
+
   """
   @spec string_to_quoted(List.Chars.t(), keyword) ::
           {:ok, Macro.t()} | {:error, {line :: pos_integer, term, term}}
@@ -697,7 +749,7 @@ defmodule Code do
 
   Accepts `relative_to` as an argument to tell where the file is located.
 
-  While `require_file/2` and `compile_file/2` returns the loaded modules and their
+  While `require_file/2` and `compile_file/2` return the loaded modules and their
   bytecode, `eval_file/2` simply evaluates the file contents and returns the
   evaluation result and its bindings (exactly the same return value as `eval_string/3`).
   """
@@ -707,12 +759,12 @@ defmodule Code do
     eval_string(File.read!(file), [], file: file, line: 1)
   end
 
-  # TODO: Deprecate me on 1.9
+  # TODO: Deprecate on v1.9
   @doc false
   def load_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
     :elixir_code_server.call({:acquire, file})
-    loaded = :elixir_compiler.file(file)
+    loaded = :elixir_compiler.file(file, fn _, _ -> :ok end)
     :elixir_code_server.cast({:required, file})
     loaded
   end
@@ -732,7 +784,7 @@ defmodule Code do
   others will get `nil`.
 
   See `compile_file/2` if you would like to compile a file without tracking its
-  filenames. Finally, if you would like to get the result of evaluating file rather
+  filenames. Finally, if you would like to get the result of evaluating a file rather
   than the modules defined in it, see `eval_file/2`.
 
   ## Examples
@@ -743,7 +795,7 @@ defmodule Code do
       List.first(modules)
       #=> {EExTest.Compiled, <<70, 79, 82, 49, ...>>}
 
-  If the code has been required, it returns `nil`:
+  If the file has been required, it returns `nil`:
 
       Code.require_file("eex_test.exs", "../eex/test")
       #=> nil
@@ -753,18 +805,12 @@ defmodule Code do
   def require_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
 
-    # TODO: Simply block until :required or :proceed once load_file is removed in 2.0
     case :elixir_code_server.call({:acquire, file}) do
       :required ->
         nil
 
-      {:queued, ref} ->
-        receive do
-          {:elixir_code_server, ^ref, :required} -> nil
-        end
-
       :proceed ->
-        loaded = :elixir_compiler.file(file)
+        loaded = :elixir_compiler.file(file, fn _, _ -> :ok end)
         :elixir_code_server.cast({:required, file})
         loaded
     end
@@ -778,8 +824,7 @@ defmodule Code do
   ## Examples
 
       Code.compiler_options()
-      #=> %{debug_info: true, docs: true,
-      #=>   warnings_as_errors: false, ignore_module_conflict: false}
+      #=> %{debug_info: true, docs: true, ...}
 
   """
   @spec compiler_options() :: %{optional(atom) => boolean}
@@ -790,17 +835,17 @@ defmodule Code do
   @doc """
   Returns a list with the available compiler options.
 
-  See `compiler_options/1` for more info.
+  See `compiler_options/1` for more information.
 
   ## Examples
 
-      iex> Code.available_compiler_options()
-      [:docs, :debug_info, :ignore_module_conflict, :relative_paths, :warnings_as_errors]
+      Code.available_compiler_options()
+      #=> [:docs, :debug_info, ...]
 
   """
   @spec available_compiler_options() :: [atom]
   def available_compiler_options do
-    [:docs, :debug_info, :ignore_module_conflict, :relative_paths, :warnings_as_errors]
+    @available_compiler_options
   end
 
   @doc """
@@ -809,11 +854,11 @@ defmodule Code do
   The compiler utilizes temporary modules to compile code. For example,
   `elixir_compiler_1`, `elixir_compiler_2`, etc. In case the compiled code
   stores references to anonymous functions or similar, the Elixir compiler
-  may be unable to reclaim those modules, keeping an unecessary amount of
+  may be unable to reclaim those modules, keeping an unnecessary amount of
   code in memory and eventually leading to modules such as `elixir_compiler_12345`.
 
   This function purges all modules currently kept by the compiler, allowing
-  old compiler module names to be resued. If there are any processes running
+  old compiler module names to be reused. If there are any processes running
   any code from such modules, they will be terminated too.
 
   It returns `{:ok, number_of_modules_purged}`.
@@ -859,19 +904,14 @@ defmodule Code do
   """
   @spec compiler_options(Enumerable.t()) :: %{optional(atom) => boolean}
   def compiler_options(opts) do
-    available = available_compiler_options()
-
-    Enum.each(opts, fn {key, value} ->
-      cond do
-        key not in available ->
-          raise "unknown compiler option: #{inspect(key)}"
-
-        not is_boolean(value) ->
+    Enum.each(opts, fn
+      {key, value} when key in @available_compiler_options ->
+        if not is_boolean(value) do
           raise "compiler option #{inspect(key)} should be a boolean, got: #{inspect(value)}"
+        end
 
-        true ->
-          :ok
-      end
+      {key, _} ->
+        raise "unknown compiler option: #{inspect(key)}"
     end)
 
     :elixir_config.update(:compiler_options, &Enum.into(opts, &1))
@@ -893,7 +933,7 @@ defmodule Code do
   """
   @spec compile_string(List.Chars.t(), binary) :: [{module, binary}]
   def compile_string(string, file \\ "nofile") when is_binary(file) do
-    :elixir_compiler.string(to_charlist(string), file)
+    :elixir_compiler.string(to_charlist(string), file, fn _, _ -> :ok end)
   end
 
   @doc """
@@ -906,7 +946,7 @@ defmodule Code do
   """
   @spec compile_quoted(Macro.t(), binary) :: [{module, binary}]
   def compile_quoted(quoted, file \\ "nofile") when is_binary(file) do
-    :elixir_compiler.quoted(quoted, file)
+    :elixir_compiler.quoted(quoted, file, fn _, _ -> :ok end)
   end
 
   @doc """
@@ -923,9 +963,10 @@ defmodule Code do
 
   For compiling many files concurrently, see `Kernel.ParallelCompiler.compile/2`.
   """
+  @doc since: "1.7.0"
   @spec compile_file(binary, nil | binary) :: [{module, binary}]
   def compile_file(file, relative_to \\ nil) when is_binary(file) do
-    :elixir_compiler.file(find_file(file, relative_to))
+    :elixir_compiler.file(find_file(file, relative_to), fn _, _ -> :ok end)
   end
 
   @doc """
@@ -1014,6 +1055,9 @@ defmodule Code do
   If it succeeds in loading the module, it returns `{:module, module}`.
   If not, returns `{:error, reason}` with the error reason.
 
+  If the module being checked is currently in a compiler deadlock,
+  this functions returns `{:error, :nofile}`.
+
   Check `ensure_loaded/1` for more information on module loading
   and when to use `ensure_loaded/1` or `ensure_compiled/1`.
   """
@@ -1022,9 +1066,11 @@ defmodule Code do
   def ensure_compiled(module) when is_atom(module) do
     case :code.ensure_loaded(module) do
       {:error, :nofile} = error ->
-        if is_pid(:erlang.get(:elixir_compiler_pid)) and
-             Kernel.ErrorHandler.ensure_compiled(module, :module) do
-          {:module, module}
+        if is_pid(:erlang.get(:elixir_compiler_pid)) do
+          case Kernel.ErrorHandler.ensure_compiled(module, :module, :soft) do
+            :found -> {:module, module}
+            :not_found -> error
+          end
         else
           error
         end
@@ -1047,7 +1093,7 @@ defmodule Code do
   end
 
   @doc ~S"""
-  Returns the docs for the given module.
+  Returns the docs for the given module or path to `.beam` file.
 
   When given a module name, it finds its BEAM code and reads the docs from it.
 
@@ -1072,19 +1118,20 @@ defmodule Code do
   """
   @doc since: "1.7.0"
   @spec fetch_docs(module | String.t()) ::
-          {:docs_v1, anno, beam_language, format, module_doc :: doc, metadata,
-           docs :: [{{kind, name, arity}, anno, signature, doc, metadata}]}
+          {:docs_v1, annotation, beam_language, format, module_doc :: doc_content, metadata,
+           docs :: [doc_element]}
           | {:error, :module_not_found | :chunk_not_found | {:invalid_chunk, binary}}
-          | future_formats
-        when anno: :erl_anno.anno(),
-             beam_language: atom,
+        when annotation: :erl_anno.anno(),
+             beam_language: :elixir | :erlang | :lfe | :alpaca | atom(),
+             doc_content: %{required(binary) => binary} | :none | :hidden,
+             doc_element:
+               {{kind :: atom, function_name :: atom, arity}, annotation, signature, doc_content,
+                metadata},
              format: binary,
-             doc: %{binary => binary} | :none | :hidden,
-             kind: atom,
-             name: atom,
              signature: [binary],
-             metadata: map,
-             future_formats: term
+             metadata: map
+  def fetch_docs(module_or_path)
+
   def fetch_docs(module) when is_atom(module) do
     case :code.get_object_code(module) do
       {_module, bin, _beam_path} -> do_fetch_docs(bin)
@@ -1092,8 +1139,8 @@ defmodule Code do
     end
   end
 
-  def fetch_docs(binpath) when is_binary(binpath) do
-    do_fetch_docs(String.to_charlist(binpath))
+  def fetch_docs(path) when is_binary(path) do
+    do_fetch_docs(String.to_charlist(path))
   end
 
   @docs_chunk 'Docs'
@@ -1121,8 +1168,7 @@ defmodule Code do
   longer available, and therefore this function always returns `nil`.
   Use `Code.fetch_docs/1` instead.
   """
-  @doc deprecated:
-         "Code.get_docs/2 always returns nil as its outdated documentation is no longer stored on BEAM files. Use Code.fetch_docs/1 instead"
+  @deprecated "Code.get_docs/2 always returns nil as its outdated documentation is no longer stored on BEAM files. Use Code.fetch_docs/1 instead"
   @spec get_docs(module, :moduledoc | :docs | :callback_docs | :type_docs | :all) :: nil
   def get_docs(_module, _kind) do
     nil

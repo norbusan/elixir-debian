@@ -60,6 +60,8 @@ defmodule MapTest do
     assert %{
              try do
                1
+             rescue
+               _exception -> :exception
              else
                a -> a
              end => 1
@@ -94,20 +96,17 @@ defmodule MapTest do
 
   test "take/2" do
     assert Map.take(%{a: 1, b: 2, c: 3}, [:b, :c]) == %{b: 2, c: 3}
-    assert Map.take(%{a: 1, b: 2, c: 3}, MapSet.new([:b, :c])) == %{b: 2, c: 3}
     assert Map.take(%{a: 1, b: 2, c: 3}, []) == %{}
     assert_raise BadMapError, fn -> Map.take(:foo, []) end
   end
 
   test "drop/2" do
     assert Map.drop(%{a: 1, b: 2, c: 3}, [:b, :c]) == %{a: 1}
-    assert Map.drop(%{a: 1, b: 2, c: 3}, MapSet.new([:b, :c])) == %{a: 1}
     assert_raise BadMapError, fn -> Map.drop(:foo, []) end
   end
 
   test "split/2" do
     assert Map.split(%{a: 1, b: 2, c: 3}, [:b, :c]) == {%{b: 2, c: 3}, %{a: 1}}
-    assert Map.split(%{a: 1, b: 2, c: 3}, MapSet.new([:b, :c])) == {%{b: 2, c: 3}, %{a: 1}}
     assert_raise BadMapError, fn -> Map.split(:foo, []) end
   end
 
@@ -149,6 +148,39 @@ defmodule MapTest do
     end
   end
 
+  test "put/3 optimized by the compiler" do
+    map = %{a: 1, b: 2}
+
+    assert Map.put(map, :a, 2) == %{a: 2, b: 2}
+    assert Map.put(map, :c, 3) == %{a: 1, b: 2, c: 3}
+
+    assert Map.put(%{map | a: 2}, :a, 3) == %{a: 3, b: 2}
+    assert Map.put(%{map | a: 2}, :b, 3) == %{a: 2, b: 3}
+
+    assert Map.put(map, :a, 2) |> Map.put(:a, 3) == %{a: 3, b: 2}
+    assert Map.put(map, :a, 2) |> Map.put(:c, 3) == %{a: 2, b: 2, c: 3}
+    assert Map.put(map, :c, 3) |> Map.put(:a, 2) == %{a: 2, b: 2, c: 3}
+    assert Map.put(map, :c, 3) |> Map.put(:c, 4) == %{a: 1, b: 2, c: 4}
+  end
+
+  test "merge/2 with map literals optimized by the compiler" do
+    map = %{a: 1, b: 2}
+
+    assert Map.merge(map, %{a: 2}) == %{a: 2, b: 2}
+    assert Map.merge(map, %{c: 3}) == %{a: 1, b: 2, c: 3}
+    assert Map.merge(%{a: 2}, map) == %{a: 1, b: 2}
+    assert Map.merge(%{c: 3}, map) == %{a: 1, b: 2, c: 3}
+
+    assert Map.merge(%{map | a: 2}, %{a: 3}) == %{a: 3, b: 2}
+    assert Map.merge(%{map | a: 2}, %{b: 3}) == %{a: 2, b: 3}
+    assert Map.merge(%{a: 2}, %{map | a: 3}) == %{a: 3, b: 2}
+    assert Map.merge(%{a: 2}, %{map | b: 3}) == %{a: 1, b: 3}
+
+    assert Map.merge(map, %{a: 2}) |> Map.merge(%{a: 3, c: 3}) == %{a: 3, b: 2, c: 3}
+    assert Map.merge(map, %{c: 3}) |> Map.merge(%{c: 4}) == %{a: 1, b: 2, c: 4}
+    assert Map.merge(map, %{a: 3, c: 3}) |> Map.merge(%{a: 2}) == %{a: 2, b: 2, c: 3}
+  end
+
   test "merge/3" do
     # When first map is bigger
     assert Map.merge(%{a: 1, b: 2, c: 3}, %{c: 4, d: 5}, fn :c, 3, 4 -> :x end) ==
@@ -176,7 +208,7 @@ defmodule MapTest do
 
   defmodule ExternalUser do
     def __struct__ do
-      %{__struct__: ThisDoesNotLeak, name: "john", age: 27}
+      %{__struct__: __MODULE__, name: "john", age: 27}
     end
 
     def __struct__(kv) do

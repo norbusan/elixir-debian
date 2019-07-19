@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Compile.All do
   # is meant to be recursive and be invoked for each child
   # project.
 
+  @impl true
   def run(args) do
     Mix.Project.get!()
 
@@ -54,6 +55,10 @@ defmodule Mix.Tasks.Compile.All do
 
     case new_status do
       :error ->
+        if "--return-errors" not in args do
+          exit({:shutdown, 1})
+        end
+
         {:error, diagnostics}
 
       :ok ->

@@ -36,7 +36,7 @@ defmodule Float do
   To learn more about floating-point arithmetic visit:
 
     * [0.30000000000000004.com](http://0.30000000000000004.com/)
-    * [What Every Programmer Should Know About Floating-Point Arithmetic](http://floating-point-gui.de/)
+    * [What Every Programmer Should Know About Floating-Point Arithmetic](https://floating-point-gui.de/)
 
   """
 
@@ -149,6 +149,10 @@ defmodule Float do
   @spec floor(float, precision_range) :: float
   def floor(number, precision \\ 0)
 
+  def floor(number, 0) when is_float(number) do
+    :math.floor(number)
+  end
+
   def floor(number, precision) when is_float(number) and precision in @precision_range do
     round(number, precision, :floor)
   end
@@ -191,6 +195,10 @@ defmodule Float do
   """
   @spec ceil(float, precision_range) :: float
   def ceil(number, precision \\ 0)
+
+  def ceil(number, 0) when is_float(number) do
+    :math.ceil(number)
+  end
 
   def ceil(number, precision) when is_float(number) and precision in @precision_range do
     round(number, precision, :ceil)
@@ -248,25 +256,26 @@ defmodule Float do
   # and could be implemented in the future.
   def round(float, precision \\ 0)
 
+  def round(float, 0) when is_float(float) do
+    float |> :erlang.round() |> :erlang.float()
+  end
+
   def round(float, precision) when is_float(float) and precision in @precision_range do
     round(float, precision, :half_up)
   end
 
-  def round(number, precision) when is_float(number) do
+  def round(float, precision) when is_float(float) do
     raise ArgumentError, invalid_precision_message(precision)
   end
 
+  defp round(0.0, _precision, _rounding), do: 0.0
+
   defp round(float, precision, rounding) do
     <<sign::1, exp::11, significant::52-bitstring>> = <<float::float>>
-    {num, count, _} = decompose(significant)
+    {num, count, _} = decompose(significant, 1)
     count = count - exp + 1023
 
     cond do
-      # There is no decimal precision
-      # zero or minus zero
-      count <= 0 or (0 == exp and <<0::52>> == significant) ->
-        float
-
       # Precision beyond 15 digits
       count >= 104 ->
         case rounding do
@@ -296,7 +305,7 @@ defmodule Float do
         num = rounding(rounding, sign, num, div)
 
         # Convert back to float without loss
-        # http://www.exploringbinary.com/correct-decimal-to-floating-point-using-big-integers/
+        # https://www.exploringbinary.com/correct-decimal-to-floating-point-using-big-integers/
         den = power_of_10(precision)
         boundary = den <<< 52
 
@@ -373,6 +382,8 @@ defmodule Float do
 
   ## Examples
 
+      iex> Float.ratio(0.0)
+      {0, 1}
       iex> Float.ratio(3.14)
       {7070651414971679, 2251799813685248}
       iex> Float.ratio(-3.14)
@@ -388,27 +399,35 @@ defmodule Float do
 
   """
   @doc since: "1.4.0"
-  @spec ratio(float) :: {pos_integer | neg_integer, pos_integer}
+  @spec ratio(float) :: {integer, pos_integer}
+  def ratio(0.0), do: {0, 1}
+
   def ratio(float) when is_float(float) do
-    <<sign::1, exp::11, significant::52-bitstring>> = <<float::float>>
-    {num, _, den} = decompose(significant)
-    num = sign(sign, num)
+    case <<float::float>> do
+      <<sign::1, 0::11, significant::52-bitstring>> ->
+        {num, _, den} = decompose(significant, 0)
+        {sign(sign, num), shift_left(den, 1022)}
 
-    case exp - 1023 do
-      exp when exp > 0 ->
-        {den, exp} = shift_right(den, exp)
-        {shift_left(num, exp), den}
+      <<sign::1, exp::11, significant::52-bitstring>> ->
+        {num, _, den} = decompose(significant, 1)
+        num = sign(sign, num)
 
-      exp when exp < 0 ->
-        {num, shift_left(den, -exp)}
+        case exp - 1023 do
+          exp when exp > 0 ->
+            {den, exp} = shift_right(den, exp)
+            {shift_left(num, exp), den}
 
-      0 ->
-        {num, den}
+          exp when exp < 0 ->
+            {num, shift_left(den, -exp)}
+
+          0 ->
+            {num, den}
+        end
     end
   end
 
-  defp decompose(significant) do
-    decompose(significant, 1, 0, 2, 1, 1)
+  defp decompose(significant, initial) do
+    decompose(significant, 1, 0, 2, 1, initial)
   end
 
   defp decompose(<<1::1, bits::bitstring>>, count, last_count, power, _last_power, acc) do
@@ -423,11 +442,11 @@ defmodule Float do
     {acc, last_count, last_power}
   end
 
+  @compile {:inline, sign: 2, shift_left: 2}
   defp sign(0, num), do: num
   defp sign(1, num), do: -num
 
-  defp shift_left(num, 0), do: num
-  defp shift_left(num, times), do: shift_left(num <<< 1, times - 1)
+  defp shift_left(num, times), do: num <<< times
 
   defp shift_right(num, 0), do: {num, 0}
   defp shift_right(1, times), do: {1, times}
@@ -474,19 +493,16 @@ defmodule Float do
   end
 
   @doc false
-  # TODO: Remove by 2.0
   @deprecated "Use Float.to_charlist/1 instead"
   def to_char_list(float), do: Float.to_charlist(float)
 
   @doc false
-  # TODO: Remove by 2.0
   @deprecated "Use :erlang.float_to_list/2 instead"
   def to_char_list(float, options) do
     :erlang.float_to_list(float, expand_compact(options))
   end
 
   @doc false
-  # TODO: Remove by 2.0
   @deprecated "Use :erlang.float_to_binary/2 instead"
   def to_string(float, options) do
     :erlang.float_to_binary(float, expand_compact(options))
