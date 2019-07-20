@@ -6,6 +6,10 @@ elixir-lang (1.9.1.dfsg-1) unstable; urgency=medium
   * Increase version number of Erlang in debian/control.
   * Remove disable_tests_to_prevent_failing_with_erlang_22.patch.
   * Adapt remove_rebar3_related_tests.patch to the current Elixir release.
+  * Improve debian/tests/run-all
+    - do cleanup more carefully after running tests;
+    - do cleanup on the following signals: SIGHUP, SIGINT, SIGQUIT and SIGABRT;
+    - use bash instead of dash.
 
  -- Evgeny Golyshev <eugulixes@gmail.com>  Fri, 19 Jul 2019 13:29:07 +0300
 

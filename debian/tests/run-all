@@ -1,7 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 
 exec 2>&1
-set -e
+set -eE
 
 banner() {
   echo
@@ -10,9 +10,28 @@ banner() {
   echo
 }
 
+cleanup() {
+  rm  -f /usr/lib/elixir/VERSION
+  rm  -f /usr/lib/elixir/lib/iex/mix.exs
+  rm -rf /usr/lib/elixir/lib/elixir/src
+
+  for lib in $(ls lib); do
+    rm -rf "/usr/lib/elixir/lib/${lib}/lib" \
+           "/usr/lib/elixir/lib/${lib}/test" \
+           "/usr/lib/elixir/lib/${lib}/tmp"
+  done
+
+  epmd -kill
+}
+
 export HOME="${AUTOPKGTEST_TMP}"
 
 export REBAR=/usr/bin/rebar
+
+# Calls the cleanup function on the following signals: SIGHUP, SIGINT, SIGQUIT
+# and SIGABRT.
+trap "cleanup && exit 130" 2
+trap "cleanup" 1 3 6 ERR
 
 epmd -daemon
 
@@ -47,17 +66,7 @@ for lib in $(ls -1 lib | grep -v elixir); do
   ) || failed=1
 done
 
-# cleanup
-
-rm    /usr/lib/elixir/VERSION
-rm    /usr/lib/elixir/lib/iex/mix.exs
-rm -r /usr/lib/elixir/lib/elixir/src
-
-for lib in $(ls lib); do
-  rm -r "/usr/lib/elixir/lib/${lib}/lib" "/usr/lib/elixir/lib/${lib}/test"
-done
-
-epmd -kill
+cleanup
 
 exit $failed
 
