@@ -66,6 +66,8 @@ defmodule ProtocolTest do
     defstruct a: 0, b: 0
 
     defimpl Sample do
+      @compile {:no_warn_undefined, Unknown}
+
       def ok(struct) do
         Unknown.undefined(struct)
       end
@@ -131,6 +133,8 @@ defmodule ProtocolTest do
     deprecated = SampleDocsProto.__info__(:deprecated)
     assert [{{:ok, 1}, "Reason"}] = deprecated
   end
+
+  @compile {:no_warn_undefined, WithAll}
 
   test "protocol keeps underlying UndefinedFunctionError" do
     assert_raise UndefinedFunctionError, fn ->

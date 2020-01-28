@@ -47,7 +47,9 @@ defmodule Mix.Tasks.Escript.Build do
 
     * `:main_module` - the module to be invoked once the escript starts.
       The module must contain a function named `main/1` that will receive the
-      command line arguments as binaries.
+      command line arguments. By default the arguments are given as a list of
+      binaries, but if project is configured with `language: :erlang` it will
+      be a list of charlists.
 
   The remaining options can be specified to further customize the escript:
 
@@ -61,12 +63,12 @@ defmodule Mix.Tasks.Escript.Build do
       Defaults to app name. Set it to `nil` if no application should
       be started.
 
-    * `:strip_beam` - if `true` strips BEAM code in the escript to remove chunks
+    * `:strip_beams` - if `true` strips BEAM code in the escript to remove chunks
       unnecessary at runtime, such as debug information and documentation.
       Defaults to `true`.
 
     * `:embed_elixir` - if `true` embeds Elixir and its children apps
-      (`ex_unit`, `mix`, etc.) mentioned in the `:applications` list inside the
+      (`ex_unit`, `mix`, and the like) mentioned in the `:applications` list inside the
       `application/0` function in `mix.exs`.
 
       Defaults to `true` for Elixir projects, `false` for Erlang projects.
@@ -134,7 +136,7 @@ defmodule Mix.Tasks.Escript.Build do
 
   defp escriptize(project, language) do
     escript_opts = project[:escript] || []
-    script_name = Mix.Local.name_for(:escript, project)
+    script_name = Mix.Local.name_for(:escripts, project)
     filename = escript_opts[:path] || script_name
     main = escript_opts[:main_module]
 
@@ -163,7 +165,17 @@ defmodule Mix.Tasks.Escript.Build do
     end
 
     app = Keyword.get(escript_opts, :app, project[:app])
-    strip_beam? = Keyword.get(escript_opts, :strip_beam, true)
+
+    # Need to keep :strip_beam option for backward compatibility so
+    # check for correct :strip_beams, then :strip_beam, then
+    # use default true if neither are present.
+    #
+    # TODO: Deprecate :strip_beam option on v1.13
+    strip_beams? =
+      Keyword.get_lazy(escript_opts, :strip_beams, fn ->
+        Keyword.get(escript_opts, :strip_beam, true)
+      end)
+
     escript_mod = String.to_atom(Atom.to_string(app) <> "_escript")
 
     beam_paths =
@@ -173,7 +185,7 @@ defmodule Mix.Tasks.Escript.Build do
       |> Map.merge(consolidated_paths(project))
 
     tuples = gen_main(project, escript_mod, main, app, language) ++ read_beams(beam_paths)
-    tuples = if strip_beam?, do: strip_beams(tuples), else: tuples
+    tuples = if strip_beams?, do: strip_beams(tuples), else: tuples
 
     case :zip.create('mem', tuples, [:memory]) do
       {:ok, {'mem', zip}} ->

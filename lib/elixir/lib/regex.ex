@@ -86,7 +86,8 @@ defmodule Regex do
 
     * `:none` - does not return matching subpatterns at all
 
-    * `:all_names` - captures all names in the Regex
+    * `:all_names` - captures all named subpattern matches in the Regex as a list
+      ordered **alphabetically** by the names of the subpatterns
 
     * `list(binary)` - a list of named captures to capture
 
@@ -133,10 +134,10 @@ defmodule Regex do
   shared during development is compiled on the target (such as dependencies,
   archives, and escripts) and, when running in production, the code must either
   be compiled on the target (via `mix compile` or similar) or released on the
-  host (via `mix releases` or similar) with a matching OTP, OS and architecture
-  as as the target.
+  host (via `mix releases` or similar) with a matching OTP, operating system
+  and architecture as the target.
 
-  If you know you are running on a different system that the current one and
+  If you know you are running on a different system than the current one and
   you are doing multiple matches with the regex, you can manually invoke
   `Regex.recompile/1` or `Regex.recompile!/1` to perform a runtime version
   check and recompile the regex if necessary.
@@ -293,7 +294,7 @@ defmodule Regex do
 
   ## Options
 
-    * `:return` - set to `:index` to return byte index and match length.
+    * `:return` - when set to `:index`, returns byte index and match length.
       Defaults to `:binary`.
     * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
       to see the possible capture values.
@@ -329,7 +330,7 @@ defmodule Regex do
 
   ## Options
 
-    * `:return` - set to `:index` to return byte index and match length.
+    * `:return` - when set to `:index`, returns byte index and match length.
       Defaults to `:binary`.
 
   ## Examples
@@ -422,7 +423,7 @@ defmodule Regex do
 
   ## Options
 
-    * `:return` - set to `:index` to return byte index and match length.
+    * `:return` - when set to `:index`, returns byte index and match length.
       Defaults to `:binary`.
     * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
       to see the possible capture values.
@@ -461,13 +462,13 @@ defmodule Regex do
   end
 
   defp safe_run(
-         %Regex{re_pattern: compiled, source: source, re_version: version},
+         %Regex{re_pattern: compiled, source: source, re_version: version, opts: compile_opts},
          string,
          options
        ) do
     case version() do
       ^version -> :re.run(string, compiled, options)
-      _ -> :re.run(string, source, options)
+      _ -> :re.run(string, source, translate_options(compile_opts, options))
     end
   end
 
@@ -490,7 +491,8 @@ defmodule Regex do
       affect the splitting process.
 
     * `:include_captures` - when `true`, includes in the result the matches of
-      the regular expression. Defaults to `false`.
+      the regular expression. The matches are not counted towards the maximum
+      number of parts if combined with the `:parts` option. Defaults to `false`.
 
   ## Examples
 

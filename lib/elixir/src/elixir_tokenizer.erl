@@ -13,103 +13,103 @@
 -define(is_downcase(S), (S >= $a andalso S =< $z)).
 
 %% Others
--define(is_quote(S), (S == $" orelse S == $')).
--define(is_sigil(S), ((S == $/) orelse (S == $<) orelse (S == $") orelse (S == $') orelse
-                      (S == $[) orelse (S == $() orelse (S == ${) orelse (S == $|))).
+-define(is_quote(S), (S =:= $" orelse S =:= $')).
+-define(is_sigil(S), (S =:= $/ orelse S =:= $< orelse S =:= $" orelse S =:= $' orelse
+                      S =:= $[ orelse S =:= $( orelse S =:= ${ orelse S =:= $|)).
 
 %% Spaces
--define(is_horizontal_space(S), ((S == $\s) orelse (S == $\t))).
--define(is_vertical_space(S), ((S == $\r) orelse (S == $\n))).
+-define(is_horizontal_space(S), (S =:= $\s orelse S =:= $\t)).
+-define(is_vertical_space(S), (S =:= $\r orelse S =:= $\n)).
 -define(is_space(S), (?is_horizontal_space(S) orelse ?is_vertical_space(S))).
 
 %% Operators
 -define(at_op(T),
-  T == $@).
+  T =:= $@).
 
 -define(capture_op(T),
-  T == $&).
+  T =:= $&).
 
 -define(unary_op(T),
-  T == $!;
-  T == $^).
+  T =:= $!;
+  T =:= $^).
 
 -define(unary_op3(T1, T2, T3),
-  T1 == $~, T2 == $~, T3 == $~).
+  T1 =:= $~, T2 =:= $~, T3 =:= $~).
 
 -define(list_op(T1, T2),
-  T1 == $+, T2 == $+;
-  T1 == $-, T2 == $-).
+  T1 =:= $+, T2 =:= $+;
+  T1 =:= $-, T2 =:= $-).
 
 -define(two_op(T1, T2),
-  T1 == $<, T2 == $>;
-  T1 == $., T2 == $.).
+  T1 =:= $<, T2 =:= $>;
+  T1 =:= $., T2 =:= $.).
 
 -define(three_op(T1, T2, T3),
-  T1 == $^, T2 == $^, T3 == $^).
+  T1 =:= $^, T2 =:= $^, T3 =:= $^).
 
 -define(mult_op(T),
-  T == $* orelse T == $/).
+  T =:= $* orelse T =:= $/).
 
 -define(dual_op(T),
-  T == $+ orelse T == $-).
+  T =:= $+ orelse T =:= $-).
 
 -define(arrow_op3(T1, T2, T3),
-  T1 == $<, T2 == $<, T3 == $<;
-  T1 == $>, T2 == $>, T3 == $>;
-  T1 == $~, T2 == $>, T3 == $>;
-  T1 == $<, T2 == $<, T3 == $~;
-  T1 == $<, T2 == $~, T3 == $>;
-  T1 == $<, T2 == $|, T3 == $>).
+  T1 =:= $<, T2 =:= $<, T3 =:= $<;
+  T1 =:= $>, T2 =:= $>, T3 =:= $>;
+  T1 =:= $~, T2 =:= $>, T3 =:= $>;
+  T1 =:= $<, T2 =:= $<, T3 =:= $~;
+  T1 =:= $<, T2 =:= $~, T3 =:= $>;
+  T1 =:= $<, T2 =:= $|, T3 =:= $>).
 
 -define(arrow_op(T1, T2),
-  T1 == $|, T2 == $>;
-  T1 == $~, T2 == $>;
-  T1 == $<, T2 == $~).
+  T1 =:= $|, T2 =:= $>;
+  T1 =:= $~, T2 =:= $>;
+  T1 =:= $<, T2 =:= $~).
 
 -define(rel_op(T),
-  T == $<;
-  T == $>).
+  T =:= $<;
+  T =:= $>).
 
 -define(rel_op2(T1, T2),
-  T1 == $<, T2 == $=;
-  T1 == $>, T2 == $=).
+  T1 =:= $<, T2 =:= $=;
+  T1 =:= $>, T2 =:= $=).
 
 -define(comp_op2(T1, T2),
-  T1 == $=, T2 == $=;
-  T1 == $=, T2 == $~;
-  T1 == $!, T2 == $=).
+  T1 =:= $=, T2 =:= $=;
+  T1 =:= $=, T2 =:= $~;
+  T1 =:= $!, T2 =:= $=).
 
 -define(comp_op3(T1, T2, T3),
-  T1 == $=, T2 == $=, T3 == $=;
-  T1 == $!, T2 == $=, T3 == $=).
+  T1 =:= $=, T2 =:= $=, T3 =:= $=;
+  T1 =:= $!, T2 =:= $=, T3 =:= $=).
 
 -define(and_op(T1, T2),
-  T1 == $&, T2 == $&).
+  T1 =:= $&, T2 =:= $&).
 
 -define(or_op(T1, T2),
-  T1 == $|, T2 == $|).
+  T1 =:= $|, T2 =:= $|).
 
 -define(and_op3(T1, T2, T3),
-  T1 == $&, T2 == $&, T3 == $&).
+  T1 =:= $&, T2 =:= $&, T3 =:= $&).
 
 -define(or_op3(T1, T2, T3),
-  T1 == $|, T2 == $|, T3 == $|).
+  T1 =:= $|, T2 =:= $|, T3 =:= $|).
 
 -define(match_op(T),
-  T == $=).
+  T =:= $=).
 
 -define(in_match_op(T1, T2),
-  T1 == $<, T2 == $-;
-  T1 == $\\, T2 == $\\).
+  T1 =:= $<, T2 =:= $-;
+  T1 =:= $\\, T2 =:= $\\).
 
 -define(stab_op(T1, T2),
-  T1 == $-, T2 == $>).
+  T1 =:= $-, T2 =:= $>).
 
 -define(type_op(T1, T2),
-  T1 == $:, T2 == $:).
+  T1 =:= $:, T2 =:= $:).
 
 -define(pipe_op(T),
-  T == $|).
+  T =:= $|).
 
 tokenize(String, Line, Column, #elixir_tokenizer{} = Scope) ->
   tokenize(String, Line, Column, Scope, []);
@@ -302,7 +302,7 @@ tokenize([$:, T1, T2 | Rest], Line, Column, Scope, Tokens) when
 % ## Single Token Operators
 tokenize([$:, T | Rest], Line, Column, Scope, Tokens) when
     ?at_op(T); ?unary_op(T); ?capture_op(T); ?dual_op(T); ?mult_op(T);
-    ?rel_op(T); ?match_op(T); ?pipe_op(T); T == $. ->
+    ?rel_op(T); ?match_op(T); ?pipe_op(T); T =:= $. ->
   Token = {atom, {Line, Column, nil}, list_to_atom([T])},
   tokenize(Rest, Line, Column + 2, Scope, [Token | Tokens]);
 
@@ -352,11 +352,11 @@ tokenize([$>, $> | Rest], Line, Column, Scope, Tokens) ->
   Token = {'>>', {Line, Column, previous_was_eol(Tokens)}},
   handle_terminator(Rest, Line, Column + 2, Scope, Token, Tokens);
 
-tokenize([T | Rest], Line, Column, Scope, Tokens) when T == $(; T == ${; T == $[ ->
+tokenize([T | Rest], Line, Column, Scope, Tokens) when T =:= $(; T =:= ${; T =:= $[ ->
   Token = {list_to_atom([T]), {Line, Column, nil}},
   handle_terminator(Rest, Line, Column + 1, Scope, Token, Tokens);
 
-tokenize([T | Rest], Line, Column, Scope, Tokens) when T == $); T == $}; T == $] ->
+tokenize([T | Rest], Line, Column, Scope, Tokens) when T =:= $); T =:= $}; T =:= $] ->
   Token = {list_to_atom([T]), {Line, Column, previous_was_eol(Tokens)}},
   handle_terminator(Rest, Line, Column + 1, Scope, Token, Tokens);
 
@@ -476,6 +476,8 @@ tokenize([$: | String] = Original, Line, Column, Scope, Tokens) ->
   end;
 
 % Integers and floats
+% We use int and flt otherwise elixir_parser won't format them
+% properly in case of errors.
 
 tokenize([H | T], Line, Column, Scope, Tokens) when ?is_digit(H) ->
   case tokenize_number(T, [H], 1, false) of
@@ -485,7 +487,7 @@ tokenize([H | T], Line, Column, Scope, Tokens) when ?is_digit(H) ->
       Token = {int, {Line, Column, Number}, Original},
       tokenize(Rest, Line, Column + Length, Scope, [Token | Tokens]);
     {Rest, Number, Original, Length} ->
-      Token = {float, {Line, Column, Number}, Original},
+      Token = {flt, {Line, Column, Number}, Original},
       tokenize(Rest, Line, Column + Length, Scope, [Token | Tokens])
   end;
 
@@ -553,7 +555,7 @@ tokenize(String, Line, Column, Scope, Tokens) ->
           Token = {kw_identifier, {Line, Column, nil}, Atom},
           tokenize(T, Line, Column + Length + 1, Scope, [Token | Tokens]);
 
-        [$: | T] when hd(T) /= $: ->
+        [$: | T] when hd(T) =/= $: ->
           AtomName = atom_to_list(Atom) ++ [$:],
           Reason = {Line, Column, "keyword argument must be followed by space after: ", AtomName},
           {error, Reason, String, Tokens};
@@ -780,8 +782,8 @@ handle_call_identifier(Rest, Line, Column, DotInfo, Length, Op, Scope, Tokens) -
 handle_space_sensitive_tokens([Sign, NotMarker | T], Line, Column, Scope, [{Identifier, _, _} = H | Tokens]) when
     ?dual_op(Sign),
     not(?is_space(NotMarker)),
-    NotMarker /= $(, NotMarker /= $[, NotMarker /= $<, NotMarker /= ${,                  %% containers
-    NotMarker /= $%, NotMarker /= $+, NotMarker /= $-, NotMarker /= $/, NotMarker /= $>, %% operators
+    NotMarker =/= $(, NotMarker =/= $[, NotMarker =/= $<, NotMarker =/= ${,                  %% containers
+    NotMarker =/= $%, NotMarker =/= $+, NotMarker =/= $-, NotMarker =/= $/, NotMarker =/= $>, %% operators
     Identifier == identifier ->
   Rest = [NotMarker | T],
   DualOpToken = {dual_op, {Line, Column, nil}, list_to_atom([Sign])},
@@ -852,7 +854,7 @@ collect_modifiers(Rest, Buffer) ->
 extract_heredoc_with_interpolation(Line, Column, Scope, Interpol, T, H) ->
   case extract_heredoc(Line, Column, T, H, Scope) of
     {ok, NewLine, NewColumn, Body, Rest} ->
-      case elixir_interpolation:extract(Line + 1, 1, Scope, Interpol, Body, 0) of
+      case elixir_interpolation:extract(Line + 1, 1, Scope, Interpol, Body, none) of
         {error, Reason} ->
           {error, interpolation_format(Reason, " (for heredoc starting at line ~B)", [Line])};
 
@@ -894,7 +896,7 @@ heredoc_error_message(badterminator, _Line, Terminator) ->
 %% Remove spaces from heredoc based on the position of the final quotes.
 
 remove_heredoc_spaces(Body, Spaces, Marker, Scope) ->
-  case trim_spaces(Body, [0], Spaces, false) of
+  case trim_spaces(Body, [], Spaces, false) of
     {Acc, false} ->
       Acc;
 
@@ -958,7 +960,7 @@ extract_heredoc_body(Line, Column, Marker, Rest, Buffer) ->
   end.
 
 %% Extract a line from the heredoc prepending its contents to a buffer.
-%% Allow lazy escaping (e.g. \""")
+%% Allow lazy escaping (for example, \""")
 
 extract_heredoc_line(Marker, [$\\, $\\ | T], Buffer) ->
   extract_heredoc_line(Marker, T, [$\\, $\\ | Buffer]);
@@ -1006,12 +1008,12 @@ tokenize_number([$_, H | T], Acc, Length, Bool) when ?is_digit(H) ->
 
 %% Check if we have e- followed by numbers (valid only for floats);
 tokenize_number([E, S, H | T], Acc, Length, true)
-    when (E == $E) or (E == $e), ?is_digit(H), S == $+ orelse S == $- ->
+    when (E =:= $E) or (E =:= $e), ?is_digit(H), S =:= $+ orelse S =:= $- ->
   tokenize_number(T, [H, S, E | Acc], Length + 3, true);
 
 %% Check if we have e followed by numbers (valid only for floats);
 tokenize_number([E, H | T], Acc, Length, true)
-    when (E == $E) or (E == $e), ?is_digit(H) ->
+    when (E =:= $E) or (E =:= $e), ?is_digit(H) ->
   tokenize_number(T, [H, E | Acc], Length + 2, true);
 
 %% Finally just numbers.
@@ -1090,7 +1092,7 @@ preserve_comments(Line, Column, Tokens, Comment, Rest, Scope) ->
 tokenize([H | T]) when ?is_upcase(H) ->
   {Acc, Rest, Length, Special} = tokenize_continue(T, [H], 1, []),
   {alias, lists:reverse(Acc), Rest, Length, true, Special};
-tokenize([H | T]) when ?is_downcase(H); H == $_ ->
+tokenize([H | T]) when ?is_downcase(H); H =:= $_ ->
   {Acc, Rest, Length, Special} = tokenize_continue(T, [H], 1, []),
   {identifier, lists:reverse(Acc), Rest, Length, true, Special};
 tokenize(_List) ->
@@ -1102,7 +1104,7 @@ tokenize_continue([$! | T], Acc, Length, Special) ->
   {[$! | Acc], T, Length + 1, [$! | Special]};
 tokenize_continue([$? | T], Acc, Length, Special) ->
   {[$? | Acc], T, Length + 1, [$? | Special]};
-tokenize_continue([H | T], Acc, Length, Special) when ?is_upcase(H); ?is_downcase(H); ?is_digit(H); H == $_ ->
+tokenize_continue([H | T], Acc, Length, Special) when ?is_upcase(H); ?is_downcase(H); ?is_digit(H); H =:= $_ ->
   tokenize_continue(T, [H | Acc], Length + 1, Special);
 tokenize_continue(Rest, Acc, Length, Special) ->
   {Acc, Rest, Length, Special}.
@@ -1201,26 +1203,38 @@ interpolation_format({_, _, _, _} = Reason, _Extension, _Args) ->
 
 %% Terminators
 
+handle_terminator(Rest, Line, Column, _, {'(', _}, [{alias, _, Alias} | Tokens]) ->
+  Reason =
+    io_lib:format(
+      "unexpected ( after alias ~ts. Function names and identifiers in Elixir "
+      "start with lowercase characters or underscore. For example:\n\n"
+      "    hello_world()\n"
+      "    _starting_with_underscore()\n"
+      "    numb3rs_are_allowed()\n"
+      "    may_finish_with_question_mark?()\n"
+      "    may_finish_with_exclamation_mark!()\n"
+      "Unexpected token: ",
+      [Alias]
+    ),
+
+  {error, {Line, Column, Reason, ["("]}, atom_to_list(Alias) ++ [$( | Rest], Tokens};
+handle_terminator(Rest, Line, Column, Scope, Token, Tokens) when
+    Scope#elixir_tokenizer.check_terminators == false ->
+  tokenize(Rest, Line, Column, Scope, [Token | Tokens]);
 handle_terminator(Rest, Line, Column, Scope, Token, Tokens) ->
-  case handle_terminator(Token, Scope) of
+  #elixir_tokenizer{terminators=Terminators} = Scope,
+
+  case check_terminator(Token, Terminators, Scope) of
     {error, Reason} ->
       {error, Reason, atom_to_list(element(1, Token)) ++ Rest, Tokens};
-    New ->
+    {ok, New} ->
       tokenize(Rest, Line, Column, New, [Token | Tokens])
-  end.
-
-handle_terminator(_, #elixir_tokenizer{check_terminators=false} = Scope) ->
-  Scope;
-handle_terminator(Token, #elixir_tokenizer{terminators=Terminators} = Scope) ->
-  case check_terminator(Token, Terminators, Scope) of
-    {error, _} = Error -> Error;
-    NewScope -> NewScope
   end.
 
 check_terminator({Start, {Line, _, _}}, Terminators, Scope)
     when Start == '('; Start == '['; Start == '{'; Start == '<<' ->
   Indentation = Scope#elixir_tokenizer.indentation,
-  Scope#elixir_tokenizer{terminators=[{Start, Line, Indentation} | Terminators]};
+  {ok, Scope#elixir_tokenizer{terminators=[{Start, Line, Indentation} | Terminators]}};
 
 check_terminator({Start, {Line, _, _}}, Terminators, Scope) when Start == 'fn'; Start == 'do' ->
   Indentation = Scope#elixir_tokenizer.indentation,
@@ -1235,7 +1249,7 @@ check_terminator({Start, {Line, _, _}}, Terminators, Scope) when Start == 'fn'; 
         Scope
     end,
 
-  NewScope#elixir_tokenizer{terminators=[{Start, Line, Indentation} | Terminators]};
+  {ok, NewScope#elixir_tokenizer{terminators=[{Start, Line, Indentation} | Terminators]}};
 
 check_terminator({'end', {EndLine, _, _}}, [{'do', _, Indentation} | Terminators], Scope) ->
   NewScope =
@@ -1249,7 +1263,7 @@ check_terminator({'end', {EndLine, _, _}}, [{'do', _, Indentation} | Terminators
         Scope
     end,
 
-  NewScope#elixir_tokenizer{terminators=Terminators};
+  {ok, NewScope#elixir_tokenizer{terminators=Terminators}};
 
 check_terminator({End, _}, [{Start, _, _} | Terminators], Scope)
     when Start == 'fn', End == 'end';
@@ -1257,7 +1271,7 @@ check_terminator({End, _}, [{Start, _, _} | Terminators], Scope)
          Start == '[',  End == ']';
          Start == '{',  End == '}';
          Start == '<<', End == '>>' ->
-  Scope#elixir_tokenizer{terminators=Terminators};
+  {ok, Scope#elixir_tokenizer{terminators=Terminators}};
 
 check_terminator({End, {EndLine, EndColumn, _}}, [{Start, StartLine, _} | _], Scope)
     when End == 'end'; End == ')'; End == ']'; End == '}'; End == '>>' ->
@@ -1286,7 +1300,7 @@ check_terminator({End, {Line, Column, _}}, [], _Scope)
   {error, {Line, Column, "unexpected token: ", atom_to_list(End)}};
 
 check_terminator(_, _, Scope) ->
-  Scope.
+  {ok, Scope}.
 
 missing_terminator_hint(Start, End, #elixir_tokenizer{mismatch_hints=Hints}) ->
   case lists:keyfind(Start, 1, Hints) of
@@ -1427,7 +1441,7 @@ maybe_warn_for_ambiguous_bang_before_equals(Kind, Atom, [$= | _], Scope, Line) -
     end,
 
   case lists:last(Identifier) of
-    Last when Last == $!; Last == $? ->
+    Last when Last =:= $!; Last =:= $? ->
       Msg = io_lib:format("found ~ts \"~ts\", ending with \"~ts\", followed by =. "
                           "It is unclear if you mean \"~ts ~ts=\" or \"~ts =\". Please add "
                           "a space before or after ~ts to remove the ambiguity",

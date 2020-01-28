@@ -1,7 +1,7 @@
 %% Compiler backend to Erlang.
 -module(elixir_erl).
 -export([elixir_to_erl/1, definition_to_anonymous/4, compile/1, consolidate/3,
-         get_ann/1, debug_info/4, scope/1, format_error/1]).
+         get_ann/1, debug_info/4, scope/2, format_error/1]).
 -include("elixir.hrl").
 -define(typespecs, 'Elixir.Kernel.Typespec').
 
@@ -48,7 +48,7 @@ get_ann([], Gen, Line) -> erl_anno:set_generated(Gen, Line).
 %% Converts an Elixir definition to an anonymous function.
 
 definition_to_anonymous(Module, Kind, Meta, Clauses) ->
-  ErlClauses = [translate_clause(Kind, Clause) || Clause <- Clauses],
+  ErlClauses = [translate_clause(Kind, Clause, true) || Clause <- Clauses],
   Fun = {'fun', ?ann(Meta), {clauses, ErlClauses}},
   LocalHandler = fun(LocalName, LocalArgs) -> invoke_local(Module, LocalName, LocalArgs) end,
   {value, Result, _Binding} = erl_eval:expr(Fun, [], {value, LocalHandler}),
@@ -117,18 +117,21 @@ elixir_to_erl_cons(T) -> elixir_to_erl(T).
 
 %% Returns a scope for translation.
 
-scope(_Meta) ->
-  #elixir_erl{}.
+scope(_Meta, ExpandCaptures) ->
+  #elixir_erl{expand_captures=ExpandCaptures}.
 
 %% Static compilation hook, used in protocol consolidation
 
 consolidate(Map, TypeSpecs, Chunks) ->
-  {Prefix, Forms, _Def, _Defmacro, _Macros, _Deprecated} = dynamic_form(Map),
+  {Prefix, Forms, _Def, _Defmacro, _Macros, _NoWarnUndefined} = dynamic_form(Map),
   load_form(Map, Prefix, Forms, TypeSpecs, Chunks).
 
 %% Dynamic compilation hook, used in regular compiler
 
-compile(#{module := Module} = Map) ->
+compile(Map) ->
+  elixir_erl_compiler:spawn(fun spawned_compile/1, [Map]).
+
+spawned_compile(#{module := Module, line := Line} = Map) ->
   {Set, Bag} = elixir_module:data_tables(Module),
 
   TranslatedTypespecs =
@@ -138,34 +141,28 @@ compile(#{module := Module} = Map) ->
       false -> ?typespecs:translate_typespecs_for_module(Set, Bag)
     end,
 
-  elixir_erl_compiler:spawn(fun spawned_compile/4, [Map, Set, Bag, TranslatedTypespecs]).
-
-spawned_compile(Map, Set, _Bag, TranslatedTypespecs) ->
-  {Prefix, Forms, Def, Defmacro, Macros, Deprecated} = dynamic_form(Map),
+  {Prefix, Forms, Def, Defmacro, Macros, NoWarnUndefined} = dynamic_form(Map),
   {Types, Callbacks, TypeSpecs} = typespecs_form(Map, TranslatedTypespecs, Macros),
 
-  #{module := Module, line := Line} = Map,
   DocsChunk = docs_chunk(Set, Module, Line, Def, Defmacro, Types, Callbacks),
-  DeprecatedChunk = deprecated_chunk(Deprecated),
-  Chunks = DocsChunk ++ DeprecatedChunk,
+  CheckerChunk = checker_chunk(Map, NoWarnUndefined),
+  load_form(Map, Prefix, Forms, TypeSpecs, DocsChunk ++ CheckerChunk).
 
-  load_form(Map, Prefix, Forms, TypeSpecs, Chunks).
-
-dynamic_form(#{module := Module, line := Line, relative_file := RelativeFile, attributes := Attributes,
-               definitions := Definitions, unreachable := Unreachable, compile_opts := Opts} = Map) ->
+dynamic_form(#{module := Module, line := Line, relative_file := RelativeFile,
+               attributes := Attributes, definitions := Definitions, unreachable := Unreachable,
+               deprecated := Deprecated, compile_opts := Opts}) ->
   {Def, Defmacro, Macros, Exports, Functions} =
     split_definition(Definitions, Unreachable, [], [], [], [], {[], []}),
 
+  {NoWarnUndefined, FilteredOpts} = split_no_warn_undefined(Opts, [], []),
   Location = {elixir_utils:characters_to_list(RelativeFile), Line},
   Prefix = [{attribute, Line, file, Location},
             {attribute, Line, module, Module},
-            {attribute, Line, compile, [no_auto_import | Opts]}],
+            {attribute, Line, compile, [no_auto_import | FilteredOpts]}],
 
-  %% deprecated is not available in old map versions.
-  Deprecated = maps:get(deprecated, Map, []),
   Forms0 = functions_form(Line, Module, Def, Defmacro, Exports, Functions, Deprecated),
   Forms1 = attributes_form(Line, Attributes, Forms0),
-  {Prefix, Forms1, Def, Defmacro, Macros, Deprecated}.
+  {Prefix, Forms1, Def, Defmacro, Macros, NoWarnUndefined}.
 
 % Definitions
 
@@ -220,15 +217,15 @@ add_definition(Meta, Body, {Head, Tail}) ->
   end.
 
 translate_definition(Kind, Meta, {Name, Arity}, Clauses) ->
-  ErlClauses = [translate_clause(Kind, Clause) || Clause <- Clauses],
+  ErlClauses = [translate_clause(Kind, Clause, false) || Clause <- Clauses],
 
   case is_macro(Kind) of
     true -> {function, ?ann(Meta), elixir_utils:macro_name(Name), Arity + 1, ErlClauses};
     false -> {function, ?ann(Meta), Name, Arity, ErlClauses}
   end.
 
-translate_clause(Kind, {Meta, Args, Guards, Body}) ->
-  S = scope(Meta),
+translate_clause(Kind, {Meta, Args, Guards, Body}, ExpandCaptures) ->
+  S = scope(Meta, ExpandCaptures),
 
   {TClause, TS} = elixir_erl_clauses:clause(Meta,
                     fun elixir_erl_pass:translate_args/2, Args, Body, Guards, S),
@@ -418,9 +415,10 @@ callspecs_form(Kind, Entries, Optional, Macros, Forms, ModuleMap) ->
     end
   end, Forms, lists:sort(Signatures)).
 
+spec_for_macro({type, Line, 'bounded_fun', [H | T]}) ->
+  {type, Line, 'bounded_fun', [spec_for_macro(H) | T]};
 spec_for_macro({type, Line, 'fun', [{type, _, product, Args} | T]}) ->
-  NewArgs = [{type, Line, term, []} | Args],
-  {type, Line, 'fun', [{type, Line, product, NewArgs} | T]};
+  {type, Line, 'fun', [{type, Line, product, [{type, Line, term, []} | Args]} | T]};
 spec_for_macro(Else) ->
   Else.
 
@@ -455,14 +453,14 @@ take_debug_opts(Opts) ->
   case proplists:get_value(debug_info, Opts) of
     true -> {true, proplists:delete(debug_info, Opts)};
     false -> {false, proplists:delete(debug_info, Opts)};
-    undefined -> {elixir_compiler:get_opt(debug_info), Opts}
+    undefined -> {elixir_config:get(debug_info), Opts}
   end.
 
 extra_chunks_opts([], Opts) -> Opts;
 extra_chunks_opts(Chunks, Opts) -> [{extra_chunks, Chunks} | Opts].
 
 docs_chunk(Set, Module, Line, Def, Defmacro, Types, Callbacks) ->
-  case elixir_compiler:get_opt(docs) of
+  case elixir_config:get(docs) of
     true ->
       {ModuleDocLine, ModuleDoc} = get_moduledoc(Line, Set),
       ModuleDocMeta = get_moduledoc_meta(Set),
@@ -485,10 +483,6 @@ docs_chunk(Set, Module, Line, Def, Defmacro, Types, Callbacks) ->
     false ->
       []
   end.
-
-deprecated_chunk(Deprecated) ->
-  ChunkData = term_to_binary({elixir_deprecated_v1, Deprecated}, [compressed]),
-  [{<<"ExDp">>, ChunkData}].
 
 doc_value(Doc) ->
   case Doc of
@@ -554,6 +548,40 @@ signature_to_binary(Module, '__struct__', []) ->
 
 signature_to_binary(_, Name, Signature) ->
   'Elixir.Macro':to_string({Name, [], Signature}).
+
+checker_chunk(#{definitions := Definitions, deprecated := Deprecated, is_behaviour := IsBehaviour}, NoWarnUndefined) ->
+  DeprecatedMap = maps:from_list(Deprecated),
+
+  Exports =
+    lists:foldl(fun({Function, Kind, _Meta, _Clauses}, Acc) ->
+      case Kind of
+        _ when Kind == def orelse Kind == defmacro ->
+          Reason = maps:get(Function, DeprecatedMap, nil),
+          [{Function, #{kind => Kind, deprecated_reason => Reason}} | Acc];
+        _ ->
+          Acc
+      end
+    end, [], Definitions),
+
+  Contents = #{
+    exports => lists:sort(behaviour_info_exports(IsBehaviour) ++ Exports),
+    no_warn_undefined => NoWarnUndefined
+  },
+
+  [{<<"ExCk">>, erlang:term_to_binary({elixir_checker_v1, Contents})}].
+
+behaviour_info_exports(true) -> [{{behaviour_info, 1}, #{kind => def, deprecated_reason => nil}}];
+behaviour_info_exports(false) -> [].
+
+split_no_warn_undefined([{no_warn_undefined, NoWarnUndefined} | CompileOpts], AccNWU, AccCO) ->
+  split_no_warn_undefined(CompileOpts, list_wrap(NoWarnUndefined) ++ AccNWU, AccCO);
+split_no_warn_undefined([Opt | CompileOpts], AccNWU, AccCO) ->
+  split_no_warn_undefined(CompileOpts, AccNWU, [Opt | AccCO]);
+split_no_warn_undefined([], AccNWU, AccCO) ->
+  {AccNWU, lists:reverse(AccCO)}.
+
+list_wrap(List) when is_list(List) -> List;
+list_wrap(Other) -> [Other].
 
 %% Errors
 

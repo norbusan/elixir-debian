@@ -12,13 +12,12 @@ defmodule Mix.Tasks.Archive.Install do
 
       mix do archive.build, archive.install
 
-  If an argument is provided, it should be a local path or a URL to a
+  If an argument is provided, it should be a local path to a
   prebuilt archive, a Git repository, a GitHub repository, or a Hex
   package.
 
       mix archive.install archive.ez
       mix archive.install path/to/archive.ez
-      mix archive.install https://example.com/my_archive.ez
       mix archive.install git https://path/to/git/repo
       mix archive.install git https://path/to/git/repo branch git_branch
       mix archive.install git https://path/to/git/repo tag git_tag
@@ -35,13 +34,12 @@ defmodule Mix.Tasks.Archive.Install do
       mix some_task
 
   Note that installing via Git, GitHub, or Hex fetches the source
-  of the archive and builds it, while using a URL or a local path
-  fetches a pre-built archive.
+  of the archive and builds it, while using local path uses a pre-built archive.
 
   ## Command line options
 
     * `--sha512` - checks the archive matches the given SHA-512 checksum. Only
-      applies to installations via URL or local path
+      applies to installations via a local path
 
     * `--force` - forces installation without a shell prompt; primarily
       intended for automation in build systems like Make
@@ -54,9 +52,6 @@ defmodule Mix.Tasks.Archive.Install do
 
     * `--organization` - specifies an organization to use if fetching the package
       from a private Hex repository
-
-    * `--timeout` - sets a request timeout in milliseconds for fetching
-      archives from URLs. Default is 60 seconds
 
   """
 
@@ -77,16 +72,23 @@ defmodule Mix.Tasks.Archive.Install do
   end
 
   @impl true
-  def check_install_spec({local_or_url, path_or_url} = _install_spec, _opts)
-      when local_or_url in [:local, :url] do
-    if Path.extname(path_or_url) == ".ez" do
-      :ok
-    else
-      {:error, "Expected a local file path or a file URL ending in \".ez\"."}
-    end
+  def check_install_spec({:local, path} = _install_spec, _opts) do
+    check_extname(path)
+  end
+
+  def check_install_spec({:url, url} = _install_spec, _opts) do
+    check_extname(url)
   end
 
   def check_install_spec(_, _), do: :ok
+
+  defp check_extname(path_or_url) do
+    if Path.extname(path_or_url) == ".ez" do
+      :ok
+    else
+      {:error, "Expected a local file path ending in \".ez\"."}
+    end
+  end
 
   @impl true
   def find_previous_versions(src) do
@@ -105,7 +107,7 @@ defmodule Mix.Tasks.Archive.Install do
 
   @impl true
   def install(basename, contents, previous) do
-    ez_path = Path.join(Mix.Local.path_for(:archive), basename)
+    ez_path = Path.join(Mix.path_for(:archives), basename)
     dir_dest = resolve_destination(ez_path, contents)
 
     remove_previous_versions(previous)
@@ -122,7 +124,7 @@ defmodule Mix.Tasks.Archive.Install do
 
   @impl true
   def build(_install_spec, _opts) do
-    src = Mix.Local.name_for(:archive, Mix.Project.config())
+    src = Mix.Local.name_for(:archives, Mix.Project.config())
     previous = find_previous_versions(src)
 
     Enum.each(previous, fn path ->
@@ -147,7 +149,7 @@ defmodule Mix.Tasks.Archive.Install do
   end
 
   defp archives(name) do
-    Mix.Local.path_for(:archive)
+    Mix.path_for(:archives)
     |> Path.join(name)
     |> Path.wildcard()
   end

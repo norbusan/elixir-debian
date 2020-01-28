@@ -18,13 +18,15 @@ import(Meta, Ref, Opts, E) ->
         {Added1, Funs} = import_functions(Meta, Ref, Opts, E),
         {Added2, Macs} = import_macros(false, Meta, Ref, Opts, E),
         {Funs, Macs, Added1 or Added2};
+      {only, Other} ->
+        elixir_errors:form_error(Meta, E, ?MODULE, {invalid_option, only, Other});
       false ->
         {Added1, Funs} = import_functions(Meta, Ref, Opts, E),
         {Added2, Macs} = import_macros(false, Meta, Ref, Opts, E),
         {Funs, Macs, Added1 or Added2}
     end,
 
-  record_warn(Meta, Ref, Opts, Added, E),
+  elixir_env:trace({import, [{imported, Added} | Meta], Ref, Opts}, E),
   {Functions, Macros}.
 
 import_functions(Meta, Ref, Opts, E) ->
@@ -43,22 +45,6 @@ import_macros(Force, Meta, Ref, Opts, E) ->
         []
     end
   end).
-
-record_warn(Meta, Ref, Opts, Added, E) ->
-  Warn =
-    case keyfind(warn, Opts) of
-      {warn, false} -> false;
-      {warn, true} -> true;
-      false -> not lists:keymember(context, 1, Meta)
-    end,
-
-  Only =
-    case keyfind(only, Opts) of
-      {only, List} when is_list(List) -> List;
-      _ -> []
-    end,
-
-  elixir_lexical:record_import(Ref, Only, ?line(Meta), Added and Warn, ?key(E, lexical_tracker)).
 
 %% Calculates the imports based on only and except
 
@@ -93,7 +79,9 @@ calculate(Meta, Key, Opts, Old, File, Existing) ->
           case keyfind(Key, Old) of
             false -> remove_underscored(Existing()) -- Except;
             {Key, OldImports} -> OldImports -- Except
-          end
+          end;
+        {except, Other} ->
+          elixir_errors:form_error(Meta, File, ?MODULE, {invalid_option, except, Other})
       end
   end,
 
@@ -183,6 +171,11 @@ format_error({invalid_option, Option}) ->
   Message = "invalid :~s option for import, expected a keyword list with integer values",
   io_lib:format(Message, [Option]);
 
+format_error({invalid_option, Option, Value}) ->
+  Message = "invalid :~s option for import, expected value to be an atom :functions, :macros"
+  ", or a list literal, got: ~s",
+  io_lib:format(Message, [Option, 'Elixir.Macro':to_string(Value)]);
+
 format_error({special_form_conflict, {Receiver, Name, Arity}}) ->
   io_lib:format("cannot import ~ts.~ts/~B because it conflicts with Elixir special forms",
     [elixir_aliases:inspect(Receiver), Name, Arity]);
@@ -206,7 +199,7 @@ intersection([H | T], All) ->
 
 intersection([], _All) -> [].
 
-%% Internal funs that are never imported etc.
+%% Internal funs that are never imported, and the like
 
 remove_underscored(List) ->
   lists:filter(fun({Name, _}) ->

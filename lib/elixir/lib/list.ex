@@ -1,19 +1,6 @@
 defmodule List do
   @moduledoc """
-  Functions that work on (linked) lists.
-
-  Many of the functions provided for lists, which implement
-  the `Enumerable` protocol, are found in the `Enum` module.
-
-  Additionally, the following functions and operators for lists are
-  found in `Kernel`:
-
-    * `++/2`
-    * `--/2`
-    * `hd/1`
-    * `tl/1`
-    * `in/2`
-    * `length/1`
+  Linked lists hold zero, one, or more elements in the choosen order.
 
   Lists in Elixir are specified between square brackets:
 
@@ -69,6 +56,17 @@ defmodule List do
   time because they need to iterate through every element of the list, but
   `first/1` will run in constant time because it only needs the first element.
 
+  Lists also implement the `Enumerable` protocol, so many functions to work with
+  lists are found in the `Enum` module. Additionally, the following functions and
+  operators for lists are found in `Kernel`:
+
+    * `++/2`
+    * `--/2`
+    * `hd/1`
+    * `tl/1`
+    * `in/2`
+    * `length/1`
+
   ## Charlists
 
   If a list is made of non-negative integers, where each integer represents a
@@ -90,10 +88,23 @@ defmodule List do
       iex> 'abc'
       'abc'
 
+  Even though the representation changed, the raw data does remain a list of
+  numbers, which can be handled as such:
+
+      iex> inspect('abc', charlists: :as_list)
+      "[97, 98, 99]"
+      iex> Enum.map('abc', fn num -> 1000 + num end)
+      [1097, 1098, 1099]
+
+  You can use the `IEx.Helpers.i/1` helper to get a condensed rundown on
+  charlists in IEx when you encounter them, which shows you the type, description
+  and also the raw representation in one single summary.
+
   The rationale behind this behaviour is to better support
   Erlang libraries which may return text as charlists
-  instead of Elixir strings. One example of such functions
-  is `Application.loaded_applications/0`:
+  instead of Elixir strings. In Erlang, charlists are the default
+  way of handling strings, while in Elixir it's binaries. One
+  example of such functions is `Application.loaded_applications/0`:
 
       Application.loaded_applications()
       #=>  [
@@ -846,6 +857,8 @@ defmodule List do
 
   Inlined by the compiler.
 
+  The base needs to be between `2` and `36`.
+
   ## Examples
 
       iex> List.to_integer('3FF', 16)
@@ -885,7 +898,7 @@ defmodule List do
     * a list containing one of these three elements
 
   Notice that this function expects a list of integers representing
-  UTF-8 code points. If you have a list of bytes, you must instead use
+  Unicode code points. If you have a list of bytes, you must instead use
   the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
 
   ## Examples
@@ -936,11 +949,11 @@ defmodule List do
   end
 
   @doc """
-  Converts a list of integers representing code points, lists or
+  Converts a list of integers representing Unicode code points, lists or
   strings into a charlist.
 
   Notice that this function expects a list of integers representing
-  UTF-8 code points. If you have a list of bytes, you must instead use
+  Unicode code points. If you have a list of bytes, you must instead use
   the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
 
   ## Examples

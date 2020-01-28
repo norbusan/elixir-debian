@@ -39,6 +39,20 @@ defmodule Mix.ProjectTest do
       assert Mix.Project.build_path(build_per_environment: false) ==
                Path.join(File.cwd!(), "_build/rpi3_shared")
     end
+
+    test "considers MIX_BUILD_PATH" do
+      System.put_env("MIX_BUILD_PATH", "_build")
+      assert Mix.Project.build_path() == "_build"
+    after
+      System.delete_env("MIX_BUILD_PATH")
+    end
+
+    test "considers MIX_DEPS_PATH" do
+      System.put_env("MIX_DEPS_PATH", "test_deps_path")
+      assert Mix.Project.deps_path() == Path.join(File.cwd!(), "test_deps_path")
+    after
+      System.delete_env("MIX_DEPS_PATH")
+    end
   end
 
   test "push and pop projects" do

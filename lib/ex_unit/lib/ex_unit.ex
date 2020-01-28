@@ -113,13 +113,13 @@ defmodule ExUnit do
 
   defmodule TestModule do
     @moduledoc """
-    A struct that keeps information about the test case.
+    A struct that keeps information about the test module.
 
     It is received by formatters and contains the following fields:
 
-      * `:name`  - the test case name
+      * `:name`  - the test module name
       * `:state` - the test error state (see `t:ExUnit.state/0`)
-      * `:tests` - all tests for this case
+      * `:tests` - all tests in this module
 
     """
     defstruct [:name, :state, tests: []]
@@ -222,8 +222,14 @@ defmodule ExUnit do
       and print them on test failure. Can be overridden for individual tests via
       `@tag capture_log: false`. Defaults to `false`;
 
-    * `:colors` - a keyword list of colors to be used by some formatters.
-      The only option so far is `[enabled: boolean]` which defaults to `IO.ANSI.enabled?/0`;
+    * `:colors` - a keyword list of color options to be used by some formatters:
+      * `:enabled` - boolean option to enable colors, defaults to `IO.ANSI.enabled?/0`;
+      * `:diff_insert` - color of the insertions on diffs, defaults to `:green`;
+      * `:diff_insert_whitespace` - color of the whitespace insertions on diffs,
+        defaults to `IO.ANSI.color_background(2, 0, 0)`;
+      * `:diff_delete` - color of the deletiopns on diffs, defaults to `:red`;
+      * `:diff_delete_whitespace` - color of the whitespace deletions on diffs,
+        defaults to `IO.ANSI.color_background(0, 2, 0)`;
 
     * `:exclude` - specifies which tests are run by skipping tests that match the
       filter;
@@ -247,9 +253,6 @@ defmodule ExUnit do
     * `:max_failures` - the suite stops evaluating tests when this number of test failures
       is reached. All tests within a module that fail when using the `setup_all/1,2` callbacks
       are counted as failures. Defaults to `:infinity`;
-
-    * `:module_load_timeout` - the timeout to be used when loading a test module in milliseconds,
-      defaults to `60_000`;
 
     * `:only_test_ids` - a list of `{module_name, test_name}` tuples that limits
       what tests get run;

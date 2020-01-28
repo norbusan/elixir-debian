@@ -4,7 +4,7 @@
   handle_info/2, terminate/2, code_change/3]).
 -behaviour(gen_server).
 
--define(timeout, 30000).
+-define(timeout, infinity).
 -record(elixir_code_server, {
   required=#{},
   mod_pool={[], [], 0},
@@ -25,7 +25,7 @@ start_link() ->
 
 init(ok) ->
   %% The table where we store module definitions
-  _ = ets:new(elixir_modules, [set, protected, named_table, {read_concurrency, true}]),
+  _ = ets:new(elixir_modules, [set, public, named_table, {read_concurrency, true}]),
   {ok, #elixir_code_server{}}.
 
 handle_call({defmodule, Module, Pid, Tuple}, _From, Config) ->
@@ -83,10 +83,9 @@ handle_call(Request, _From, Config) ->
 handle_cast({register_warning, CompilerPid}, Config) ->
   CompilationStatusCurrent = Config#elixir_code_server.compilation_status,
   CompilationStatusNew = maps:put(CompilerPid, error, CompilationStatusCurrent),
-  CompilerOptions = elixir_config:get(compiler_options),
-  case maps:find(warnings_as_errors, CompilerOptions) of
-    {ok, true} -> {noreply, Config#elixir_code_server{compilation_status=CompilationStatusNew}};
-    _ -> {noreply, Config}
+  case elixir_config:get(warnings_as_errors) of
+    true -> {noreply, Config#elixir_code_server{compilation_status=CompilationStatusNew}};
+    false -> {noreply, Config}
   end;
 
 handle_cast({reset_warnings, CompilerPid}, Config) ->

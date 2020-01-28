@@ -14,7 +14,7 @@ defmodule SystemTest do
     assert is_binary(build_info[:otp_release])
 
     if build_info[:revision] != "" do
-      assert String.length(build_info[:revision]) == 7
+      assert String.length(build_info[:revision]) >= 7
     end
 
     version_file = Path.join([__DIR__, "../../../..", "VERSION"]) |> Path.expand()
@@ -43,7 +43,7 @@ defmodule SystemTest do
   end
 
   test "argv/0" do
-    list = elixir('-e "IO.inspect System.argv" -- -o opt arg1 arg2 --long-opt 10')
+    list = elixir('-e "IO.inspect System.argv()" -- -o opt arg1 arg2 --long-opt 10')
     {args, _} = Code.eval_string(list, [])
     assert args == ["-o", "opt", "arg1", "arg2", "--long-opt", "10"]
   end

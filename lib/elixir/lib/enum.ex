@@ -394,7 +394,7 @@ defmodule Enum do
 
   """
   @spec at(t, index, default) :: element | default
-  def at(enumerable, index, default \\ nil) do
+  def at(enumerable, index, default \\ nil) when is_integer(index) do
     case slice_any(enumerable, index, 1) do
       [value] -> value
       [] -> default
@@ -408,7 +408,7 @@ defmodule Enum do
   @doc false
   @deprecated "Use Enum.chunk_every/3 instead"
   def chunk(enum, n, step) do
-    chunk_every(enum, n, step, nil)
+    chunk_every(enum, n, step, :discard)
   end
 
   @doc false
@@ -471,12 +471,12 @@ defmodule Enum do
   Chunks the `enumerable` with fine grained control when every chunk is emitted.
 
   `chunk_fun` receives the current element and the accumulator and
-  must return `{:cont, element, acc}` to emit the given chunk and
+  must return `{:cont, chunk, acc}` to emit the given chunk and
   continue with accumulator or `{:cont, acc}` to not emit any chunk
   and continue with the return accumulator.
 
   `after_fun` is invoked when iteration is done and must also return
-  `{:cont, element, acc}` or `{:cont, acc}`.
+  `{:cont, chunk, acc}` or `{:cont, acc}`.
 
   Returns a list of lists.
 
@@ -849,7 +849,7 @@ defmodule Enum do
 
   """
   @spec fetch(t, index) :: {:ok, element} | :error
-  def fetch(enumerable, index) do
+  def fetch(enumerable, index) when is_integer(index) do
     case slice_any(enumerable, index, 1) do
       [value] -> {:ok, value}
       [] -> :error
@@ -875,7 +875,7 @@ defmodule Enum do
 
   """
   @spec fetch!(t, index) :: element
-  def fetch!(enumerable, index) do
+  def fetch!(enumerable, index) when is_integer(index) do
     case slice_any(enumerable, index, 1) do
       [value] -> value
       [] -> raise Enum.OutOfBoundsError
@@ -939,14 +939,13 @@ defmodule Enum do
 
   ## Examples
 
-      iex> Enum.find([2, 4, 6], fn x -> rem(x, 2) == 1 end)
-      nil
-
-      iex> Enum.find([2, 4, 6], 0, fn x -> rem(x, 2) == 1 end)
-      0
-
       iex> Enum.find([2, 3, 4], fn x -> rem(x, 2) == 1 end)
       3
+
+      iex> Enum.find([2, 4, 6], fn x -> rem(x, 2) == 1 end)
+      nil
+      iex> Enum.find([2, 4, 6], 0, fn x -> rem(x, 2) == 1 end)
+      0
 
   """
   @spec find(t, default, (element -> any)) :: element | default
@@ -997,7 +996,15 @@ defmodule Enum do
   Similar to `find/3`, but returns the value of the function
   invocation instead of the element itself.
 
+  The return value is considered to be found when the result is truthy
+  (neither `nil` nor `false`).
+
   ## Examples
+
+      iex> Enum.find_value([2, 3, 4], fn x ->
+      ...>   if x > 2, do: x * x
+      ...> end)
+      9
 
       iex> Enum.find_value([2, 4, 6], fn x -> rem(x, 2) == 1 end)
       nil
@@ -1100,6 +1107,53 @@ defmodule Enum do
       end)
 
     {:lists.reverse(list), acc}
+  end
+
+  @doc """
+  Returns a map with keys as unique elements of `enumerable` and values
+  as the count of every element.
+
+  ## Examples
+
+      iex> Enum.frequencies(~w{ant buffalo ant ant buffalo dingo})
+      %{"ant" => 3, "buffalo" => 2, "dingo" => 1}
+
+  """
+  @doc since: "1.10.0"
+  @spec frequencies(t) :: map
+  def frequencies(enumerable) do
+    reduce(enumerable, %{}, fn key, acc ->
+      case acc do
+        %{^key => value} -> %{acc | key => value + 1}
+        %{} -> Map.put(acc, key, 1)
+      end
+    end)
+  end
+
+  @doc """
+  Returns a map with keys as unique elements given by `key_fun` and values
+  as the count of every element.
+
+  ## Examples
+
+      iex> Enum.frequencies_by(~w{aa aA bb cc}, &String.downcase/1)
+      %{"aa" => 2, "bb" => 1, "cc" => 1}
+
+      iex> Enum.frequencies_by(~w{aaa aA bbb cc c}, &String.length/1)
+      %{3 => 2, 2 => 2, 1 => 1}
+
+  """
+  @doc since: "1.10.0"
+  @spec frequencies_by(t, (element -> any)) :: map
+  def frequencies_by(enumerable, key_fun) when is_function(key_fun) do
+    reduce(enumerable, %{}, fn entry, acc ->
+      key = key_fun.(entry)
+
+      case acc do
+        %{^key => value} -> %{acc | key => value + 1}
+        %{} -> Map.put(acc, key, 1)
+      end
+    end)
   end
 
   @doc """
@@ -1300,6 +1354,12 @@ defmodule Enum do
   @spec join(t, String.t()) :: String.t()
   def join(enumerable, joiner \\ "")
 
+  def join(enumerable, "") do
+    enumerable
+    |> map(&entry_to_string(&1))
+    |> IO.iodata_to_binary()
+  end
+
   def join(enumerable, joiner) when is_binary(joiner) do
     reduced =
       reduce(enumerable, :first, fn
@@ -1381,6 +1441,36 @@ defmodule Enum do
   end
 
   @doc """
+  Maps and intersperses the given enumerable in one pass.
+
+  ## Examples
+
+      iex> Enum.map_intersperse([1, 2, 3], :a, &(&1 * 2))
+      [2, :a, 4, :a, 6]
+  """
+  @doc since: "1.10.0"
+  @spec map_intersperse(t, element(), (element -> any())) :: list()
+  def map_intersperse(enumerable, separator, mapper)
+
+  def map_intersperse(enumerable, separator, mapper) when is_list(enumerable) do
+    map_intersperse_list(enumerable, separator, mapper)
+  end
+
+  def map_intersperse(enumerable, separator, mapper) do
+    reduced =
+      reduce(enumerable, :first, fn
+        entry, :first -> [mapper.(entry)]
+        entry, acc -> [mapper.(entry), separator | acc]
+      end)
+
+    if reduced == :first do
+      []
+    else
+      :lists.reverse(reduced)
+    end
+  end
+
+  @doc """
   Maps and joins the given `enumerable` in one pass.
 
   `joiner` can be either a binary or a list and the result will be of
@@ -1400,20 +1490,10 @@ defmodule Enum do
 
   """
   @spec map_join(t, String.t(), (element -> String.Chars.t())) :: String.t()
-  def map_join(enumerable, joiner \\ "", mapper)
-
-  def map_join(enumerable, joiner, mapper) when is_binary(joiner) do
-    reduced =
-      reduce(enumerable, :first, fn
-        entry, :first -> entry_to_string(mapper.(entry))
-        entry, acc -> [acc, joiner | entry_to_string(mapper.(entry))]
-      end)
-
-    if reduced == :first do
-      ""
-    else
-      IO.iodata_to_binary(reduced)
-    end
+  def map_join(enumerable, joiner \\ "", mapper) when is_binary(joiner) do
+    enumerable
+    |> map_intersperse(joiner, &entry_to_string(mapper.(&1)))
+    |> IO.iodata_to_binary()
   end
 
   @doc """
@@ -1450,23 +1530,28 @@ defmodule Enum do
     {:lists.reverse(list), acc}
   end
 
+  @doc false
+  def max(enumerable, empty_fallback) when is_function(empty_fallback, 0) do
+    max(enumerable, &>=/2, empty_fallback)
+  end
+
   @doc """
   Returns the maximal element in the `enumerable` according
   to Erlang's term ordering.
 
-  If multiple elements are considered maximal, the first one that was found
-  is returned.
+  By default, the comparison is done with the `>=` sorter function.
+  If multiple elements are considered maximal, the first one that
+  was found is returned. If you want the last element considered
+  maximal to be returned, the sorter function should not return true
+  for equal elements.
 
-  Calls the provided `empty_fallback` function and returns its value if
-  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+  If the enumerable is empty, the provided `empty_fallback` is called.
+  The default `empty_fallback` raises `Enum.EmptyError`.
 
   ## Examples
 
       iex> Enum.max([1, 2, 3])
       3
-
-      iex> Enum.max([], fn -> 0 end)
-      0
 
   The fact this function uses Erlang's term ordering means that the comparison
   is structural and not semantic. For example:
@@ -1474,31 +1559,50 @@ defmodule Enum do
       iex> Enum.max([~D[2017-03-31], ~D[2017-04-01]])
       ~D[2017-03-31]
 
-  In the example above, `max/1` returned March 31st instead of April 1st
-  because the structural comparison compares the day before the year. This
-  can be addressed by using `max_by/3` and by relying on structures where
-  the most significant digits come first. In this particular case, we can
-  use `Date.to_erl/1` to get a tuple representation with year, month and day
-  fields:
+  In the example above, `max/2` returned March 31st instead of April 1st
+  because the structural comparison compares the day before the year.
+  For this reason, most structs provide a "compare" function, such as
+  `Date.compare/2`, which receives two structs and returns `:lt` (less than),
+  `:eq` (equal), and `:gt` (greater than). If you pass a module as the
+  sorting function, Elixir will automatically use the `compare/2` function
+  of said module:
 
-      iex> Enum.max_by([~D[2017-03-31], ~D[2017-04-01]], &Date.to_erl/1)
+      iex> Enum.max([~D[2017-03-31], ~D[2017-04-01]], Date)
       ~D[2017-04-01]
 
-  For selecting a maximum value out of two consider using `Kernel.max/2`.
+  Finally, if you don't want to raise on empty enumerables, you can pass
+  the empty fallback:
+
+      iex> Enum.max([], &>=/2, fn -> 0 end)
+      0
 
   """
   @spec max(t, (() -> empty_result)) :: element | empty_result when empty_result: any
-  def max(enumerable, empty_fallback \\ fn -> raise Enum.EmptyError end)
-      when is_function(empty_fallback, 0) do
-    aggregate(enumerable, &Kernel.max/2, empty_fallback)
+  @spec max(t, (element, element -> boolean) | module(), (() -> empty_result)) ::
+          element | empty_result
+        when empty_result: any
+  def max(enumerable, sorter \\ &>=/2, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    aggregate(enumerable, max_sort_fun(sorter), empty_fallback)
+  end
+
+  defp max_sort_fun(sorter) when is_function(sorter, 2), do: sorter
+  defp max_sort_fun(module) when is_atom(module), do: &(module.compare(&1, &2) != :lt)
+
+  @doc false
+  def max_by(enumerable, fun, empty_fallback)
+      when is_function(fun, 1) and is_function(empty_fallback, 0) do
+    max_by(enumerable, fun, &>=/2, empty_fallback)
   end
 
   @doc """
   Returns the maximal element in the `enumerable` as calculated
-  by the given function.
+  by the given `fun`.
 
-  If multiple elements are considered maximal, the first one that was found
-  is returned.
+  By default, the comparison is done with the `>=` sorter function.
+  If multiple elements are considered maximal, the first one that
+  was found is returned. If you want the last element considered
+  maximal to be returned, the sorter function should not return true
+  for equal elements.
 
   Calls the provided `empty_fallback` function and returns its value if
   `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
@@ -1511,25 +1615,41 @@ defmodule Enum do
       iex> Enum.max_by(["a", "aa", "aaa", "b", "bbb"], &String.length/1)
       "aaa"
 
+  The fact this function uses Erlang's term ordering means that the
+  comparison is structural and not semantic. Therefore, if you want
+  to compare structs, most structs provide a "compare" function, such as
+  `Date.compare/2`, which receives two structs and returns `:lt` (less than),
+  `:eq` (equal), and `:gt` (greater than). If you pass a module as the
+  sorting function, Elixir will automatically use the `compare/2` function
+  of said module:
+
+      iex> users = [
+      ...>   %{name: "Ellis", birthday: ~D[1943-05-11]},
+      ...>   %{name: "Lovelace", birthday: ~D[1815-12-10]},
+      ...>   %{name: "Turing", birthday: ~D[1912-06-23]}
+      ...> ]
+      iex> Enum.max_by(users, &(&1.birthday), Date)
+      %{name: "Ellis", birthday: ~D[1943-05-11]}
+
+  Finally, if you don't want to raise on empty enumerables, you can pass
+  the empty fallback:
+
       iex> Enum.max_by([], &String.length/1, fn -> nil end)
       nil
 
   """
   @spec max_by(t, (element -> any), (() -> empty_result)) :: element | empty_result
         when empty_result: any
-  def max_by(enumerable, fun, empty_fallback \\ fn -> raise Enum.EmptyError end)
-      when is_function(fun, 1) and is_function(empty_fallback, 0) do
-    first_fun = &{&1, fun.(&1)}
-
-    reduce_fun = fn entry, {_, fun_max} = old ->
-      fun_entry = fun.(entry)
-      if(fun_entry > fun_max, do: {entry, fun_entry}, else: old)
-    end
-
-    case reduce_by(enumerable, first_fun, reduce_fun) do
-      :empty -> empty_fallback.()
-      {entry, _} -> entry
-    end
+  @spec max_by(
+          t,
+          (element -> any),
+          (element, element -> boolean) | module(),
+          (() -> empty_result)
+        ) :: element | empty_result
+        when empty_result: any
+  def max_by(enumerable, fun, sorter \\ &>=/2, empty_fallback \\ fn -> raise Enum.EmptyError end)
+      when is_function(fun, 1) do
+    aggregate_by(enumerable, fun, max_sort_fun(sorter), empty_fallback)
   end
 
   @doc """
@@ -1572,23 +1692,28 @@ defmodule Enum do
     end
   end
 
+  @doc false
+  def min(enumerable, empty_fallback) when is_function(empty_fallback, 0) do
+    min(enumerable, &<=/2, empty_fallback)
+  end
+
   @doc """
   Returns the minimal element in the `enumerable` according
   to Erlang's term ordering.
 
-  If multiple elements are considered minimal, the first one that was found
-  is returned.
+  By default, the comparison is done with the `<=` sorter function.
+  If multiple elements are considered minimal, the first one that
+  was found is returned. If you want the last element considered
+  minimal to be returned, the sorter function should not return true
+  for equal elements.
 
-  Calls the provided `empty_fallback` function and returns its value if
-  `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
+  If the enumerable is empty, the provided `empty_fallback` is called.
+  The default `empty_fallback` raises `Enum.EmptyError`.
 
   ## Examples
 
       iex> Enum.min([1, 2, 3])
       1
-
-      iex> Enum.min([], fn -> 0 end)
-      0
 
   The fact this function uses Erlang's term ordering means that the comparison
   is structural and not semantic. For example:
@@ -1596,31 +1721,50 @@ defmodule Enum do
       iex> Enum.min([~D[2017-03-31], ~D[2017-04-01]])
       ~D[2017-04-01]
 
-  In the example above, `min/1` returned April 1st instead of March 31st
-  because the structural comparison compares the day before the year. This
-  can be addressed by using `min_by/3` and by relying on structures where
-  the most significant digits come first. In this particular case, we can
-  use `Date.to_erl/1` to get a tuple representation with year, month and day
-  fields:
+  In the example above, `min/2` returned April 1st instead of March 31st
+  because the structural comparison compares the day before the year.
+  For this reason, most structs provide a "compare" function, such as
+  `Date.compare/2`, which receives two structs and returns `:lt` (less than),
+  `:eq` (equal), and `:gt` (greater than). If you pass a module as the
+  sorting function, Elixir will automatically use the `compare/2` function
+  of said module:
 
-      iex> Enum.min_by([~D[2017-03-31], ~D[2017-04-01]], &Date.to_erl/1)
+      iex> Enum.min([~D[2017-03-31], ~D[2017-04-01]], Date)
       ~D[2017-03-31]
 
-  For selecting a minimal value out of two consider using `Kernel.min/2`.
+  Finally, if you don't want to raise on empty enumerables, you can pass
+  the empty fallback:
+
+      iex> Enum.min([], fn -> 0 end)
+      0
 
   """
   @spec min(t, (() -> empty_result)) :: element | empty_result when empty_result: any
-  def min(enumerable, empty_fallback \\ fn -> raise Enum.EmptyError end)
-      when is_function(empty_fallback, 0) do
-    aggregate(enumerable, &Kernel.min/2, empty_fallback)
+  @spec min(t, (element, element -> boolean) | module(), (() -> empty_result)) ::
+          element | empty_result
+        when empty_result: any
+  def min(enumerable, sorter \\ &<=/2, empty_fallback \\ fn -> raise Enum.EmptyError end) do
+    aggregate(enumerable, min_sort_fun(sorter), empty_fallback)
+  end
+
+  defp min_sort_fun(sorter) when is_function(sorter, 2), do: sorter
+  defp min_sort_fun(module) when is_atom(module), do: &(module.compare(&1, &2) != :gt)
+
+  @doc false
+  def min_by(enumerable, fun, empty_fallback)
+      when is_function(fun, 1) and is_function(empty_fallback, 0) do
+    min_by(enumerable, fun, &<=/2, empty_fallback)
   end
 
   @doc """
   Returns the minimal element in the `enumerable` as calculated
-  by the given function.
+  by the given `fun`.
 
-  If multiple elements are considered minimal, the first one that was found
-  is returned.
+  By default, the comparison is done with the `<=` sorter function.
+  If multiple elements are considered minimal, the first one that
+  was found is returned. If you want the last element considered
+  minimal to be returned, the sorter function should not return true
+  for equal elements.
 
   Calls the provided `empty_fallback` function and returns its value if
   `enumerable` is empty. The default `empty_fallback` raises `Enum.EmptyError`.
@@ -1633,25 +1777,41 @@ defmodule Enum do
       iex> Enum.min_by(["a", "aa", "aaa", "b", "bbb"], &String.length/1)
       "a"
 
+  The fact this function uses Erlang's term ordering means that the
+  comparison is structural and not semantic. Therefore, if you want
+  to compare structs, most structs provide a "compare" function, such as
+  `Date.compare/2`, which receives two structs and returns `:lt` (less than),
+  `:eq` (equal), and `:gt` (greater than). If you pass a module as the
+  sorting function, Elixir will automatically use the `compare/2` function
+  of said module:
+
+      iex> users = [
+      ...>   %{name: "Ellis", birthday: ~D[1943-05-11]},
+      ...>   %{name: "Lovelace", birthday: ~D[1815-12-10]},
+      ...>   %{name: "Turing", birthday: ~D[1912-06-23]}
+      ...> ]
+      iex> Enum.min_by(users, &(&1.birthday), Date)
+      %{name: "Lovelace", birthday: ~D[1815-12-10]}
+
+  Finally, if you don't want to raise on empty enumerables, you can pass
+  the empty fallback:
+
       iex> Enum.min_by([], &String.length/1, fn -> nil end)
       nil
 
   """
   @spec min_by(t, (element -> any), (() -> empty_result)) :: element | empty_result
         when empty_result: any
-  def min_by(enumerable, fun, empty_fallback \\ fn -> raise Enum.EmptyError end)
-      when is_function(fun, 1) and is_function(empty_fallback, 0) do
-    first_fun = &{&1, fun.(&1)}
-
-    reduce_fun = fn entry, {_, fun_min} = old ->
-      fun_entry = fun.(entry)
-      if(fun_entry < fun_min, do: {entry, fun_entry}, else: old)
-    end
-
-    case reduce_by(enumerable, first_fun, reduce_fun) do
-      :empty -> empty_fallback.()
-      {entry, _} -> entry
-    end
+  @spec min_by(
+          t,
+          (element -> any),
+          (element, element -> boolean) | module(),
+          (() -> empty_result)
+        ) :: element | empty_result
+        when empty_result: any
+  def min_by(enumerable, fun, sorter \\ &<=/2, empty_fallback \\ fn -> raise Enum.EmptyError end)
+      when is_function(fun, 1) do
+    aggregate_by(enumerable, fun, min_sort_fun(sorter), empty_fallback)
   end
 
   @doc """
@@ -1682,15 +1842,15 @@ defmodule Enum do
   end
 
   def min_max(enumerable, empty_fallback) when is_function(empty_fallback, 0) do
-    first_fun = &{&1, &1}
+    first_fun = &[&1 | &1]
 
-    reduce_fun = fn entry, {min, max} ->
-      {Kernel.min(min, entry), Kernel.max(max, entry)}
+    reduce_fun = fn entry, [min | max] ->
+      [Kernel.min(min, entry) | Kernel.max(max, entry)]
     end
 
     case reduce_by(enumerable, first_fun, reduce_fun) do
       :empty -> empty_fallback.()
-      entry -> entry
+      [min | max] -> {min, max}
     end
   end
 
@@ -1722,18 +1882,18 @@ defmodule Enum do
       when is_function(fun, 1) and is_function(empty_fallback, 0) do
     first_fun = fn entry ->
       fun_entry = fun.(entry)
-      {{entry, entry}, {fun_entry, fun_entry}}
+      {entry, entry, fun_entry, fun_entry}
     end
 
-    reduce_fun = fn entry, {{prev_min, prev_max}, {fun_min, fun_max}} = acc ->
+    reduce_fun = fn entry, {prev_min, prev_max, fun_min, fun_max} = acc ->
       fun_entry = fun.(entry)
 
       cond do
         fun_entry < fun_min ->
-          {{entry, prev_max}, {fun_entry, fun_max}}
+          {entry, prev_max, fun_entry, fun_max}
 
         fun_entry > fun_max ->
-          {{prev_min, entry}, {fun_min, fun_entry}}
+          {prev_min, entry, fun_min, fun_entry}
 
         true ->
           acc
@@ -1742,7 +1902,7 @@ defmodule Enum do
 
     case reduce_by(enumerable, first_fun, reduce_fun) do
       :empty -> empty_fallback.()
-      {entry, _} -> entry
+      {min, max, _, _} -> {min, max}
     end
   end
 
@@ -1816,23 +1976,28 @@ defmodule Enum do
 
   ## Examples
 
+  The examples below use the `:exrop` pseudorandom algorithm since it's
+  the default from Erlang/OTP 20, however if you are using Erlang/OTP 22
+  or above then `:exsss` is the default algorithm. If you are using `:exsplus`,
+  then please update, as this algorithm is deprecated since Erlang/OTP 20.
+
       # Although not necessary, let's seed the random algorithm
-      iex> :rand.seed(:exsplus, {101, 102, 103})
+      iex> :rand.seed(:exrop, {101, 102, 103})
+      iex> Enum.random([1, 2, 3])
+      3
       iex> Enum.random([1, 2, 3])
       2
-      iex> Enum.random([1, 2, 3])
-      1
       iex> Enum.random(1..1_000)
-      776
+      846
 
   """
   @spec random(t) :: element
   def random(enumerable)
 
   def random(enumerable) when is_list(enumerable) do
-    case take_random(enumerable, 1) do
-      [] -> raise Enum.EmptyError
-      [elem] -> elem
+    case length(enumerable) do
+      0 -> raise Enum.EmptyError
+      length -> enumerable |> drop_list(random_integer(0, length - 1)) |> hd()
     end
   end
 
@@ -1893,14 +2058,12 @@ defmodule Enum do
   end
 
   def reduce(enumerable, fun) do
-    result =
-      Enumerable.reduce(enumerable, {:cont, :first}, fn
-        x, :first -> {:cont, {:acc, x}}
-        x, {:acc, acc} -> {:cont, {:acc, fun.(x, acc)}}
-      end)
-      |> elem(1)
-
-    case result do
+    Enumerable.reduce(enumerable, {:cont, :first}, fn
+      x, {:acc, acc} -> {:cont, {:acc, fun.(x, acc)}}
+      x, :first -> {:cont, {:acc, x}}
+    end)
+    |> elem(1)
+    |> case do
       :first -> raise Enum.EmptyError
       {:acc, acc} -> acc
     end
@@ -2132,12 +2295,17 @@ defmodule Enum do
 
   ## Examples
 
+  The examples below use the `:exrop` pseudorandom algorithm since it's
+  the default from Erlang/OTP 20, however if you are using Erlang/OTP 22
+  or above then `:exsss` is the default algorithm. If you are using `:exsplus`,
+  then please update, as this algorithm is deprecated since Erlang/OTP 20.
+
       # Although not necessary, let's seed the random algorithm
-      iex> :rand.seed(:exsplus, {1, 2, 3})
+      iex> :rand.seed(:exrop, {1, 2, 3})
       iex> Enum.shuffle([1, 2, 3])
-      [2, 1, 3]
+      [3, 1, 2]
       iex> Enum.shuffle([1, 2, 3])
-      [2, 3, 1]
+      [1, 3, 2]
 
   """
   @spec shuffle(t) :: list
@@ -2187,7 +2355,7 @@ defmodule Enum do
       iex> Enum.slice(1..10, 11..20)
       []
 
-      # index_range.first is greater than index_range.last
+      # first is greater than last
       iex> Enum.slice(1..10, 6..5)
       []
 
@@ -2196,14 +2364,18 @@ defmodule Enum do
   @spec slice(t, Range.t()) :: list
   def slice(enumerable, index_range)
 
+  def slice(enumerable, first..last) when last >= first and last >= 0 do
+    slice_any(enumerable, first, last - first + 1)
+  end
+
   def slice(enumerable, first..last) do
     {count, fun} = slice_count_and_fun(enumerable)
-    corr_first = if first >= 0, do: first, else: first + count
-    corr_last = if last >= 0, do: last, else: last + count
-    amount = corr_last - corr_first + 1
+    first = if first >= 0, do: first, else: first + count
+    last = if last >= 0, do: last, else: last + count
+    amount = last - first + 1
 
-    if corr_first >= 0 and corr_first < count and amount > 0 do
-      fun.(corr_first, Kernel.min(amount, count - corr_first))
+    if first >= 0 and first < count and amount > 0 do
+      fun.(first, Kernel.min(amount, count - first))
     else
       []
     end
@@ -2259,7 +2431,8 @@ defmodule Enum do
   @doc """
   Sorts the `enumerable` according to Erlang's term ordering.
 
-  Uses the merge sort algorithm.
+  This function uses the merge sort algorithm. Do not use this
+  function to sort structs, see `sort/2` for more information.
 
   ## Examples
 
@@ -2280,7 +2453,8 @@ defmodule Enum do
   Sorts the `enumerable` by the given function.
 
   This function uses the merge sort algorithm. The given function should compare
-  two arguments, and return `true` if the first argument precedes the second one.
+  two arguments, and return `true` if the first argument precedes or is in the
+  same place as the second one.
 
   ## Examples
 
@@ -2300,30 +2474,88 @@ defmodule Enum do
       iex> Enum.sort(["some", "kind", "of", "monster"], &(byte_size(&1) < byte_size(&2)))
       ["of", "kind", "some", "monster"]
 
+  ## Ascending and descending
+
+  `sort/2` allows a developer to pass `:asc` or `:desc` as the sorting
+  function, which is a convenience for `<=/2` and `>=/2` respectively.
+
+      iex> Enum.sort([2, 3, 1], :asc)
+      [1, 2, 3]
+      iex> Enum.sort([2, 3, 1], :desc)
+      [3, 2, 1]
+
+  ## Sorting structs
+
+  Do not use `</2`, `<=/2`, `>/2`, `>=/2` and friends when sorting structs.
+  That's because the built-in operators above perform structural comparison
+  and not a semantic one. Imagine we sort the following list of dates:
+
+      iex> dates = [~D[2019-01-01], ~D[2020-03-02], ~D[2019-06-06]]
+      iex> Enum.sort(dates)
+      [~D[2019-01-01], ~D[2020-03-02], ~D[2019-06-06]]
+
+  Notice the returned result is incorrect, because `sort/1` by default uses
+  `<=/2`, which will compare their structure. When comparing structures, the
+  fields are compared in alphabetical order, which means the dates above will
+  be compared by `day`, `month` and then `year`, which is the opposite of what
+  we want.
+
+  For this reason, most structs provide a "compare" function, such as
+  `Date.compare/2`, which receives two structs and returns `:lt` (less than),
+  `:eq` (equal), and `:gt` (greather than). If you pass a module as the
+  sorting function, Elixir will automatically use the `compare/2` function
+  of said module:
+
+      iex> dates = [~D[2019-01-01], ~D[2020-03-02], ~D[2019-06-06]]
+      iex> Enum.sort(dates, Date)
+      [~D[2019-01-01], ~D[2019-06-06], ~D[2020-03-02]]
+
+  To retrieve all dates in descending order, you can wrap the module in
+  a tuple with `:asc` or `:desc` as first element:
+
+      iex> dates = [~D[2019-01-01], ~D[2020-03-02], ~D[2019-06-06]]
+      iex> Enum.sort(dates, {:asc, Date})
+      [~D[2019-01-01], ~D[2019-06-06], ~D[2020-03-02]]
+      iex> dates = [~D[2019-01-01], ~D[2020-03-02], ~D[2019-06-06]]
+      iex> Enum.sort(dates, {:desc, Date})
+      [~D[2020-03-02], ~D[2019-06-06], ~D[2019-01-01]]
+
   """
-  @spec sort(t, (element, element -> boolean)) :: list
+  @spec sort(
+          t,
+          (element, element -> boolean) | :asc | :desc | module() | {:asc | :desc, module()}
+        ) :: list
   def sort(enumerable, fun) when is_list(enumerable) do
-    :lists.sort(fun, enumerable)
+    :lists.sort(to_sort_fun(fun), enumerable)
   end
 
   def sort(enumerable, fun) do
+    fun = to_sort_fun(fun)
+
     reduce(enumerable, [], &sort_reducer(&1, &2, fun))
     |> sort_terminator(fun)
   end
+
+  defp to_sort_fun(sorter) when is_function(sorter, 2), do: sorter
+  defp to_sort_fun(:asc), do: &<=/2
+  defp to_sort_fun(:desc), do: &>=/2
+  defp to_sort_fun(module) when is_atom(module), do: &(module.compare(&1, &2) != :gt)
+  defp to_sort_fun({:asc, module}) when is_atom(module), do: &(module.compare(&1, &2) != :gt)
+  defp to_sort_fun({:desc, module}) when is_atom(module), do: &(module.compare(&1, &2) != :lt)
 
   @doc """
   Sorts the mapped results of the `enumerable` according to the provided `sorter`
   function.
 
-  This function maps each element of the `enumerable` using the provided `mapper`
-  function. The enumerable is then sorted by the mapped elements
-  using the `sorter` function, which defaults to `Kernel.<=/2`.
+  This function maps each element of the `enumerable` using the
+  provided `mapper` function. The enumerable is then sorted by
+  the mapped elements using the `sorter` function, which defaults
+  to `Kernel.<=/2`.
 
   `sort_by/3` differs from `sort/2` in that it only calculates the
   comparison value for each element in the enumerable once instead of
-  once for each element in each comparison.
-  If the same function is being called on both elements, it's also more
-  compact to use `sort_by/3`.
+  once for each element in each comparison. If the same function is
+  being called on both elements, it's more efficient to use `sort_by/3`.
 
   ## Examples
 
@@ -2332,28 +2564,78 @@ defmodule Enum do
       iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1)
       ["of", "some", "kind", "monster"]
 
-  Using a custom `sorter` to override the order:
-
-      iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1, &>=/2)
-      ["monster", "some", "kind", "of"]
-
   Sorting by multiple properties - first by size, then by first letter
   (this takes advantage of the fact that tuples are compared element-by-element):
 
       iex> Enum.sort_by(["some", "kind", "of", "monster"], &{byte_size(&1), String.first(&1)})
       ["of", "kind", "some", "monster"]
 
+  Similar to `sort/2`, you can pass a custom sorter:
+
+      iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1, &>=/2)
+      ["monster", "some", "kind", "of"]
+
+  Or use `:asc` and `:desc`:
+
+      iex> Enum.sort_by(["some", "kind", "of", "monster"], &byte_size/1, :desc)
+      ["monster", "some", "kind", "of"]
+
+  As in `sort/2`, avoid using the default sorting function to sort structs, as by default
+  it performs structural comparison instead of a semantic one. In such cases,
+  you shall pass a sorting function as third element or any module that implements
+  a `compare/2` function. For example, to sort users by their birthday in both
+  ascending and descending order respectively:
+
+      iex> users = [
+      ...>   %{name: "Ellis", birthday: ~D[1943-05-11]},
+      ...>   %{name: "Lovelace", birthday: ~D[1815-12-10]},
+      ...>   %{name: "Turing", birthday: ~D[1912-06-23]}
+      ...> ]
+      iex> Enum.sort_by(users, &(&1.birthday), Date)
+      [
+        %{name: "Lovelace", birthday: ~D[1815-12-10]},
+        %{name: "Turing", birthday: ~D[1912-06-23]},
+        %{name: "Ellis", birthday: ~D[1943-05-11]}
+      ]
+      iex> Enum.sort_by(users, &(&1.birthday), {:desc, Date})
+      [
+        %{name: "Ellis", birthday: ~D[1943-05-11]},
+        %{name: "Turing", birthday: ~D[1912-06-23]},
+        %{name: "Lovelace", birthday: ~D[1815-12-10]}
+      ]
+
   """
-  @spec sort_by(t, (element -> mapped_element), (mapped_element, mapped_element -> boolean)) ::
+  @spec sort_by(
+          t,
+          (element -> mapped_element),
+          (element, element -> boolean) | :asc | :desc | module() | {:asc | :desc, module()}
+        ) ::
           list
         when mapped_element: element
-
   def sort_by(enumerable, mapper, sorter \\ &<=/2) do
     enumerable
     |> map(&{&1, mapper.(&1)})
-    |> sort(&sorter.(elem(&1, 1), elem(&2, 1)))
+    |> sort(to_sort_by_fun(sorter))
     |> map(&elem(&1, 0))
   end
+
+  defp to_sort_by_fun(sorter) when is_function(sorter, 2),
+    do: &sorter.(elem(&1, 1), elem(&2, 1))
+
+  defp to_sort_by_fun(:asc),
+    do: &(elem(&1, 1) <= elem(&2, 1))
+
+  defp to_sort_by_fun(:desc),
+    do: &(elem(&1, 1) >= elem(&2, 1))
+
+  defp to_sort_by_fun(module) when is_atom(module),
+    do: &(module.compare(elem(&1, 1), elem(&2, 1)) != :gt)
+
+  defp to_sort_by_fun({:asc, module}) when is_atom(module),
+    do: &(module.compare(elem(&1, 1), elem(&2, 1)) != :gt)
+
+  defp to_sort_by_fun({:desc, module}) when is_atom(module),
+    do: &(module.compare(elem(&1, 1), elem(&2, 1)) != :lt)
 
   @doc """
   Splits the `enumerable` into two enumerables, leaving `count`
@@ -2385,11 +2667,11 @@ defmodule Enum do
 
   """
   @spec split(t, integer) :: {list, list}
-  def split(enumerable, count) when is_list(enumerable) and count >= 0 do
+  def split(enumerable, count) when is_list(enumerable) and is_integer(count) and count >= 0 do
     split_list(enumerable, count, [])
   end
 
-  def split(enumerable, count) when count >= 0 do
+  def split(enumerable, count) when is_integer(count) and count >= 0 do
     {_, list1, list2} =
       reduce(enumerable, {count, [], []}, fn entry, {counter, acc1, acc2} ->
         if counter > 0 do
@@ -2402,7 +2684,7 @@ defmodule Enum do
     {:lists.reverse(list1), :lists.reverse(list2)}
   end
 
-  def split(enumerable, count) when count < 0 do
+  def split(enumerable, count) when is_integer(count) and count < 0 do
     split_reverse_list(reverse(enumerable), -count, [])
   end
 
@@ -2564,39 +2846,40 @@ defmodule Enum do
   ## Examples
 
       # Although not necessary, let's seed the random algorithm
-      iex> :rand.seed(:exsplus, {1, 2, 3})
+      iex> :rand.seed(:exrop, {1, 2, 3})
       iex> Enum.take_random(1..10, 2)
-      [5, 4]
+      [7, 2]
       iex> Enum.take_random(?a..?z, 5)
-      'ipybz'
+      'hypnt'
 
   """
   @spec take_random(t, non_neg_integer) :: list
   def take_random(enumerable, count)
   def take_random(_enumerable, 0), do: []
 
-  def take_random(enumerable, count) when is_integer(count) and count > 128 do
-    reducer = fn elem, {idx, sample} ->
-      jdx = random_integer(0, idx)
+  def take_random([], _), do: []
+  def take_random([h | t], 1), do: take_random_list_one(t, h, 1)
 
-      cond do
-        idx < count ->
-          value = Map.get(sample, jdx)
-          {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
+  def take_random(enumerable, 1) do
+    enumerable
+    |> reduce([], fn
+      x, [current | index] ->
+        if :rand.uniform(index + 1) == 1 do
+          [x | index + 1]
+        else
+          [current | index + 1]
+        end
 
-        jdx < count ->
-          {idx + 1, Map.put(sample, jdx, elem)}
-
-        true ->
-          {idx + 1, sample}
-      end
+      x, [] ->
+        [x | 1]
+    end)
+    |> case do
+      [] -> []
+      [current | _index] -> [current]
     end
-
-    {size, sample} = reduce(enumerable, {0, %{}}, reducer)
-    take_random(sample, Kernel.min(count, size), [])
   end
 
-  def take_random(enumerable, count) when is_integer(count) and count > 0 do
+  def take_random(enumerable, count) when is_integer(count) and count in 0..128 do
     sample = Tuple.duplicate(nil, count)
 
     reducer = fn elem, {idx, sample} ->
@@ -2619,12 +2902,43 @@ defmodule Enum do
     sample |> Tuple.to_list() |> take(Kernel.min(count, size))
   end
 
+  def take_random(enumerable, count) when is_integer(count) and count >= 0 do
+    reducer = fn elem, {idx, sample} ->
+      jdx = random_integer(0, idx)
+
+      cond do
+        idx < count ->
+          value = Map.get(sample, jdx)
+          {idx + 1, Map.put(sample, idx, value) |> Map.put(jdx, elem)}
+
+        jdx < count ->
+          {idx + 1, Map.put(sample, jdx, elem)}
+
+        true ->
+          {idx + 1, sample}
+      end
+    end
+
+    {size, sample} = reduce(enumerable, {0, %{}}, reducer)
+    take_random(sample, Kernel.min(count, size), [])
+  end
+
   defp take_random(_sample, 0, acc), do: acc
 
   defp take_random(sample, position, acc) do
     position = position - 1
     take_random(sample, position, [Map.get(sample, position) | acc])
   end
+
+  defp take_random_list_one([h | t], current, index) do
+    if :rand.uniform(index + 1) == 1 do
+      take_random_list_one(t, h, index + 1)
+    else
+      take_random_list_one(t, current, index + 1)
+    end
+  end
+
+  defp take_random_list_one([], current, _), do: [current]
 
   @doc """
   Takes the elements from the beginning of the `enumerable` while `fun` returns
@@ -2824,8 +3138,7 @@ defmodule Enum do
 
   ## Helpers
 
-  @compile {:inline,
-            aggregate: 3, entry_to_string: 1, reduce: 3, reduce_by: 3, reduce_enumerable: 3}
+  @compile {:inline, entry_to_string: 1, reduce: 3, reduce_by: 3, reduce_enumerable: 3}
 
   defp entry_to_string(entry) when is_binary(entry), do: entry
   defp entry_to_string(entry), do: String.Chars.to_string(entry)
@@ -2839,7 +3152,10 @@ defmodule Enum do
   end
 
   defp aggregate(first..last, fun, _empty) do
-    fun.(first, last)
+    case fun.(first, last) do
+      true -> first
+      false -> last
+    end
   end
 
   defp aggregate(enumerable, fun, empty) do
@@ -2847,8 +3163,14 @@ defmodule Enum do
 
     enumerable
     |> reduce(ref, fn
-      element, ^ref -> element
-      element, acc -> fun.(acc, element)
+      element, ^ref ->
+        element
+
+      element, acc ->
+        case fun.(acc, element) do
+          true -> acc
+          false -> element
+        end
     end)
     |> case do
       ^ref -> empty.()
@@ -2856,8 +3178,35 @@ defmodule Enum do
     end
   end
 
-  defp aggregate_list([head | tail], acc, fun), do: aggregate_list(tail, fun.(acc, head), fun)
+  defp aggregate_list([head | tail], acc, fun) do
+    acc =
+      case fun.(acc, head) do
+        true -> acc
+        false -> head
+      end
+
+    aggregate_list(tail, acc, fun)
+  end
+
   defp aggregate_list([], acc, _fun), do: acc
+
+  defp aggregate_by(enumerable, fun, sorter, empty_fallback) do
+    first_fun = &[&1 | fun.(&1)]
+
+    reduce_fun = fn entry, [_ | fun_ref] = old ->
+      fun_entry = fun.(entry)
+
+      case sorter.(fun_ref, fun_entry) do
+        true -> old
+        false -> [entry | fun_entry]
+      end
+    end
+
+    case reduce_by(enumerable, first_fun, reduce_fun) do
+      :empty -> empty_fallback.()
+      [entry | _] -> entry
+    end
+  end
 
   defp reduce_by([head | tail], first, fun) do
     :lists.foldl(fun, first.(head), tail)
@@ -2869,8 +3218,8 @@ defmodule Enum do
 
   defp reduce_by(enumerable, first, fun) do
     reduce(enumerable, :empty, fn
-      element, {_, _} = acc -> fun.(element, acc)
       element, :empty -> first.(element)
+      element, acc -> fun.(element, acc)
     end)
   end
 
@@ -3001,6 +3350,17 @@ defmodule Enum do
     []
   end
 
+  ## map_intersperse
+
+  defp map_intersperse_list([], _, _),
+    do: []
+
+  defp map_intersperse_list([last], _, mapper),
+    do: [mapper.(last)]
+
+  defp map_intersperse_list([head | rest], separator, mapper),
+    do: [mapper.(head), separator | map_intersperse_list(rest, separator, mapper)]
+
   ## reduce
 
   defp reduce_range_inc(first, first, acc, fun) do
@@ -3076,7 +3436,7 @@ defmodule Enum do
   end
 
   defp slice_any(list, start, amount) when is_list(list) do
-    Enumerable.List.slice(list, start, amount)
+    list |> drop_list(start) |> take_list(amount)
   end
 
   defp slice_any(enumerable, start, amount) do
@@ -3109,7 +3469,8 @@ defmodule Enum do
   end
 
   defp slice_count_and_fun(enumerable) when is_list(enumerable) do
-    {length(enumerable), &Enumerable.List.slice(enumerable, &1, &2)}
+    length = length(enumerable)
+    {length, &Enumerable.List.slice(enumerable, &1, &2, length)}
   end
 
   defp slice_count_and_fun(enumerable) do
@@ -3123,7 +3484,7 @@ defmodule Enum do
             {:cont, {[elem | acc], count + 1}}
           end)
 
-        {count, &Enumerable.List.slice(:lists.reverse(list), &1, &2)}
+        {count, &Enumerable.List.slice(:lists.reverse(list), &1, &2, count)}
     end
   end
 
@@ -3325,10 +3686,15 @@ defimpl Enumerable, for: List do
   def reduce([head | tail], {:cont, acc}, fun), do: reduce(tail, fun.(head, acc), fun)
 
   @doc false
-  def slice([], _start, _count), do: []
-  def slice(_list, _start, 0), do: []
-  def slice([head | tail], 0, count), do: [head | slice(tail, 0, count - 1)]
-  def slice([_head | tail], start, count), do: slice(tail, start - 1, count)
+  def slice(_list, _start, 0, _size), do: []
+  def slice(list, start, count, size) when start + count == size, do: list |> drop(start)
+  def slice(list, start, count, _size), do: list |> drop(start) |> take(count)
+
+  defp drop(list, 0), do: list
+  defp drop([_ | tail], count), do: drop(tail, count - 1)
+
+  defp take(_list, 0), do: []
+  defp take([head | tail], count), do: [head | take(tail, count - 1)]
 end
 
 defimpl Enumerable, for: Map do
@@ -3345,17 +3711,13 @@ defimpl Enumerable, for: Map do
   end
 
   def slice(map) do
-    {:ok, map_size(map), &Enumerable.List.slice(:maps.to_list(map), &1, &2)}
+    size = map_size(map)
+    {:ok, size, &Enumerable.List.slice(:maps.to_list(map), &1, &2, size)}
   end
 
   def reduce(map, acc, fun) do
-    reduce_list(:maps.to_list(map), acc, fun)
+    Enumerable.List.reduce(:maps.to_list(map), acc, fun)
   end
-
-  defp reduce_list(_list, {:halt, acc}, _fun), do: {:halted, acc}
-  defp reduce_list(list, {:suspend, acc}, fun), do: {:suspended, acc, &reduce_list(list, &1, fun)}
-  defp reduce_list([], {:cont, acc}, _fun), do: {:done, acc}
-  defp reduce_list([head | tail], {:cont, acc}, fun), do: reduce_list(tail, fun.(head, acc), fun)
 end
 
 defimpl Enumerable, for: Function do

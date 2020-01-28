@@ -20,7 +20,7 @@ defmodule Port do
       :ok
 
   In the example above, we have created a new port that executes the
-  program `cat`. `cat` is a program available on UNIX systems that
+  program `cat`. `cat` is a program available on Unix-like operating systems that
   receives data from multiple inputs and concatenates them in the output.
 
   After the port was created, we sent it two commands in the form of
@@ -124,20 +124,42 @@ defmodule Port do
   will have its stdin and stdout channels closed but **it won't be automatically
   terminated**.
 
-  While most UNIX command line tools will exit once its communication channels
-  are closed, not all command line applications will do so. While we encourage
-  graceful termination by detecting if stdin/stdout has been closed, we do not
-  always have control over how third-party software terminates. In those cases,
-  you can wrap the application in a script that checks for stdin. Here is such
-  script in Bash:
+  While most Unix command line tools will exit once its communication channels
+  are closed, not all command line applications will do so. You can easily check
+  this by starting the port and then shutting down the VM and inspecting your
+  operating system to see if the port process is still running.
 
-      #!/bin/bash
-      "$@" &
-      pid=$!
-      while read line ; do
-        :
-      done
-      kill -KILL $pid
+  While we encourage graceful termination by detecting if stdin/stdout has been
+  closed, we do not always have control over how third-party software terminates.
+  In those cases, you can wrap the application in a script that checks for stdin.
+  Here is such script in `sh`:
+
+      #!/bin/sh
+
+      # Start the program in the background
+      exec "$@" &
+      pid1=$!
+
+      # Silence warnings from here on
+      exec >/dev/null 2>&1
+
+      # Read from stdin in the background and
+      # kill running program when stdin closes
+      exec 0<&0 $(
+        while read; do :; done
+        kill -KILL $pid1
+      ) &
+      pid2=$!
+
+      # Clean up
+      wait $pid1
+      ret=$?
+      kill -KILL $pid2
+      exit $ret
+
+  Note the program above hijacks stdin, so you won't be able to communicate
+  with the underlying software via stdin (on the positive side, software that
+  reads from stdin typically terminates when stdin closes).
 
   Now instead of:
 

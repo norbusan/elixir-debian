@@ -83,7 +83,7 @@ fetch_definition([Tuple | T], File, Module, Set, Bag, All, Private) ->
       fetch_definition(T, File, Module, Set, Bag, NewAll, NewPrivate)
   catch
     error:badarg ->
-      warn_bodiless_function(Check, Meta, File, Module, Kind, Tuple),
+      check_bodiless_function(Check, Meta, File, Module, Kind, Tuple),
       fetch_definition(T, File, Module, Set, Bag, All, Private)
   end;
 
@@ -210,17 +210,9 @@ run_with_location_change(nil, E, Callback) ->
 run_with_location_change(File, #{file := File} = E, Callback) ->
   Callback(E);
 run_with_location_change(File, E, Callback) ->
-  EL = E#{file := File},
-  Tracker = ?key(E, lexical_tracker),
+  elixir_lexical:with_file(File, E, Callback).
 
-  try
-    elixir_lexical:set_file(File, Tracker),
-    Callback(EL)
-  after
-    elixir_lexical:reset_file(Tracker)
-  end.
-
-def_to_clauses(_Kind, Meta, Args, [], nil, E) ->
+def_to_clauses(_Kind, Meta, Args, [], [], E) ->
   check_args_for_function_head(Meta, Args, E),
   [];
 def_to_clauses(_Kind, Meta, Args, Guards, [{do, Body}], _E) ->
@@ -255,9 +247,9 @@ store_definition(Check, Kind, Meta, Name, Arity, File, Module, Defaults, Clauses
     case ets:lookup(Set, {def, Tuple}) of
       [{_, StoredKind, StoredMeta, StoredFile, StoredCheck, {StoredDefaults, LastHasBody, LastDefaults}}] ->
         check_valid_kind(Meta, File, Name, Arity, Kind, StoredKind),
-        (Check and StoredCheck) andalso
-          check_valid_clause(Meta, File, Name, Arity, Kind, Set, StoredMeta, StoredFile),
         check_valid_defaults(Meta, File, Name, Arity, Kind, Defaults, StoredDefaults, LastDefaults, HasBody, LastHasBody),
+        (Check and StoredCheck) andalso
+          check_valid_clause(Meta, File, Name, Arity, Kind, Set, StoredMeta, StoredFile, Clauses),
 
         {max(Defaults, StoredDefaults), StoredMeta};
       [] ->
@@ -308,7 +300,7 @@ match_defaults([_ | T], Counter, Acc) ->
   match_defaults(T, NewCounter, [default_var(NewCounter) | Acc]).
 
 default_var(Counter) ->
-  {list_to_atom([$x | integer_to_list(Counter)]), [{generated, true}], ?var_context}.
+  {list_to_atom([$x | integer_to_list(Counter)]), [{generated, true}, {version, Counter}], ?var_context}.
 
 %% Validations
 
@@ -317,10 +309,15 @@ check_valid_kind(Meta, File, Name, Arity, Kind, StoredKind) ->
   elixir_errors:form_error(Meta, File, ?MODULE,
     {changed_kind, {Name, Arity, StoredKind, Kind}}).
 
-check_valid_clause(Meta, File, Name, Arity, Kind, Set, StoredMeta, StoredFile) ->
+check_valid_clause(Meta, File, Name, Arity, Kind, Set, StoredMeta, StoredFile, Clauses) ->
   case ets:lookup_element(Set, ?last_def, 2) of
-    none -> ok;
-    {Name, Arity} -> ok;
+    none ->
+      ok;
+    {Name, Arity} when Clauses == [] ->
+      elixir_errors:form_warn(Meta, File, ?MODULE,
+        {late_function_head, {Kind, Name, Arity}});
+    {Name, Arity} ->
+      ok;
     {Name, _} ->
       Relative = elixir_utils:relative_to_cwd(StoredFile),
       elixir_errors:form_warn(Meta, File, ?MODULE,
@@ -345,12 +342,11 @@ check_valid_defaults(Meta, File, Name, Arity, Kind, 0, _, LastDefaults, true, tr
 check_valid_defaults(_Meta, _File, _Name, _Arity, _Kind, 0, _StoredDefaults, _LastDefaults, _HasBody, _LastHasBody) ->
   ok.
 
-warn_bodiless_function(Check, _Meta, _File, Module, _Kind, _Tuple)
+check_bodiless_function(Check, _Meta, _File, Module, _Kind, _Tuple)
     when Check == false; Module == 'Elixir.Module' ->
   ok;
-warn_bodiless_function(_Check, Meta, File, _Module, Kind, Tuple) ->
-  elixir_errors:form_warn(Meta, File, ?MODULE, {function_head, Kind, Tuple}),
-  ok.
+check_bodiless_function(_Check, Meta, File, _Module, Kind, Tuple) ->
+  elixir_errors:form_error(Meta, File, ?MODULE, {function_head, Kind, Tuple}).
 
 check_args_for_function_head(Meta, Args, E) ->
   [begin
@@ -441,6 +437,18 @@ format_error({ungrouped_name, {Kind, Name, Arity, OrigLine, OrigFile}}) ->
 format_error({ungrouped_arity, {Kind, Name, Arity, OrigLine, OrigFile}}) ->
   io_lib:format("clauses with the same name and arity (number of arguments) should be grouped together, \"~ts ~ts/~B\" was previously defined (~ts:~B)",
     [Kind, Name, Arity, OrigFile, OrigLine]);
+
+format_error({late_function_head, {Kind, Name, Arity}}) ->
+  io_lib:format("function head for ~ts ~ts/~B must come at the top of its direct implementation. Instead of:\n"
+    "\n"
+    "    def add(a, b), do: a + b\n"
+    "    def add(a, b)\n"
+    "\n"
+    "one should write:\n"
+    "\n"
+    "    def add(a, b)\n"
+    "    def add(a, b), do: a + b\n",
+    [Kind, Name, Arity]);
 
 format_error({changed_kind, {Name, Arity, Previous, Current}}) ->
   io_lib:format("~ts ~ts/~B already defined as ~ts", [Current, Name, Arity, Previous]);

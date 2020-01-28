@@ -78,12 +78,14 @@ defmodule Logger.TranslatorTest do
     Application.put_env(:logger, :backends, [Logger.TestBackend | backends])
     Application.put_env(:logger, :handle_sasl_reports, true)
 
-    # Restart the app but change the level before to avoid warnings
-    level = Logger.level()
-    Logger.configure(level: :error)
+    # Shutdown the application
     Logger.App.stop()
+
+    # And start it without warnings
+    Application.put_env(:logger, :level, :error)
     Application.start(:logger)
-    Logger.configure(level: level)
+    Application.delete_env(:logger, :level)
+    Logger.configure(level: :debug)
 
     on_exit(fn ->
       Application.put_env(:logger, :backends, backends)
@@ -860,27 +862,6 @@ defmodule Logger.TranslatorTest do
     assert {:stop, [_ | _]} = process_metadata[:crash_reason]
   end
 
-  test "translates Supervisor reports abnormal shutdown in simple_one_for_one" do
-    assert capture_log(:info, fn ->
-             trap = Process.flag(:trap_exit, true)
-             children = [worker(__MODULE__, [], function: :abnormal)]
-             {:ok, pid} = Supervisor.start_link(children, strategy: :simple_one_for_one)
-             {:ok, _pid2} = Supervisor.start_child(pid, [])
-             Process.exit(pid, :normal)
-             receive do: ({:EXIT, ^pid, _} -> :ok)
-             Process.flag(:trap_exit, trap)
-           end) =~ ~r"""
-           \[error\] Children Logger.TranslatorTest of Supervisor #PID<\d+\.\d+\.\d+> \(Supervisor\.Default\) shut down abnormally
-           \*\* \(exit\) :stop
-           Number: 1
-           Start Call: Logger.TranslatorTest.abnormal\(\)
-           """
-
-    assert_receive {:error, _pid, {Logger, ["Process " | _], _ts, process_metadata}}
-    assert_receive {:error, _pid, {Logger, ["Children " | _], _ts, _children_metadata}}
-    assert {:stop, [_ | _]} = process_metadata[:crash_reason]
-  end
-
   test "translates DynamicSupervisor reports abnormal shutdown" do
     assert capture_log(:info, fn ->
              trap = Process.flag(:trap_exit, true)
@@ -1003,15 +984,15 @@ defmodule Logger.TranslatorTest do
       def handle_call(_call, _from, _state), do: raise("oops")
     end
 
-    child_opts = [restart: :temporary, function: :"start link"]
-    children = [worker(WeirdFunctionNamesGenServer, [], child_opts)]
-    {:ok, sup} = Supervisor.start_link(children, strategy: :simple_one_for_one)
+    start = {WeirdFunctionNamesGenServer, :"start link", []}
+    child = %{id: :weird, start: start, restart: :temporary}
+    {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     log =
       capture_log(:info, fn ->
-        {:ok, pid} = Supervisor.start_child(sup, [])
+        {:ok, pid} = DynamicSupervisor.start_child(sup, child)
         catch_exit(GenServer.call(pid, :error))
-        [] = Supervisor.which_children(sup)
+        [] = DynamicSupervisor.which_children(sup)
       end)
 
     assert log =~ ~s(Start Call: Logger.TranslatorTest.WeirdFunctionNamesGenServer."start link"/?)

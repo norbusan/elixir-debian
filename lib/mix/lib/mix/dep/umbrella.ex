@@ -15,7 +15,15 @@ defmodule Mix.Dep.Umbrella do
       for {app, path} <- apps_paths do
         dest_path = Path.expand(path)
         build_path = Path.join([build, "lib", Atom.to_string(app)])
-        opts = [path: path, dest: dest_path, from_umbrella: true, env: env, build: build_path]
+
+        opts = [
+          path: path,
+          dest: dest_path,
+          from_umbrella: true,
+          env: env,
+          build: build_path,
+          inherit_parent_config_files: true
+        ]
 
         %Mix.Dep{
           scm: Mix.SCM.Path,
@@ -38,7 +46,7 @@ defmodule Mix.Dep.Umbrella do
   def cached do
     if project = Mix.Project.get() do
       key = {:umbrella_deps, Mix.env(), project}
-      Mix.ProjectStack.read_cache(key) || Mix.ProjectStack.write_cache(key, loaded())
+      Mix.State.read_cache(key) || Mix.State.write_cache(key, loaded())
     else
       loaded()
     end

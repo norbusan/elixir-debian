@@ -796,13 +796,12 @@ defmodule Stream do
   Transforms an existing stream.
 
   It expects an accumulator and a function that receives each stream element
-  and an accumulator, and must return a tuple containing a new stream
-  (often a list) with the new accumulator or a tuple with `:halt` as first
-  element and the accumulator as second.
+  and an accumulator. It must return a tuple, where the first element is a new
+  stream (often a list) or the atom `:halt`, and the second element is the
+  accumulator to be used by the next element, if any, in both cases.
 
-  Note: this function is similar to `Enum.flat_map_reduce/3` except the
-  latter returns both the flat list and accumulator, while this one returns
-  only the stream.
+  Note: this function is equivalent to `Enum.flat_map_reduce/3`, except this
+  function does not return the accumulator once the stream is processed.
 
   ## Examples
 
@@ -810,13 +809,13 @@ defmodule Stream do
   many of the functions defined in this module. For example, we can implement
   `Stream.take(enum, n)` as follows:
 
-      iex> enum = 1..100
+      iex> enum = 1001..9999
       iex> n = 3
       iex> stream = Stream.transform(enum, 0, fn i, acc ->
       ...>   if acc < n, do: {[i], acc + 1}, else: {:halt, acc}
       ...> end)
       iex> Enum.to_list(stream)
-      [1, 2, 3]
+      [1001, 1002, 1003]
 
   """
   @spec transform(Enumerable.t(), acc, fun) :: Enumerable.t()
@@ -1256,41 +1255,37 @@ defmodule Stream do
 
   def cycle(enumerable) do
     fn acc, fun ->
-      inner = &do_cycle_each(&1, &2, fun)
-      outer = &Enumerable.reduce(enumerable, &1, inner)
-      reduce = check_cycle_first_element(outer)
-      do_cycle(reduce, outer, acc)
+      step = &do_cycle_step(&1, &2)
+      cycle = &Enumerable.reduce(enumerable, &1, step)
+      reduce = check_cycle_first_element(cycle)
+      do_cycle(reduce, [], cycle, acc, fun)
     end
   end
 
-  defp do_cycle(_reduce, _cycle, {:halt, acc}) do
+  defp do_cycle(reduce, inner_acc, _cycle, {:halt, acc}, _fun) do
+    reduce.({:halt, inner_acc})
     {:halted, acc}
   end
 
-  defp do_cycle(reduce, cycle, {:suspend, acc}) do
-    {:suspended, acc, &do_cycle(reduce, cycle, &1)}
+  defp do_cycle(reduce, inner_acc, cycle, {:suspend, acc}, fun) do
+    {:suspended, acc, &do_cycle(reduce, inner_acc, cycle, &1, fun)}
   end
 
-  defp do_cycle(reduce, cycle, acc) do
-    try do
-      reduce.(acc)
-    catch
-      {:stream_cycle, acc} ->
-        {:halted, acc}
-    else
-      {state, acc} when state in [:done, :halted] ->
-        do_cycle(cycle, cycle, {:cont, acc})
+  defp do_cycle(reduce, inner_acc, cycle, {:cont, acc}, fun) do
+    case reduce.({:cont, inner_acc}) do
+      {:suspended, [element], new_reduce} ->
+        do_cycle(new_reduce, inner_acc, cycle, fun.(element, acc), fun)
 
-      {:suspended, acc, continuation} ->
-        {:suspended, acc, &do_cycle(continuation, cycle, &1)}
+      {_, [element]} ->
+        do_cycle(cycle, [], cycle, fun.(element, acc), fun)
+
+      {_, []} ->
+        do_cycle(cycle, [], cycle, {:cont, acc}, fun)
     end
   end
 
-  defp do_cycle_each(x, acc, f) do
-    case f.(x, acc) do
-      {:halt, h} -> throw({:stream_cycle, h})
-      {_, _} = o -> o
-    end
+  defp do_cycle_step(x, acc) do
+    {:suspend, [x | acc]}
   end
 
   defp check_cycle_first_element(reduce) do
@@ -1333,9 +1328,9 @@ defmodule Stream do
   ## Examples
 
       # Although not necessary, let's seed the random algorithm
-      iex> :rand.seed(:exsplus, {1, 2, 3})
+      iex> :rand.seed(:exrop, {1, 2, 3})
       iex> Stream.repeatedly(&:rand.uniform/0) |> Enum.take(3)
-      [0.40502929729990744, 0.45336720247823126, 0.04094511692041057]
+      [0.7498295129076106, 0.06161655489244533, 0.7924073127680873]
 
   """
   @spec repeatedly((() -> element)) :: Enumerable.t()
@@ -1384,6 +1379,21 @@ defmodule Stream do
         fn file -> File.close(file) end
       )
 
+      iex> Stream.resource(
+      ...>  fn ->
+      ...>    {:ok, pid} = StringIO.open("string")
+      ...>    pid
+      ...>  end,
+      ...>  fn pid ->
+      ...>    case IO.getn(pid, "", 1) do
+      ...>      :eof -> {:halt, pid}
+      ...>      char -> {[char], pid}
+      ...>    end
+      ...>  end,
+      ...>  fn pid -> StringIO.close(pid) end
+      ...> ) |> Enum.to_list()
+      ["s", "t", "r", "i", "n", "g"]
+
   """
   @spec resource((() -> acc), (acc -> {[element], acc} | {:halt, acc}), (acc -> term)) ::
           Enumerable.t()
@@ -1403,22 +1413,20 @@ defmodule Stream do
 
   defp do_resource(next_acc, next_fun, {:cont, acc}, fun, after_fun) do
     try do
-      # Optimize the most common cases
-      case next_fun.(next_acc) do
-        {[], next_acc} -> {:opt, {:cont, acc}, next_acc}
-        {[v], next_acc} -> {:opt, fun.(v, acc), next_acc}
-        {_, _} = other -> other
-      end
+      next_fun.(next_acc)
     catch
       kind, reason ->
         after_fun.(next_acc)
         :erlang.raise(kind, reason, __STACKTRACE__)
     else
-      {:opt, acc, next_acc} ->
-        do_resource(next_acc, next_fun, acc, fun, after_fun)
-
       {:halt, next_acc} ->
         do_resource(next_acc, next_fun, {:halt, acc}, fun, after_fun)
+
+      {[], next_acc} ->
+        do_resource(next_acc, next_fun, {:cont, acc}, fun, after_fun)
+
+      {[v], next_acc} ->
+        do_element_resource(next_acc, next_fun, acc, fun, after_fun, v)
 
       {list, next_acc} when is_list(list) ->
         reduce = &Enumerable.List.reduce(list, &1, fun)
@@ -1428,6 +1436,19 @@ defmodule Stream do
         inner = &do_resource_each(&1, &2, fun)
         reduce = &Enumerable.reduce(enum, &1, inner)
         do_enum_resource(next_acc, next_fun, {:cont, acc}, fun, after_fun, reduce)
+    end
+  end
+
+  defp do_element_resource(next_acc, next_fun, acc, fun, after_fun, v) do
+    try do
+      fun.(v, acc)
+    catch
+      kind, reason ->
+        after_fun.(next_acc)
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    else
+      acc ->
+        do_resource(next_acc, next_fun, acc, fun, after_fun)
     end
   end
 

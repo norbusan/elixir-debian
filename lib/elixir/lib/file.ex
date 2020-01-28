@@ -6,7 +6,7 @@ defmodule File do
   to interact with files or IO devices, like `open/2`,
   `copy/3` and others. This module also provides higher
   level functions that work with filenames and have their naming
-  based on UNIX variants. For example, one can copy a file
+  based on Unix variants. For example, one can copy a file
   via `cp/3` and remove files and directories recursively
   via `rm_rf/1`.
 
@@ -585,7 +585,7 @@ defmodule File do
       File.touch!("/tmp/a.txt", {{2018, 1, 30}, {13, 59, 59}})
       #=> :ok
       File.touch!("/fakedir/b.txt", {{2018, 1, 30}, {13, 59, 59}})
-      #=> ** (File.Error) could not touch "/fakedir/b.txt": no such file or directory
+      ** (File.Error) could not touch "/fakedir/b.txt": no such file or directory
 
       File.touch!("/tmp/a.txt", 1544519753)
 
@@ -722,7 +722,7 @@ defmodule File do
 
   Returns `:ok` in case of success, `{:error, reason}` otherwise.
 
-  Note: The command `mv` in Unix systems behaves differently depending on
+  Note: The command `mv` in Unix-like systems behaves differently depending on
   whether `source` is a file and the `destination` is an existing directory.
   We have chosen to explicitly disallow this behaviour.
 
@@ -778,7 +778,7 @@ defmodule File do
   or do a straight copy from a source to a destination without
   preserving modes, check `copy/3` instead.
 
-  Note: The command `cp` in Unix systems behaves differently depending on
+  Note: The command `cp` in Unix-like systems behaves differently depending on
   whether the destination is an existing directory or not. We have chosen to
   explicitly disallow copying to a destination which is a directory,
   and an error will be returned if tried.
@@ -846,7 +846,7 @@ defmodule File do
   success, `files_and_directories` lists all files and directories copied in no
   specific order. It returns `{:error, reason, file}` otherwise.
 
-  Note: The command `cp` in Unix systems behaves differently depending on
+  Note: The command `cp` in Unix-like systems behaves differently depending on
   whether `destination` is an existing directory or not. We have chosen to
   explicitly disallow this behaviour. If `source` is a `file` and `destination`
   is a directory, `{:error, :eisdir}` will be returned.
@@ -1243,7 +1243,7 @@ defmodule File do
   end
 
   # On Windows, symlinks are treated as directory and must be removed
-  # with rmdir/1. But on Unix, we remove them via rm/1. So we first try
+  # with rmdir/1. But on Unix-like systems, we remove them via rm/1. So we first try
   # to remove it as a directory and, if we get :enotdir, we fall back to
   # a file removal.
   defp do_rm_directory(path, {:ok, acc} = entry) do
@@ -1310,7 +1310,7 @@ defmodule File do
 
   The allowed modes:
 
-    * `:binary` - opens the file in binary mode, disabling special handling of unicode sequences
+    * `:binary` - opens the file in binary mode, disabling special handling of Unicode sequences
       (default mode).
 
     * `:read` - the file, which must exist, is opened for reading.
@@ -1355,9 +1355,11 @@ defmodule File do
     * `{:ok, io_device}` - the file has been opened in the requested mode.
 
       `io_device` is actually the PID of the process which handles the file.
-      This process is linked to the process which originally opened the file.
-      If any process to which the `io_device` is linked terminates, the file
-      will be closed and the process itself will be terminated.
+      This process monitors the process that originally opened the file (the
+      owner process). If the owner process terminates, the file is closed and
+      the process itself terminates too. If any process to which the `io_device`
+      is linked terminates, the file will be closed and the process itself will
+      be terminated.
 
       An `io_device` returned from this call can be used as an argument to the
       `IO` module functions.
@@ -1462,7 +1464,7 @@ defmodule File do
   @doc """
   Gets the current working directory.
 
-  In rare circumstances, this function can fail on Unix. It may happen
+  In rare circumstances, this function can fail on Unix-like systems. It may happen
   if read permissions do not exist for the parent directories of the
   current directory. For this reason, returns `{:ok, cwd}` in case
   of success, `{:error, reason}` otherwise.
@@ -1610,7 +1612,7 @@ defmodule File do
   in raw mode for performance reasons. Therefore, Elixir **will** open
   streams in `:raw` mode with the `:read_ahead` option unless an encoding
   is specified. This means any data streamed into the file must be
-  converted to `t:iodata/0` type. If you pass e.g. `[encoding: :utf8]`
+  converted to `t:iodata/0` type. If you pass, for example, `[encoding: :utf8]`
   or `[encoding: {:utf16, :little}]` in the modes parameter,
   the underlying stream will use `IO.write/2` and the `String.Chars` protocol
   to convert the data. See `IO.binwrite/2` and `IO.write/2` .

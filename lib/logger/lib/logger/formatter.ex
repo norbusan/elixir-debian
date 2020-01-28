@@ -47,7 +47,7 @@ defmodule Logger.Formatter do
   @replacement "�"
 
   @doc """
-  Prunes non-valid UTF-8 code points.
+  Prunes invalid Unicode code points from lists and invalid UTF-8 bytes.
 
   Typically called after formatting when the data cannot be printed.
   """
@@ -158,25 +158,40 @@ defmodule Logger.Formatter do
   defp output(:time, _, _, {_date, time}, _), do: format_time(time)
   defp output(:level, level, _, _, _), do: Atom.to_string(level)
   defp output(:node, _, _, _, _), do: Atom.to_string(node())
-
   defp output(:metadata, _, _, _, []), do: ""
-
-  defp output(:metadata, _, _, _, meta) do
-    Enum.map(meta, fn {key, val} ->
-      [to_string(key), ?=, metadata(key, val), ?\s]
-    end)
-  end
-
-  defp output(:levelpad, level, _, _, _) do
-    levelpad(level)
-  end
-
+  defp output(:metadata, _, _, _, meta), do: metadata(meta)
+  defp output(:levelpad, level, _, _, _), do: levelpad(level)
   defp output(other, _, _, _, _), do: other
 
   defp levelpad(:debug), do: ""
   defp levelpad(:info), do: " "
   defp levelpad(:warn), do: " "
   defp levelpad(:error), do: ""
+
+  defp metadata([{:report_cb, _} | metadata]), do: metadata(metadata)
+  defp metadata([{:time, _} | metadata]), do: metadata(metadata)
+  defp metadata([{:gl, _} | metadata]), do: metadata(metadata)
+  defp metadata([{:crash_reason, _} | metadata]), do: metadata(metadata)
+  defp metadata([{:ancestors, _} | metadata]), do: metadata(metadata)
+  defp metadata([{:callers, _} | metadata]), do: metadata(metadata)
+  defp metadata([{_, nil} | metadata]), do: metadata(metadata)
+
+  defp metadata([{key, value} | metadata]) do
+    [to_string(key), ?=, metadata(key, value), ?\s | metadata(metadata)]
+  end
+
+  defp metadata([]) do
+    []
+  end
+
+  defp metadata(:domain, [head | tail]) when is_atom(head) do
+    Enum.map_intersperse([head | tail], ?., &Atom.to_string/1)
+  end
+
+  defp metadata(:mfa, {mod, fun, arity})
+       when is_atom(mod) and is_atom(fun) and is_integer(arity) do
+    Exception.format_mfa(mod, fun, arity)
+  end
 
   defp metadata(:initial_call, {mod, fun, arity})
        when is_atom(mod) and is_atom(fun) and is_integer(arity) do

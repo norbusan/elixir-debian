@@ -46,12 +46,12 @@ defmodule Mix.DepTest do
     Mix.Dep.cached()
     key = {:cached_deps, DepsApp}
 
-    {env_target, deps} = Mix.ProjectStack.read_cache(key)
+    {env_target, deps} = Mix.State.read_cache(key)
     assert env_target == {Mix.env(), Mix.target()}
     assert length(deps) == 6
 
     Mix.Dep.clear_cached()
-    refute Mix.ProjectStack.read_cache(key)
+    refute Mix.State.read_cache(key)
   end
 
   test "extracts all dependencies from the given project" do
@@ -69,7 +69,7 @@ defmodule Mix.DepTest do
     end)
   end
 
-  test "extracts all dependencies paths from the given project" do
+  test "extracts all dependencies paths/scms from the given project" do
     Mix.Project.push(DepsApp)
 
     in_fixture("deps_status", fn ->
@@ -77,6 +77,11 @@ defmodule Mix.DepTest do
       assert map_size(paths) == 6
       assert paths[:ok] =~ "deps/ok"
       assert paths[:uncloned] =~ "deps/uncloned"
+
+      paths = Mix.Project.deps_scms()
+      assert map_size(paths) == 6
+      assert paths[:ok] == Mix.SCM.Path
+      assert paths[:uncloned] == Mix.SCM.Git
     end)
   end
 
@@ -549,7 +554,7 @@ defmodule Mix.DepTest do
             Mix.Tasks.Deps.Loadpaths.run([])
           end
 
-          Mix.ProjectStack.clear_cache()
+          Mix.State.clear_cache()
           Mix.env(:prod)
           Mix.Tasks.Deps.Loadpaths.run([])
         end)
@@ -729,7 +734,7 @@ defmodule Mix.DepTest do
             end
             """)
 
-            Mix.ProjectStack.clear_cache()
+            Mix.State.clear_cache()
             loaded = Mix.Dep.load_on_environment([])
             Enum.map(loaded, &{&1.app, &1.opts[:only]})
           end)
@@ -839,7 +844,7 @@ defmodule Mix.DepTest do
             Mix.Tasks.Deps.Loadpaths.run([])
           end
 
-          Mix.ProjectStack.clear_cache()
+          Mix.State.clear_cache()
           Mix.target(:rpi3)
           Mix.Tasks.Deps.Loadpaths.run([])
         end)
@@ -1004,7 +1009,7 @@ defmodule Mix.DepTest do
             end
             """)
 
-            Mix.ProjectStack.clear_cache()
+            Mix.State.clear_cache()
             loaded = Mix.Dep.load_on_environment([])
             Enum.map(loaded, &{&1.app, &1.opts[:targets]})
           end)
