@@ -21,8 +21,7 @@ translate_reduce(Meta, Cases, Expr, Reduce, S) ->
     ({'case', CaseAnn, _, CaseBlock}, InnerAcc) -> {'case', CaseAnn, InnerAcc, CaseBlock}
   end,
 
-  SF = elixir_erl_var:mergec(SR, SE),
-  {build_reduce(Ann, TCases, InnerFun, TExpr, TReduce, false, SF), SF}.
+  {build_reduce(Ann, TCases, InnerFun, TExpr, TReduce, false, SE), SE}.
 
 translate_into(Meta, Cases, Expr, Opts, Return, S) ->
   Ann = ?ann(Meta),
@@ -38,11 +37,10 @@ translate_into(Meta, Cases, Expr, Opts, Return, S) ->
 
   {TCases, SC} = translate_gen(Meta, Cases, [], SI),
   {TExpr, SE}  = elixir_erl_pass:translate(wrap_expr_if_unused(Expr, TInto), SC),
-  SF = elixir_erl_var:mergec(SI, SE),
 
   case inline_or_into(TInto) of
-    inline -> build_inline(Ann, TCases, TExpr, TInto, TUniq, SF);
-    into -> build_into(Ann, TCases, TExpr, TInto, TUniq, SF)
+    inline -> build_inline(Ann, TCases, TExpr, TInto, TUniq, SE);
+    into -> build_into(Ann, TCases, TExpr, TInto, TUniq, SE)
   end.
 
 %% In case we have no return, we wrap the expression
@@ -94,7 +92,7 @@ translate_filter(Filter, S) ->
     true ->
       {{nil, TFilter}, TS};
     false ->
-      {Name, _, VS} = elixir_erl_var:build('_', TS),
+      {Name, VS} = elixir_erl_var:build('_', TS),
       {{{var, 0, Name}, TFilter}, VS}
   end.
 
@@ -175,24 +173,12 @@ build_into(Ann, Clauses, Expr, Into, Uniq, S) ->
 
   {{block, Ann, [MatchExpr, TryExpr]}, SD}.
 
-%% TODO: Remove this check once we support Erlang/OTP 21+ exclusively.
 stacktrace_clause(Ann, Fun, Acc, Kind, Reason, Stack) ->
-  case erlang:system_info(otp_release) of
-    "20" ->
-      {clause, Ann,
-        [{tuple, Ann, [Kind, Reason, {var, Ann, '_'}]}],
-        [],
-        [{match, Ann, Stack, ?remote(Ann, erlang, get_stacktrace, [])},
-         {call, Ann, Fun, [Acc, {atom, Ann, halt}]},
-         ?remote(Ann, erlang, raise, [Kind, Reason, Stack])]};
-
-    _ ->
-      {clause, Ann,
-        [{tuple, Ann, [Kind, Reason, Stack]}],
-        [],
-        [{call, Ann, Fun, [Acc, {atom, Ann, halt}]},
-         ?remote(Ann, erlang, raise, [Kind, Reason, Stack])]}
-  end.
+  {clause, Ann,
+    [{tuple, Ann, [Kind, Reason, Stack]}],
+    [],
+    [{call, Ann, Fun, [Acc, {atom, Ann, halt}]},
+     ?remote(Ann, erlang, raise, [Kind, Reason, Stack])]}.
 
 %% Helpers
 
@@ -295,7 +281,7 @@ pair(Ann, Atom, Arg) ->
   {tuple, Ann, [{atom, Ann, Atom}, Arg]}.
 
 build_var(Ann, S) ->
-  {Name, _, ST} = elixir_erl_var:build('_', S),
+  {Name, ST} = elixir_erl_var:build('_', S),
   {{var, Ann, Name}, ST}.
 
 no_var(ParentAnn, Elements) ->

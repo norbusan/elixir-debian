@@ -1,15 +1,9 @@
 defmodule Map do
   @moduledoc """
-  A set of functions for working with maps.
+  Maps are the "go to" key-value data structure in Elixir.
 
-  Many functions for maps, which implement the `Enumerable` protocol,
-  are found in the `Enum` module. Additionally, the following functions
-  for maps are found in `Kernel`:
-
-    * `map_size/1`
-
-  Maps are the "go to" key-value data structure in Elixir. Maps can be created
-  with the `%{}` syntax, and key-value pairs can be expressed as `key => value`:
+  Maps can be created with the `%{}` syntax, and key-value pairs can be
+  expressed as `key => value`:
 
       iex> %{}
       %{}
@@ -97,6 +91,13 @@ defmodule Map do
   it performs better because lists have a linear time complexity. Some functions,
   such as `keys/1` and `values/1`, run in linear time because they need to get to every
   element in the map.
+
+  Maps also implement the `Enumerable` protocol, so many functions to work with maps
+  are found in the `Enum` module. Additionally, the following functions for maps are
+  found in `Kernel`:
+
+    * `map_size/1`
+
   """
 
   @type key :: any
@@ -342,8 +343,8 @@ defmodule Map do
   in `map` unless `key` is already present.
 
   This function is useful in case you want to compute the value to put under
-  `key` only if `key` is not already present (e.g., the value is expensive to
-  calculate or generally difficult to setup and teardown again).
+  `key` only if `key` is not already present, as for example, when the value is expensive to
+  calculate or generally difficult to setup and teardown again.
 
   ## Examples
 
@@ -636,6 +637,31 @@ defmodule Map do
   end
 
   @doc """
+  Returns and removes the value associated with `key` in `map` or raises
+  if `key` is not present.
+
+  Behaves the same as `pop/3` but raises if `key` is not present in `map`.
+
+  ## Examples
+
+      iex> Map.pop!(%{a: 1}, :a)
+      {1, %{}}
+      iex> Map.pop!(%{a: 1, b: 2}, :a)
+      {1, %{b: 2}}
+      iex> Map.pop!(%{a: 1}, :b)
+      ** (KeyError) key :b not found in: %{a: 1}
+
+  """
+  @doc since: "1.10.0"
+  @spec pop!(map, key) :: {value, map}
+  def pop!(map, key) do
+    case :maps.take(key, map) do
+      {_, _} = tuple -> tuple
+      :error -> raise KeyError, key: key, term: map
+    end
+  end
+
+  @doc """
   Lazily returns and removes the value associated with `key` in `map`.
 
   If `key` is present in `map` with value `value`, `{value, new_map}` is
@@ -661,15 +687,9 @@ defmodule Map do
   """
   @spec pop_lazy(map, key, (() -> value)) :: {value, map}
   def pop_lazy(map, key, fun) when is_function(fun, 0) do
-    case map do
-      %{^key => value} ->
-        {value, delete(map, key)}
-
-      %{} ->
-        {fun.(), map}
-
-      other ->
-        :erlang.error({:badmap, other}, [map, key, fun])
+    case :maps.take(key, map) do
+      {_, _} = tuple -> tuple
+      :error -> {fun.(), map}
     end
   end
 

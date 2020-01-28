@@ -7,7 +7,8 @@ defmodule Mix.Release do
   The Mix.Release struct has the following read-only fields:
 
     * `:name` - the name of the release as an atom
-    * `:version` - the version of the release as a string
+    * `:version` - the version of the release as a string or
+       `{:from_app, app_name}`
     * `:path` - the path to the release root
     * `:version_path` - the path to the release version inside the release
     * `:applications` - a map of application with their definitions
@@ -23,8 +24,13 @@ defmodule Mix.Release do
       first element is a module that implements the `Config.Provider` behaviour
       and `term` is the value given to it on `c:Config.Provider.init/1`
     * `:options` - a keyword list with all other user supplied release options
+    * `:overlays` - a list of extra files added to the release. If you have a custom
+      step adding extra files to a release, you can add these files to the `:overlays`
+      field so they are also considered on further commands, such as tar/zip. Each entry
+      in overlays is the relative path to the release root of each file
     * `:steps` - a list of functions that receive the release and returns a release.
-      Must also contain the atom `:assemble` which is the internal assembling step
+      Must also contain the atom `:assemble` which is the internal assembling step.
+      May also contain the atom `:tar` to create a tarball of the release.
 
   """
   defstruct [
@@ -38,6 +44,7 @@ defmodule Mix.Release do
     :erts_version,
     :config_providers,
     :options,
+    :overlays,
     :steps
   ]
 
@@ -47,7 +54,7 @@ defmodule Mix.Release do
           name: atom(),
           version: String.t(),
           path: String.t(),
-          version_path: String.t(),
+          version_path: String.t() | {:from_app, application()},
           applications: %{application() => keyword()},
           boot_scripts: %{atom() => [{application(), mode()}]},
           erts_version: charlist(),
@@ -112,6 +119,27 @@ defmodule Mix.Release do
           )
       end)
 
+    version =
+      case version do
+        {:from_app, app} ->
+          Application.load(app)
+          version = Application.spec(app, :vsn)
+
+          if !version do
+            Mix.raise(
+              "Could not find version for #{inspect(app)}, please make sure the application exists"
+            )
+          end
+
+          to_string(version)
+
+        "" ->
+          Mix.raise("The release :version cannot be an empty string")
+
+        _ ->
+          version
+      end
+
     {config_providers, opts} = Keyword.pop(opts, :config_providers, [])
     {steps, opts} = Keyword.pop(opts, :steps, [:assemble])
     validate_steps!(steps)
@@ -127,12 +155,14 @@ defmodule Mix.Release do
       boot_scripts: %{start: start_boot, start_clean: start_clean_boot},
       config_providers: config_providers,
       options: opts,
+      overlays: [],
       steps: steps
     }
   end
 
   defp find_release(name, config) do
-    {name, opts} = lookup_release(name, config) || infer_release(config)
+    {name, opts_fun_or_list} = lookup_release(name, config) || infer_release(config)
+    opts = if is_function(opts_fun_or_list, 0), do: opts_fun_or_list.(), else: opts_fun_or_list
     {apps, opts} = Keyword.pop(opts, :applications, [])
 
     if apps == [] and Mix.Project.umbrella?(config) do
@@ -158,10 +188,16 @@ defmodule Mix.Release do
         {name, opts}
 
       [_ | _] ->
-        Mix.raise(
-          "\"mix release\" was invoked without a name but there are multiple releases. " <>
-            "Please call \"mix release NAME\" or set :default_release in your project configuration"
-        )
+        case Keyword.get(config, :default_release) do
+          nil ->
+            Mix.raise(
+              "\"mix release\" was invoked without a name but there are multiple releases. " <>
+                "Please call \"mix release NAME\" or set :default_release in your project configuration"
+            )
+
+          name ->
+            lookup_release(name, config)
+        end
     end
   end
 
@@ -292,10 +328,12 @@ defmodule Mix.Release do
 
   defp build_start_boot(all_apps, specified_apps) do
     specified_apps ++
-      for(
-        {app, props} <- all_apps,
-        not List.keymember?(specified_apps, app, 0),
-        do: {app, default_mode(props)}
+      Enum.sort(
+        for(
+          {app, props} <- all_apps,
+          not List.keymember?(specified_apps, app, 0),
+          do: {app, default_mode(props)}
+        )
       )
   end
 
@@ -310,12 +348,14 @@ defmodule Mix.Release do
   end
 
   defp validate_steps!(steps) do
-    if not is_list(steps) or Enum.any?(steps, &(&1 != :assemble and not is_function(&1, 1))) do
+    valid_atoms = [:assemble, :tar]
+
+    if not is_list(steps) or Enum.any?(steps, &(&1 not in valid_atoms and not is_function(&1, 1))) do
       Mix.raise("""
         The :steps option must be a list of:
 
         * anonymous function that receives one argument
-        * the atom :assemble
+        * the atom :assemble or :tar
 
       Got: #{inspect(steps)}
       """)
@@ -323,6 +363,14 @@ defmodule Mix.Release do
 
     if Enum.count(steps, &(&1 == :assemble)) != 1 do
       Mix.raise("The :steps option must contain the atom :assemble once, got: #{inspect(steps)}")
+    end
+
+    if :assemble in Enum.drop_while(steps, &(&1 != :tar)) do
+      Mix.raise("The :tar step must come after :assemble")
+    end
+
+    if Enum.count(steps, &(&1 == :tar)) > 1 do
+      Mix.raise("The :steps option can only contain the atom :tar once")
     end
 
     :ok
@@ -337,6 +385,7 @@ defmodule Mix.Release do
 
   It uses the following release options to customize its behaviour:
 
+    * `:reboot_system_after_config`
     * `:start_distribution_during_config`
     * `:prune_runtime_sys_config_after_boot`
 
@@ -345,10 +394,12 @@ defmodule Mix.Release do
   @spec make_sys_config(t, keyword(), Config.Provider.config_path()) ::
           :ok | {:error, String.t()}
   def make_sys_config(release, sys_config, config_provider_path) do
-    {sys_config, runtime?} = merge_provider_config(release, sys_config, config_provider_path)
+    {sys_config, runtime_config?} =
+      merge_provider_config(release, sys_config, config_provider_path)
+
     path = Path.join(release.version_path, "sys.config")
 
-    args = [runtime?, sys_config]
+    args = [runtime_config?, sys_config]
     format = "%% coding: utf-8~n%% RUNTIME_CONFIG=~s~n~tw.~n"
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, :io_lib.format(format, args), [:utf8])
@@ -368,18 +419,27 @@ defmodule Mix.Release do
   defp merge_provider_config(%{config_providers: []}, sys_config, _), do: {sys_config, false}
 
   defp merge_provider_config(release, sys_config, config_path) do
-    {extra_config, initial_config} = start_distribution(release)
+    {reboot?, extra_config, initial_config} = start_distribution(release)
     prune_after_boot = Keyword.get(release.options, :prune_runtime_sys_config_after_boot, false)
-    opts = [extra_config: initial_config, prune_after_boot: prune_after_boot]
+
+    opts = [
+      extra_config: initial_config,
+      prune_after_boot: prune_after_boot,
+      reboot_after_config: reboot?
+    ]
+
     init = Config.Provider.init(release.config_providers, config_path, opts)
-    {Config.Reader.merge(sys_config, [elixir: [config_providers: init]] ++ extra_config), true}
+    {Config.Reader.merge(sys_config, [elixir: [config_providers: init]] ++ extra_config), reboot?}
   end
 
   defp start_distribution(%{options: opts}) do
-    if Keyword.get(opts, :start_distribution_during_config, false) do
-      {[], []}
+    reboot? = Keyword.get(opts, :reboot_system_after_config, true)
+    early_distribution? = Keyword.get(opts, :start_distribution_during_config, false)
+
+    if not reboot? or early_distribution? do
+      {reboot?, [], []}
     else
-      {[kernel: [start_distribution: false]], [kernel: [start_distribution: true]]}
+      {true, [kernel: [start_distribution: false]], [kernel: [start_distribution: true]]}
     end
   end
 
@@ -409,7 +469,7 @@ defmodule Mix.Release do
     end
   end
 
-  defp random_cookie, do: Base.url_encode64(:crypto.strong_rand_bytes(40))
+  defp random_cookie, do: Base.encode32(:crypto.strong_rand_bytes(32))
 
   @doc """
   Makes the start_erl.data file with the
@@ -455,7 +515,7 @@ defmodule Mix.Release do
 
           instructions =
             instructions
-            |> boot_config_provider()
+            |> post_stdlib_applies(release)
             |> prepend_paths_to_script(prepend_paths)
 
           script = {:script, rel_info, instructions}
@@ -546,15 +606,36 @@ defmodule Mix.Release do
     end
   end
 
-  defp boot_config_provider(instructions) do
+  defp post_stdlib_applies(instructions, release) do
     {pre, [stdlib | post]} =
       Enum.split_while(
         instructions,
         &(not match?({:apply, {:application, :start_boot, [:stdlib, _]}}, &1))
       )
 
-    config_provider = {:apply, {Config.Provider, :boot, [:elixir, :config_providers]}}
-    pre ++ [stdlib, config_provider | post]
+    pre ++
+      [stdlib] ++ config_provider_apply(release) ++ validate_compile_env_apply(release) ++ post
+  end
+
+  defp config_provider_apply(%{config_providers: []}),
+    do: []
+
+  defp config_provider_apply(_),
+    do: [{:apply, {Config.Provider, :boot, [:elixir, :config_providers]}}]
+
+  defp validate_compile_env_apply(release) do
+    with true <- Keyword.get(release.options, :validate_compile_env, true),
+         [_ | _] = compile_env <- compile_env(release) do
+      [{:apply, {Config.Provider, :validate_compile_env, [compile_env]}}]
+    else
+      _ -> []
+    end
+  end
+
+  defp compile_env(release) do
+    for {_, properties} <- release.applications,
+        triplet <- Keyword.get(properties, :compile_env, []),
+        do: triplet
   end
 
   defp prepend_paths_to_script(instructions, []), do: instructions
@@ -591,8 +672,14 @@ defmodule Mix.Release do
 
   def copy_erts(release) do
     destination = Path.join(release.path, "erts-#{release.erts_version}")
+    erts_source_contents = File.ls!(release.erts_source)
     File.mkdir_p!(destination)
-    File.cp_r!(release.erts_source, destination, fn _, _ -> false end)
+
+    for dir <- ~w(bin include lib src), dir in erts_source_contents do
+      source = Path.join(release.erts_source, dir)
+      target = Path.join(destination, dir)
+      File.cp_r!(source, target, fn _, _ -> false end)
+    end
 
     _ = File.rm(Path.join(destination, "bin/erl"))
     _ = File.rm(Path.join(destination, "bin/erl.ini"))

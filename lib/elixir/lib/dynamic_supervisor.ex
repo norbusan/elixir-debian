@@ -11,9 +11,8 @@ defmodule DynamicSupervisor do
 
   ## Examples
 
-  A dynamic supervisor is started with no children, often under a
-  supervisor with the supervision strategy (the only strategy currently
-  supported is `:one_for_one`) and a name:
+  A dynamic supervisor is started with no children, a supervision strategy
+  (the only strategy currently supported is `:one_for_one`), and a name:
 
       children = [
         {DynamicSupervisor, strategy: :one_for_one, name: MyApp.DynamicSupervisor}
@@ -149,12 +148,9 @@ defmodule DynamicSupervisor do
         }
 
   @typedoc "Option values used by the `start*` functions"
-  @type option :: {:name, Supervisor.name()} | init_option()
+  @type option :: GenServer.option()
 
-  @typedoc "Options used by the `start*` functions"
-  @type options :: [option, ...]
-
-  @typedoc "Options given to `start_link/2` and `init/1`"
+  @typedoc "Options given to `start_link/1` and `init/1`"
   @type init_option ::
           {:strategy, strategy()}
           | {:max_restarts, non_neg_integer()}
@@ -211,7 +207,7 @@ defmodule DynamicSupervisor do
   defmacro __using__(opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
       @behaviour DynamicSupervisor
-      if Module.get_attribute(__MODULE__, :doc) == nil do
+      unless Module.has_attribute?(__MODULE__, :doc) do
         @doc """
         Returns a specification to start this module under a supervisor.
 
@@ -255,7 +251,7 @@ defmodule DynamicSupervisor do
   with `:normal` reason.
   """
   @doc since: "1.6.0"
-  @spec start_link(options) :: Supervisor.on_start()
+  @spec start_link([option | init_option]) :: Supervisor.on_start()
   def start_link(options) when is_list(options) do
     keys = [:extra_arguments, :max_children, :max_seconds, :max_restarts, :strategy]
     {sup_opts, start_opts} = Keyword.split(options, keys)
@@ -281,7 +277,7 @@ defmodule DynamicSupervisor do
   section in the `GenServer` module docs.
   """
   @doc since: "1.6.0"
-  @spec start_link(module, term, GenServer.options()) :: Supervisor.on_start()
+  @spec start_link(module, term, [option]) :: Supervisor.on_start()
   def start_link(mod, init_arg, opts \\ []) do
     GenServer.start_link(__MODULE__, {mod, init_arg, opts[:name]}, opts)
   end
@@ -290,7 +286,7 @@ defmodule DynamicSupervisor do
   Dynamically adds a child specification to `supervisor` and starts that child.
 
   `child_spec` should be a valid child specification as detailed in the
-  "child_spec/1" section of the documentation for `Supervisor`. The child
+  "Child specification" section of the documentation for `Supervisor`. The child
   process will be started as defined in the child specification.
 
   If the child process start function returns `{:ok, child}` or `{:ok, child,
@@ -310,7 +306,13 @@ defmodule DynamicSupervisor do
   this function returns `{:error, :max_children}`.
   """
   @doc since: "1.6.0"
-  @spec start_child(Supervisor.supervisor(), Supervisor.child_spec() | {module, term} | module) ::
+  @spec start_child(
+          Supervisor.supervisor(),
+          Supervisor.child_spec()
+          | {module, term}
+          | module
+          | (old_erlang_child_spec :: :supervisor.child_spec())
+        ) ::
           on_start_child()
   def start_child(supervisor, {_, _, _, _, _, _} = child_spec) do
     validate_and_start_child(supervisor, child_spec)
@@ -473,7 +475,7 @@ defmodule DynamicSupervisor do
   module-based supervisors. See the "Module-based supervisors" section
   in the module documentation for more information.
 
-  The `options` received by this function are also supported by `start_link/2`.
+  The `options` received by this function are also supported by `start_link/1`.
 
   This function returns a tuple containing the supervisor options.
 
@@ -745,7 +747,20 @@ defmodule DynamicSupervisor do
   end
 
   def handle_info(msg, state) do
-    :error_logger.error_msg('DynamicSupervisor received unexpected message: ~p~n', [msg])
+    :logger.error(
+      %{
+        label: {DynamicSupervisor, :unexpected_msg},
+        report: %{
+          msg: msg
+        }
+      },
+      %{
+        domain: [:otp, :elixir],
+        error_logger: %{tag: :error_msg},
+        report_cb: &__MODULE__.format_report/1
+      }
+    )
+
     {:noreply, state}
   end
 
@@ -988,12 +1003,22 @@ defmodule DynamicSupervisor do
   end
 
   defp report_error(error, reason, pid, child, %{name: name, extra_arguments: extra}) do
-    :error_logger.error_report(
-      :supervisor_report,
-      supervisor: name,
-      errorContext: error,
-      reason: reason,
-      offender: extract_child(pid, child, extra)
+    :logger.error(
+      %{
+        label: {:supervisor, error},
+        report: [
+          {:supervisor, name},
+          {:errorContext, error},
+          {:reason, reason},
+          {:offender, extract_child(pid, child, extra)}
+        ]
+      },
+      %{
+        domain: [:otp, :sasl],
+        report_cb: &:logger.format_otp_report/1,
+        logger_formatter: %{title: "SUPERVISOR REPORT"},
+        error_logger: %{tag: :error_report, type: :supervisor_report}
+      }
     )
   end
 
@@ -1023,5 +1048,13 @@ defmodule DynamicSupervisor do
 
   defp call(supervisor, req) do
     GenServer.call(supervisor, req, :infinity)
+  end
+
+  @doc false
+  def format_report(%{
+        label: {__MODULE__, :unexpected_msg},
+        report: %{msg: msg}
+      }) do
+    {'DynamicSupervisor received unexpected message: ~p~n', [msg]}
   end
 end

@@ -12,15 +12,6 @@ defmodule ExUnit.CaptureIO do
         test "example" do
           assert capture_io(fn -> IO.puts("a") end) == "a\n"
         end
-
-        test "checking the return value and the IO output" do
-          fun = fn ->
-            assert Enum.each(["some", "example"], &IO.puts(&1)) == :ok
-          end
-
-          assert capture_io(fun) == "some\nexample\n"
-          # tip: or use only: "capture_io(fun)" to silence the IO output (so only assert the return value)
-        end
       end
 
   """
@@ -35,14 +26,41 @@ defmodule ExUnit.CaptureIO do
   process and therefore can be done concurrently.
 
   However, the capturing of any other named device, such as `:stderr`,
-  happens globally and requires `async: false`.
+  happens globally and persists until the function has ended. While this means
+  it is safe to run your tests with `async: true` in many cases, captured output
+  may include output from a different test and care must be taken when using
+  `capture_io` with a named process asynchronously.
 
-  When capturing `:stdio`, if the `:capture_prompt` option is `false`,
-  prompts (specified as arguments to `IO.get*` functions) are not
-  captured.
+  A developer can set a string as an input. The default input is an empty
+  string. If capturing a named device asynchronously, an input can only be given
+  to the first capture. Any further capture that is given to a capture on that
+  device will raise an exception and would indicate that the test should be run
+  synchronously.
 
-  A developer can set a string as an input. The default input
-  is an empty string (which is equivalent to `:eof`).
+  Similarly, once a capture on a named device has begun, the encoding on that
+  device cannot be changed in a subsequent concurrent capture. An error will
+  be raised in this case.
+
+  ## IO devices
+
+  You may capture the IO from any registered IO device. The device name given
+  must be an atom representing the name of a registered process. In addition,
+  Elixir provides two shortcuts:
+
+    * `:stdio` - a shortcut for `:standard_io`, which maps to
+      the current `Process.group_leader/0` in Erlang
+
+    * `:stderr` - a shortcut for the named process `:standard_error`
+      provided in Erlang
+
+  ## Options
+
+    * `:capture_prompt` - Define if prompts (specified as arguments to
+      `IO.get*` functions) should be captured. Defaults to `true`. For
+      IO devices other than `:stdio`, the option is ignored.
+
+    * `:encoding` (since v1.10.0) - encoding of the IO device. Allowed
+      values are `:unicode` (default) and `:latin1`.
 
   ## Examples
 
@@ -50,6 +68,9 @@ defmodule ExUnit.CaptureIO do
       true
 
       iex> capture_io(:stderr, fn -> IO.write(:stderr, "john") end) == "john"
+      true
+
+      iex> capture_io(:standard_error, fn -> IO.write(:stderr, "john") end) == "john"
       true
 
       iex> capture_io("this is input", fn ->
@@ -79,27 +100,33 @@ defmodule ExUnit.CaptureIO do
       assert_received {:block_result, 42}
 
   """
+  @spec capture_io((() -> any())) :: String.t()
   def capture_io(fun) when is_function(fun, 0) do
     capture_io(:stdio, [], fun)
   end
 
+  @spec capture_io(atom(), (() -> any())) :: String.t()
   def capture_io(device, fun) when is_atom(device) and is_function(fun, 0) do
     capture_io(device, [], fun)
   end
 
+  @spec capture_io(String.t(), (() -> any())) :: String.t()
   def capture_io(input, fun) when is_binary(input) and is_function(fun, 0) do
     capture_io(:stdio, [input: input], fun)
   end
 
+  @spec capture_io(keyword(), (() -> any())) :: String.t()
   def capture_io(options, fun) when is_list(options) and is_function(fun, 0) do
     capture_io(:stdio, options, fun)
   end
 
+  @spec capture_io(atom(), String.t(), (() -> any())) :: String.t()
   def capture_io(device, input, fun)
       when is_atom(device) and is_binary(input) and is_function(fun, 0) do
     capture_io(device, [input: input], fun)
   end
 
+  @spec capture_io(atom(), keyword(), (() -> any())) :: String.t()
   def capture_io(device, options, fun)
       when is_atom(device) and is_list(options) and is_function(fun, 0) do
     do_capture_io(map_dev(device), options, fun)
@@ -111,14 +138,15 @@ defmodule ExUnit.CaptureIO do
 
   defp do_capture_io(:standard_io, options, fun) do
     prompt_config = Keyword.get(options, :capture_prompt, true)
+    encoding = Keyword.get(options, :encoding, :unicode)
     input = Keyword.get(options, :input, "")
 
     original_gl = Process.group_leader()
-    {:ok, capture_gl} = StringIO.open(input, capture_prompt: prompt_config)
+    {:ok, capture_gl} = StringIO.open(input, capture_prompt: prompt_config, encoding: encoding)
 
     try do
       Process.group_leader(self(), capture_gl)
-      do_capture_io(capture_gl, fun)
+      do_capture_gl(capture_gl, fun)
     after
       Process.group_leader(self(), original_gl)
     end
@@ -126,27 +154,39 @@ defmodule ExUnit.CaptureIO do
 
   defp do_capture_io(device, options, fun) do
     input = Keyword.get(options, :input, "")
-    {:ok, string_io} = StringIO.open(input)
+    encoding = Keyword.get(options, :encoding, :unicode)
 
-    case ExUnit.CaptureServer.device_capture_on(device, string_io) do
+    case ExUnit.CaptureServer.device_capture_on(device, encoding, input) do
       {:ok, ref} ->
         try do
-          do_capture_io(string_io, fun)
+          fun.()
+          ExUnit.CaptureServer.device_output(device, ref)
         after
           ExUnit.CaptureServer.device_capture_off(ref)
         end
 
       {:error, :no_device} ->
-        _ = StringIO.close(string_io)
         raise "could not find IO device registered at #{inspect(device)}"
 
-      {:error, :already_captured} ->
-        _ = StringIO.close(string_io)
-        raise "IO device registered at #{inspect(device)} is already captured"
+      {:error, {:changed_encoding, current_encoding}} ->
+        raise ArgumentError, """
+        attempted to change the encoding for a currently captured device #{inspect(device)}.
+
+        Currently set as: #{inspect(current_encoding)}
+        Given: #{inspect(encoding)}
+
+        If you need to use multiple encodings on a captured device, you cannot \
+        run your test asynchronously
+        """
+
+      {:error, :input_on_already_captured_device} ->
+        raise ArgumentError,
+              "attempted multiple captures on device #{inspect(device)} with input. " <>
+                "If you need to give an input to a captured device, you cannot run your test asynchronously"
     end
   end
 
-  defp do_capture_io(string_io, fun) do
+  defp do_capture_gl(string_io, fun) do
     try do
       fun.()
     catch

@@ -237,6 +237,25 @@ defmodule Access do
   end
 
   @doc """
+  Same as `fetch/2` but returns the value directly,
+  or raises a `KeyError` exception if `key` is not found.
+
+  ## Examples
+
+      iex> Access.fetch!(%{name: "meg", age: 26}, :name)
+      "meg"
+
+  """
+  @doc since: "1.10.0"
+  @spec fetch!(container, term) :: term
+  def fetch!(container, key) do
+    case fetch(container, key) do
+      {:ok, value} -> value
+      :error -> raise(KeyError, key: key, term: container)
+    end
+  end
+
+  @doc """
   Gets the value for the given key in a container (a map, keyword
   list, or struct that implements the `Access` behaviour).
 
@@ -310,6 +329,14 @@ defmodule Access do
 
   The returned value is a two-element tuple with the "get" value returned by
   `fun` and a new container with the updated value under `key`.
+
+  ## Examples
+
+      iex> Access.get_and_update([a: 1], :a, fn current_value ->
+      ...>   {current_value, current_value + 1}
+      ...> end)
+      {1, [a: 2]}
+
   """
   @spec get_and_update(data, key, (value -> {get_value, value} | :pop)) :: {get_value, data}
         when get_value: var, data: container

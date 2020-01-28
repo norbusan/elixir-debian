@@ -4,7 +4,7 @@
 %% Notice this is also called by the Erlang backend, so we also support
 %% the line number to be none (as it may happen in some erlang errors).
 -module(elixir_errors).
--export([compile_error/3, compile_error/4,
+-export([compile_error/3, compile_error/4, warning_prefix/0,
          form_error/4, form_warn/4, parse_error/4, erl_warn/3, io_warn/4]).
 -include("elixir.hrl").
 
@@ -20,6 +20,13 @@ erl_warn(Line, File, Warning) when is_integer(Line), is_binary(File) ->
 io_warn(Line, File, LogMessage, PrintMessage) when is_integer(Line) or (Line == nil), is_binary(File) or (File == nil) ->
   send_warning(Line, File, LogMessage),
   print_warning(PrintMessage).
+
+-spec warning_prefix() -> binary().
+warning_prefix() ->
+  case application:get_env(elixir, ansi_enabled) of
+    {ok, true} -> <<"\e[33mwarning: \e[0m">>;
+    _ -> <<"warning: ">>
+  end.
 
 %% General forms handling.
 
@@ -81,6 +88,29 @@ parse_error(Line, File, <<"syntax error before: ">>, <<"eol">>) ->
   raise(Line, File, 'Elixir.SyntaxError',
         <<"unexpectedly reached end of line. The current expression is invalid or incomplete">>);
 
+
+%% Show a nicer message for keywords pt1 (Erlang keywords show up wrapped in single quotes)
+parse_error(Line, File, <<"syntax error before: ">>, Keyword)
+    when Keyword == <<"'not'">>;
+         Keyword == <<"'and'">>;
+         Keyword == <<"'or'">>;
+         Keyword == <<"'when'">>;
+         Keyword == <<"'after'">>;
+         Keyword == <<"'catch'">>;
+         Keyword == <<"'end'">> ->
+  raise_keyword(Line, File, binary_part(Keyword, 1, byte_size(Keyword) - 2));
+
+%% Show a nicer message for keywords pt2 (Elixir keywords show up as is)
+parse_error(Line, File, <<"syntax error before: ">>, Keyword)
+    when Keyword == <<"fn">>;
+         Keyword == <<"else">>;
+         Keyword == <<"rescue">>;
+         Keyword == <<"true">>;
+         Keyword == <<"false">>;
+         Keyword == <<"nil">>;
+         Keyword == <<"in">> ->
+  raise_keyword(Line, File, Keyword);
+
 %% Produce a human-readable message for errors before a sigil
 parse_error(Line, File, <<"syntax error before: ">>, <<"{sigil,", _Rest/binary>> = Full) ->
   {sigil, _, Sigil, [Content | _], _, _} = parse_erl_term(Full),
@@ -104,7 +134,7 @@ parse_error(Line, File, {ErrorPrefix, ErrorSuffix}, Token) when is_binary(ErrorP
   Message = <<ErrorPrefix/binary, Token/binary, ErrorSuffix/binary >>,
   raise(Line, File, 'Elixir.SyntaxError', Message);
 
-%% Misplaced char tokens (e.g., {char, _, 97}) are translated by Erlang into
+%% Misplaced char tokens (for example, {char, _, 97}) are translated by Erlang into
 %% the char literal (i.e., the token in the previous example becomes $a),
 %% because {char, _, _} is a valid Erlang token for an Erlang char literal. We
 %% want to represent that token as ?a in the error, according to the Elixir
@@ -118,19 +148,18 @@ parse_error(Line, File, Error, Token) when is_binary(Error), is_binary(Token) ->
   Message = <<Error/binary, Token/binary >>,
   raise(Line, File, 'Elixir.SyntaxError', Message).
 
-%% Helper to parse terms which have been converted to binaries
 parse_erl_term(Term) ->
   {ok, Tokens, _} = erl_scan:string(binary_to_list(Term)),
   {ok, Parsed} = erl_parse:parse_term(Tokens ++ [{dot, 1}]),
   Parsed.
 
-%% Helpers
+raise_keyword(Line, File, Keyword) ->
+  raise(Line, File, 'Elixir.SyntaxError',
+        <<"syntax error before: ", Keyword/binary, ". \"", Keyword/binary, "\" is a "
+          "keyword in Elixir and therefore its usage is limited. For instance, it can't "
+          "be used as a variable or be defined nor invoked as a regular function">>).
 
-warning_prefix() ->
-  case application:get_env(elixir, ansi_enabled) of
-    {ok, true} -> <<"\e[33mwarning: \e[0m">>;
-    _ -> <<"warning: ">>
-  end.
+%% Helpers
 
 print_warning(Message) ->
   io:put_chars(standard_error, [warning_prefix(), Message, $\n]),
@@ -163,6 +192,6 @@ raise(none, File, Kind, Message) ->
 raise({Line, _, _}, File, Kind, Message) when is_integer(Line) ->
   raise(Line, File, Kind, Message);
 raise(Line, File, Kind, Message) when is_integer(Line), is_binary(File), is_binary(Message) ->
-  Stacktrace = try throw(ok) catch ?WITH_STACKTRACE(_, _, Stack) Stack end,
+  Stacktrace = try throw(ok) catch _:_:Stack -> Stack end,
   Exception = Kind:exception([{description, Message}, {file, File}, {line, Line}]),
   erlang:raise(error, Exception, tl(Stacktrace)).

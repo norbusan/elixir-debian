@@ -47,6 +47,16 @@ defmodule EnumTest do
     assert Enum.at([2, 4, 6], -4) == nil
   end
 
+  test "chunk/3" do
+    enum = Enum
+    assert enum.chunk(1..5, 2, 1) == Enum.chunk_every(1..5, 2, 1, :discard)
+  end
+
+  test "chunk/4" do
+    enum = Enum
+    assert enum.chunk(1..5, 2, 1, nil) == Enum.chunk_every(1..5, 2, 1, :discard)
+  end
+
   test "chunk_every/2" do
     assert Enum.chunk_every([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
   end
@@ -167,6 +177,10 @@ defmodule EnumTest do
     assert Enum.drop([1, 2, 3], -2) == [1]
     assert Enum.drop([1, 2, 3], -4) == []
     assert Enum.drop([], 3) == []
+
+    assert_raise FunctionClauseError, fn ->
+      Enum.drop([1, 2, 3], 0.0)
+    end
   end
 
   test "drop_every/2" do
@@ -274,6 +288,16 @@ defmodule EnumTest do
     assert Enum.flat_map_reduce([1, 2, 3], 0, &{[&1, &2], &1 + &2}) == {[1, 0, 2, 1, 3, 3], 6}
   end
 
+  test "frequencies/1" do
+    assert Enum.frequencies([]) == %{}
+    assert Enum.frequencies(~w{a c a a c b}) == %{"a" => 3, "b" => 1, "c" => 2}
+  end
+
+  test "frequencies_by/2" do
+    assert Enum.frequencies_by([], fn _ -> raise "oops" end) == %{}
+    assert Enum.frequencies_by([12, 7, 6, 5, 1], &Integer.mod(&1, 2)) == %{0 => 2, 1 => 3}
+  end
+
   test "group_by/3" do
     assert Enum.group_by([], fn _ -> raise "oops" end) == %{}
     assert Enum.group_by([1, 2, 3], &rem(&1, 2)) == %{0 => [2], 1 => [1, 3]}
@@ -328,7 +352,7 @@ defmodule EnumTest do
     assert Enum.map_every([], 2, fn x -> x * 2 end) == []
     assert Enum.map_every([1, 2], 2, fn x -> x * 2 end) == [2, 2]
 
-    assert Enum.map_every([1, 2, 3], 0, fn _x -> raise :i_should_have_never_been_invoked end) ==
+    assert Enum.map_every([1, 2, 3], 0, fn _x -> raise "should not be invoked" end) ==
              [1, 2, 3]
 
     assert Enum.map_every(1..3, 1, fn x -> x * 2 end) == [2, 4, 6]
@@ -349,6 +373,12 @@ defmodule EnumTest do
 
     assert Enum.map_every([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 100, fn x -> x + 1000 end) ==
              [1001, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  end
+
+  test "map_intersperse/3" do
+    assert Enum.map_intersperse([], :a, &(&1 * 2)) == []
+    assert Enum.map_intersperse([1], :a, &(&1 * 2)) == [2]
+    assert Enum.map_intersperse([1, 2, 3], :a, &(&1 * 2)) == [2, :a, 4, :a, 6]
   end
 
   test "map_join/3" do
@@ -378,13 +408,24 @@ defmodule EnumTest do
     end
   end
 
-  test "max/2" do
-    assert Enum.max([1], fn -> nil end) == 1
-    assert Enum.max([1, 2, 3], fn -> nil end) == 3
-    assert Enum.max([1, [], :a, {}], fn -> nil end) == []
-    assert Enum.max([], fn -> :empty_value end) == :empty_value
-    assert Enum.max(%{}, fn -> :empty_value end) == :empty_value
-    assert_runs_enumeration_only_once(&Enum.max(&1, fn -> nil end))
+  test "max/2 with stable sorting" do
+    assert Enum.max([1, 1.0], &>=/2) === 1
+    assert Enum.max([1.0, 1], &>=/2) === 1.0
+    assert Enum.max([1, 1.0], &>/2) === 1.0
+    assert Enum.max([1.0, 1], &>/2) === 1
+  end
+
+  test "max/2 with module" do
+    assert Enum.max([~D[2019-01-01], ~D[2020-01-01]], Date) === ~D[2020-01-01]
+  end
+
+  test "max/3" do
+    assert Enum.max([1], &>=/2, fn -> nil end) == 1
+    assert Enum.max([1, 2, 3], &>=/2, fn -> nil end) == 3
+    assert Enum.max([1, [], :a, {}], &>=/2, fn -> nil end) == []
+    assert Enum.max([], &>=/2, fn -> :empty_value end) == :empty_value
+    assert Enum.max(%{}, &>=/2, fn -> :empty_value end) == :empty_value
+    assert_runs_enumeration_only_once(&Enum.max(&1, fn a, b -> a >= b end, fn -> nil end))
   end
 
   test "max_by/2" do
@@ -402,12 +443,34 @@ defmodule EnumTest do
     end
   end
 
-  test "max_by/3" do
-    assert Enum.max_by(["a", "aa", "aaa"], fn x -> String.length(x) end, fn -> nil end) == "aaa"
-    assert Enum.max_by([], fn x -> String.length(x) end, fn -> :empty_value end) == :empty_value
-    assert Enum.max_by(%{}, & &1, fn -> :empty_value end) == :empty_value
-    assert Enum.max_by(%{}, & &1, fn -> {:a, :tuple} end) == {:a, :tuple}
-    assert_runs_enumeration_only_once(&Enum.max_by(&1, fn e -> e end, fn -> nil end))
+  test "max_by/3 with stable sorting" do
+    assert Enum.max_by([1, 1.0], & &1, &>=/2) === 1
+    assert Enum.max_by([1.0, 1], & &1, &>=/2) === 1.0
+    assert Enum.max_by([1, 1.0], & &1, &>/2) === 1.0
+    assert Enum.max_by([1.0, 1], & &1, &>/2) === 1
+  end
+
+  test "max_by/3 with module" do
+    users = [%{id: 1, date: ~D[2019-01-01]}, %{id: 2, date: ~D[2020-01-01]}]
+    assert Enum.max_by(users, & &1.date, Date).id == 2
+
+    users = [%{id: 1, date: ~D[2020-01-01]}, %{id: 2, date: ~D[2020-01-01]}]
+    assert Enum.max_by(users, & &1.date, Date).id == 1
+  end
+
+  test "max_by/4" do
+    assert Enum.max_by(["a", "aa", "aaa"], fn x -> String.length(x) end, &>=/2, fn -> nil end) ==
+             "aaa"
+
+    assert Enum.max_by([], fn x -> String.length(x) end, &>=/2, fn -> :empty_value end) ==
+             :empty_value
+
+    assert Enum.max_by(%{}, & &1, &>=/2, fn -> :empty_value end) == :empty_value
+    assert Enum.max_by(%{}, & &1, &>=/2, fn -> {:a, :tuple} end) == {:a, :tuple}
+
+    assert_runs_enumeration_only_once(
+      &Enum.max_by(&1, fn e -> e end, fn a, b -> a >= b end, fn -> nil end)
+    )
   end
 
   test "member?/2" do
@@ -429,13 +492,24 @@ defmodule EnumTest do
     end
   end
 
-  test "min/2" do
-    assert Enum.min([1], fn -> nil end) == 1
-    assert Enum.min([1, 2, 3], fn -> nil end) == 1
-    assert Enum.min([[], :a, {}], fn -> nil end) == :a
-    assert Enum.min([], fn -> :empty_value end) == :empty_value
-    assert Enum.min(%{}, fn -> :empty_value end) == :empty_value
-    assert_runs_enumeration_only_once(&Enum.min(&1, fn -> nil end))
+  test "min/2 with stable sorting" do
+    assert Enum.min([1, 1.0], &<=/2) === 1
+    assert Enum.min([1.0, 1], &<=/2) === 1.0
+    assert Enum.min([1, 1.0], &</2) === 1.0
+    assert Enum.min([1.0, 1], &</2) === 1
+  end
+
+  test "min/2 with module" do
+    assert Enum.min([~D[2019-01-01], ~D[2020-01-01]], Date) === ~D[2019-01-01]
+  end
+
+  test "min/3" do
+    assert Enum.min([1], &<=/2, fn -> nil end) == 1
+    assert Enum.min([1, 2, 3], &<=/2, fn -> nil end) == 1
+    assert Enum.min([[], :a, {}], &<=/2, fn -> nil end) == :a
+    assert Enum.min([], &<=/2, fn -> :empty_value end) == :empty_value
+    assert Enum.min(%{}, &<=/2, fn -> :empty_value end) == :empty_value
+    assert_runs_enumeration_only_once(&Enum.min(&1, fn a, b -> a <= b end, fn -> nil end))
   end
 
   test "min_by/2" do
@@ -453,12 +527,34 @@ defmodule EnumTest do
     end
   end
 
-  test "min_by/3" do
-    assert Enum.min_by(["a", "aa", "aaa"], fn x -> String.length(x) end, fn -> nil end) == "a"
-    assert Enum.min_by([], fn x -> String.length(x) end, fn -> :empty_value end) == :empty_value
-    assert Enum.min_by(%{}, & &1, fn -> :empty_value end) == :empty_value
-    assert Enum.min_by(%{}, & &1, fn -> {:a, :tuple} end) == {:a, :tuple}
-    assert_runs_enumeration_only_once(&Enum.min_by(&1, fn e -> e end, fn -> nil end))
+  test "min_by/3 with stable sorting" do
+    assert Enum.min_by([1, 1.0], & &1, &<=/2) === 1
+    assert Enum.min_by([1.0, 1], & &1, &<=/2) === 1.0
+    assert Enum.min_by([1, 1.0], & &1, &</2) === 1.0
+    assert Enum.min_by([1.0, 1], & &1, &</2) === 1
+  end
+
+  test "min_by/3 with module" do
+    users = [%{id: 1, date: ~D[2019-01-01]}, %{id: 2, date: ~D[2020-01-01]}]
+    assert Enum.min_by(users, & &1.date, Date).id == 1
+
+    users = [%{id: 1, date: ~D[2020-01-01]}, %{id: 2, date: ~D[2020-01-01]}]
+    assert Enum.min_by(users, & &1.date, Date).id == 1
+  end
+
+  test "min_by/4" do
+    assert Enum.min_by(["a", "aa", "aaa"], fn x -> String.length(x) end, &<=/2, fn -> nil end) ==
+             "a"
+
+    assert Enum.min_by([], fn x -> String.length(x) end, &<=/2, fn -> :empty_value end) ==
+             :empty_value
+
+    assert Enum.min_by(%{}, & &1, &<=/2, fn -> :empty_value end) == :empty_value
+    assert Enum.min_by(%{}, & &1, &<=/2, fn -> {:a, :tuple} end) == {:a, :tuple}
+
+    assert_runs_enumeration_only_once(
+      &Enum.min_by(&1, fn e -> e end, fn a, b -> a <= b end, fn -> nil end)
+    )
   end
 
   test "min_max/1" do
@@ -533,16 +629,19 @@ defmodule EnumTest do
     # please note the order of following assertions is important
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1306, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
+    :rand.seed(:exrop, seed1)
+    assert Enum.random([1, 2]) == 2
+    assert Enum.random([1, 2]) == 2
+    :rand.seed(:exrop, seed1)
     assert Enum.random([1, 2]) == 2
     assert Enum.random([1, 2, 3]) == 1
     assert Enum.random([1, 2, 3, 4]) == 1
     assert Enum.random([1, 2, 3, 4, 5]) == 2
-    :rand.seed(:exsplus, seed2)
+    :rand.seed(:exrop, seed2)
     assert Enum.random([1, 2]) == 2
-    assert Enum.random([1, 2, 3]) == 3
-    assert Enum.random([1, 2, 3, 4]) == 2
-    assert Enum.random([1, 2, 3, 4, 5]) == 3
+    assert Enum.random([1, 2, 3]) == 1
+    assert Enum.random([1, 2, 3, 4]) == 1
+    assert Enum.random([1, 2, 3, 4, 5]) == 1
   end
 
   test "reduce/2" do
@@ -608,8 +707,8 @@ defmodule EnumTest do
 
   test "shuffle/1" do
     # set a fixed seed so the test can be deterministic
-    :rand.seed(:exsplus, {1374, 347_975, 449_264})
-    assert Enum.shuffle([1, 2, 3, 4, 5]) == [2, 1, 3, 5, 4]
+    :rand.seed(:exrop, {1374, 347_975, 449_264})
+    assert Enum.shuffle([1, 2, 3, 4, 5]) == [3, 1, 4, 2, 5]
   end
 
   test "slice/2" do
@@ -672,32 +771,160 @@ defmodule EnumTest do
     end
   end
 
+  test "slice on infinite streams" do
+    assert [1, 2, 3] |> Stream.cycle() |> Enum.slice(0, 2) == [1, 2]
+    assert [1, 2, 3] |> Stream.cycle() |> Enum.slice(0, 5) == [1, 2, 3, 1, 2]
+    assert [1, 2, 3] |> Stream.cycle() |> Enum.slice(0..1) == [1, 2]
+    assert [1, 2, 3] |> Stream.cycle() |> Enum.slice(0..4) == [1, 2, 3, 1, 2]
+  end
+
   test "sort/1" do
     assert Enum.sort([5, 3, 2, 4, 1]) == [1, 2, 3, 4, 5]
   end
 
   test "sort/2" do
-    assert Enum.sort([5, 3, 2, 4, 1], &(&1 > &2)) == [5, 4, 3, 2, 1]
+    assert Enum.sort([5, 3, 2, 4, 1], &(&1 >= &2)) == [5, 4, 3, 2, 1]
+    assert Enum.sort([5, 3, 2, 4, 1], :asc) == [1, 2, 3, 4, 5]
+    assert Enum.sort([5, 3, 2, 4, 1], :desc) == [5, 4, 3, 2, 1]
+  end
+
+  test "sort/2 with module" do
+    assert Enum.sort([~D[2020-01-01], ~D[2018-01-01], ~D[2019-01-01]], Date) ==
+             [~D[2018-01-01], ~D[2019-01-01], ~D[2020-01-01]]
+
+    assert Enum.sort([~D[2020-01-01], ~D[2018-01-01], ~D[2019-01-01]], {:asc, Date}) ==
+             [~D[2018-01-01], ~D[2019-01-01], ~D[2020-01-01]]
+
+    assert Enum.sort([~D[2020-01-01], ~D[2018-01-01], ~D[2019-01-01]], {:desc, Date}) ==
+             [~D[2020-01-01], ~D[2019-01-01], ~D[2018-01-01]]
   end
 
   test "sort_by/3" do
     collection = [
-      [other_data: 1, sorted_data: 5],
-      [other_data: 3, sorted_data: 4],
-      [other_data: 4, sorted_data: 3],
-      [other_data: 2, sorted_data: 2],
-      [other_data: 5, sorted_data: 1]
+      [sorted_data: 4],
+      [sorted_data: 5],
+      [sorted_data: 2],
+      [sorted_data: 1],
+      [sorted_data: 3]
     ]
 
-    assert Enum.sort_by(collection, & &1[:sorted_data]) == [
-             [other_data: 5, sorted_data: 1],
+    asc = [
+      [sorted_data: 1],
+      [sorted_data: 2],
+      [sorted_data: 3],
+      [sorted_data: 4],
+      [sorted_data: 5]
+    ]
+
+    desc = [
+      [sorted_data: 5],
+      [sorted_data: 4],
+      [sorted_data: 3],
+      [sorted_data: 2],
+      [sorted_data: 1]
+    ]
+
+    assert Enum.sort_by(collection, & &1[:sorted_data]) == asc
+    assert Enum.sort_by(collection, & &1[:sorted_data], :asc) == asc
+    assert Enum.sort_by(collection, & &1[:sorted_data], &>=/2) == desc
+    assert Enum.sort_by(collection, & &1[:sorted_data], :desc) == desc
+  end
+
+  test "sort_by/3 with stable sorting" do
+    collection = [
+      [other_data: 2, sorted_data: 4],
+      [other_data: 1, sorted_data: 5],
+      [other_data: 2, sorted_data: 2],
+      [other_data: 3, sorted_data: 1],
+      [other_data: 4, sorted_data: 3]
+    ]
+
+    # Stable sorting
+    assert Enum.sort_by(collection, & &1[:other_data]) == [
+             [other_data: 1, sorted_data: 5],
+             [other_data: 2, sorted_data: 4],
              [other_data: 2, sorted_data: 2],
-             [other_data: 4, sorted_data: 3],
-             [other_data: 3, sorted_data: 4],
-             [other_data: 1, sorted_data: 5]
+             [other_data: 3, sorted_data: 1],
+             [other_data: 4, sorted_data: 3]
            ]
 
-    assert Enum.sort_by(collection, & &1[:sorted_data], &>=/2) == collection
+    assert Enum.sort_by(collection, & &1[:other_data]) ==
+             Enum.sort_by(collection, & &1[:other_data], :asc)
+
+    assert Enum.sort_by(collection, & &1[:other_data], &</2) == [
+             [other_data: 1, sorted_data: 5],
+             [other_data: 2, sorted_data: 2],
+             [other_data: 2, sorted_data: 4],
+             [other_data: 3, sorted_data: 1],
+             [other_data: 4, sorted_data: 3]
+           ]
+
+    assert Enum.sort_by(collection, & &1[:other_data], :desc) == [
+             [other_data: 4, sorted_data: 3],
+             [other_data: 3, sorted_data: 1],
+             [other_data: 2, sorted_data: 4],
+             [other_data: 2, sorted_data: 2],
+             [other_data: 1, sorted_data: 5]
+           ]
+  end
+
+  test "sort_by/3 with module" do
+    collection = [
+      [sorted_data: ~D[2010-01-05]],
+      [sorted_data: ~D[2010-01-04]],
+      [sorted_data: ~D[2010-01-03]],
+      [sorted_data: ~D[2010-01-02]],
+      [sorted_data: ~D[2010-01-01]]
+    ]
+
+    assert Enum.sort_by(collection, & &1[:sorted_data], Date) == [
+             [sorted_data: ~D[2010-01-01]],
+             [sorted_data: ~D[2010-01-02]],
+             [sorted_data: ~D[2010-01-03]],
+             [sorted_data: ~D[2010-01-04]],
+             [sorted_data: ~D[2010-01-05]]
+           ]
+
+    assert Enum.sort_by(collection, & &1[:sorted_data], Date) ==
+             assert(Enum.sort_by(collection, & &1[:sorted_data], {:asc, Date}))
+
+    assert Enum.sort_by(collection, & &1[:sorted_data], {:desc, Date}) == [
+             [sorted_data: ~D[2010-01-05]],
+             [sorted_data: ~D[2010-01-04]],
+             [sorted_data: ~D[2010-01-03]],
+             [sorted_data: ~D[2010-01-02]],
+             [sorted_data: ~D[2010-01-01]]
+           ]
+  end
+
+  test "sort_by/3 with module and stable sorting" do
+    collection = [
+      [other_data: ~D[2010-01-02], sorted_data: 4],
+      [other_data: ~D[2010-01-01], sorted_data: 5],
+      [other_data: ~D[2010-01-02], sorted_data: 2],
+      [other_data: ~D[2010-01-03], sorted_data: 1],
+      [other_data: ~D[2010-01-04], sorted_data: 3]
+    ]
+
+    # Stable sorting
+    assert Enum.sort_by(collection, & &1[:other_data], Date) == [
+             [other_data: ~D[2010-01-01], sorted_data: 5],
+             [other_data: ~D[2010-01-02], sorted_data: 4],
+             [other_data: ~D[2010-01-02], sorted_data: 2],
+             [other_data: ~D[2010-01-03], sorted_data: 1],
+             [other_data: ~D[2010-01-04], sorted_data: 3]
+           ]
+
+    assert Enum.sort_by(collection, & &1[:other_data], Date) ==
+             Enum.sort_by(collection, & &1[:other_data], {:asc, Date})
+
+    assert Enum.sort_by(collection, & &1[:other_data], {:desc, Date}) == [
+             [other_data: ~D[2010-01-04], sorted_data: 3],
+             [other_data: ~D[2010-01-03], sorted_data: 1],
+             [other_data: ~D[2010-01-02], sorted_data: 4],
+             [other_data: ~D[2010-01-02], sorted_data: 2],
+             [other_data: ~D[2010-01-01], sorted_data: 5]
+           ]
   end
 
   test "split/2" do
@@ -711,6 +938,10 @@ defmodule EnumTest do
     assert Enum.split([1, 2, 3], -2) == {[1], [2, 3]}
     assert Enum.split([1, 2, 3], -3) == {[], [1, 2, 3]}
     assert Enum.split([1, 2, 3], -10) == {[], [1, 2, 3]}
+
+    assert_raise FunctionClauseError, fn ->
+      Enum.split([1, 2, 3], 0.0)
+    end
   end
 
   test "split_while/2" do
@@ -752,6 +983,10 @@ defmodule EnumTest do
     assert Enum.take([1, 2, 3], -2) == [2, 3]
     assert Enum.take([1, 2, 3], -4) == [1, 2, 3]
     assert Enum.take([], 3) == []
+
+    assert_raise FunctionClauseError, fn ->
+      Enum.take([1, 2, 3], 0.0)
+    end
   end
 
   test "take_every/2" do
@@ -786,17 +1021,17 @@ defmodule EnumTest do
     # please note the order of following assertions is important
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1406, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
-    assert Enum.take_random([1, 2, 3], 1) == [2]
-    assert Enum.take_random([1, 2, 3], 2) == [3, 1]
-    assert Enum.take_random([1, 2, 3], 3) == [1, 3, 2]
-    assert Enum.take_random([1, 2, 3], 4) == [2, 3, 1]
-    :rand.seed(:exsplus, seed2)
+    :rand.seed(:exrop, seed1)
     assert Enum.take_random([1, 2, 3], 1) == [3]
-    assert Enum.take_random([1, 2, 3], 2) == [1, 2]
+    assert Enum.take_random([1, 2, 3], 2) == [2, 1]
     assert Enum.take_random([1, 2, 3], 3) == [1, 2, 3]
-    assert Enum.take_random([1, 2, 3], 4) == [2, 1, 3]
-    assert Enum.take_random([1, 2, 3], 129) == [3, 2, 1]
+    assert Enum.take_random([1, 2, 3], 4) == [3, 1, 2]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random([1, 2, 3], 1) == [1]
+    assert Enum.take_random([1, 2, 3], 2) == [1, 2]
+    assert Enum.take_random([1, 2, 3], 3) == [2, 3, 1]
+    assert Enum.take_random([1, 2, 3], 4) == [1, 3, 2]
+    assert Enum.take_random([1, 2, 3], 129) == [2, 1, 3]
 
     # assert that every item in the sample comes from the input list
     list = for _ <- 1..100, do: make_ref()
@@ -1149,6 +1384,11 @@ defmodule EnumTest.Range do
     end
   end
 
+  test "map_intersperse/3" do
+    assert Enum.map_intersperse(1..1, :a, &(&1 * 2)) == [2]
+    assert Enum.map_intersperse(1..3, :a, &(&1 * 2)) == [2, :a, 4, :a, 6]
+  end
+
   test "map_join/3" do
     assert Enum.map_join(1..0, " = ", &(&1 * 2)) == "2 = 0"
     assert Enum.map_join(1..3, " = ", &(&1 * 2)) == "2 = 4 = 6"
@@ -1209,14 +1449,14 @@ defmodule EnumTest.Range do
     # please note the order of following assertions is important
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1306, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
-    assert Enum.random(1..2) == 1
-    assert Enum.random(1..3) == 2
-    assert Enum.random(3..1) == 1
+    :rand.seed(:exrop, seed1)
+    assert Enum.random(1..2) == 2
+    assert Enum.random(1..3) == 1
+    assert Enum.random(3..1) == 2
 
-    :rand.seed(:exsplus, seed2)
-    assert Enum.random(1..2) == 1
-    assert Enum.random(1..3) == 3
+    :rand.seed(:exrop, seed2)
+    assert Enum.random(1..2) == 2
+    assert Enum.random(1..3) == 1
   end
 
   test "reduce/2" do
@@ -1273,8 +1513,8 @@ defmodule EnumTest.Range do
 
   test "shuffle/1" do
     # set a fixed seed so the test can be deterministic
-    :rand.seed(:exsplus, {1374, 347_975, 449_264})
-    assert Enum.shuffle(1..5) == [2, 1, 3, 5, 4]
+    :rand.seed(:exrop, {1374, 347_975, 449_264})
+    assert Enum.shuffle(1..5) == [3, 1, 4, 2, 5]
   end
 
   test "slice/2" do
@@ -1376,10 +1616,15 @@ defmodule EnumTest.Range do
     assert Enum.sort(3..1, &(&1 > &2)) == [3, 2, 1]
     assert Enum.sort(2..1, &(&1 > &2)) == [2, 1]
     assert Enum.sort(1..1, &(&1 > &2)) == [1]
+
+    assert Enum.sort(3..1, :asc) == [1, 2, 3]
+    assert Enum.sort(3..1, :desc) == [3, 2, 1]
   end
 
   test "sort_by/2" do
     assert Enum.sort_by(3..1, & &1) == [1, 2, 3]
+    assert Enum.sort_by(3..1, & &1, :asc) == [1, 2, 3]
+    assert Enum.sort_by(3..1, & &1, :desc) == [3, 2, 1]
   end
 
   test "split/2" do
@@ -1451,22 +1696,29 @@ defmodule EnumTest.Range do
     # please note the order of following assertions is important
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1406, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
-    assert Enum.take_random(1..3, 1) == [2]
-    assert Enum.take_random(1..3, 2) == [3, 1]
-    assert Enum.take_random(1..3, 3) == [1, 3, 2]
-    assert Enum.take_random(1..3, 4) == [2, 3, 1]
-    assert Enum.take_random(3..1, 1) == [3]
-    :rand.seed(:exsplus, seed2)
+    :rand.seed(:exrop, seed1)
     assert Enum.take_random(1..3, 1) == [3]
-    assert Enum.take_random(1..3, 2) == [1, 2]
-    assert Enum.take_random(1..3, 3) == [1, 2, 3]
-    assert Enum.take_random(1..3, 4) == [2, 1, 3]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(1..3, 2) == [3, 2]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(1..3, 3) == [3, 2, 1]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(1..3, 4) == [3, 2, 1]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(3..1, 1) == [1]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(1..3, 1) == [1]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(1..3, 2) == [1, 3]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(1..3, 3) == [1, 3, 2]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(1..3, 4) == [1, 3, 2]
 
     # make sure optimizations don't change fixed seeded tests
-    :rand.seed(:exsplus, {101, 102, 103})
+    :rand.seed(:exrop, {101, 102, 103})
     one = Enum.take_random(1..100, 1)
-    :rand.seed(:exsplus, {101, 102, 103})
+    :rand.seed(:exrop, {101, 102, 103})
     two = Enum.take_random(1..100, 2)
     assert hd(one) == hd(two)
   end
@@ -1525,14 +1777,14 @@ defmodule EnumTest.Map do
     map = %{a: 1, b: 2, c: 3}
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1406, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
+    :rand.seed(:exrop, seed1)
+    assert Enum.random(map) == {:a, 1}
+    assert Enum.random(map) == {:a, 1}
+    assert Enum.random(map) == {:b, 2}
+
+    :rand.seed(:exrop, seed2)
     assert Enum.random(map) == {:c, 3}
     assert Enum.random(map) == {:b, 2}
-    assert Enum.random(map) == {:c, 3}
-
-    :rand.seed(:exsplus, seed2)
-    assert Enum.random(map) == {:a, 1}
-    assert Enum.random(map) == {:a, 1}
   end
 
   test "take_random/2" do
@@ -1547,16 +1799,22 @@ defmodule EnumTest.Map do
     map = %{a: 1, b: 2, c: 3}
     seed1 = {1406, 407_414, 139_258}
     seed2 = {1406, 421_106, 567_597}
-    :rand.seed(:exsplus, seed1)
-    assert Enum.take_random(map, 1) == [b: 2]
-    assert Enum.take_random(map, 2) == [c: 3, a: 1]
-    assert Enum.take_random(map, 3) == [a: 1, c: 3, b: 2]
-    assert Enum.take_random(map, 4) == [b: 2, c: 3, a: 1]
-    :rand.seed(:exsplus, seed2)
+    :rand.seed(:exrop, seed1)
     assert Enum.take_random(map, 1) == [c: 3]
-    assert Enum.take_random(map, 2) == [a: 1, b: 2]
-    assert Enum.take_random(map, 3) == [a: 1, b: 2, c: 3]
-    assert Enum.take_random(map, 4) == [b: 2, a: 1, c: 3]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(map, 2) == [c: 3, b: 2]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(map, 3) == [c: 3, b: 2, a: 1]
+    :rand.seed(:exrop, seed1)
+    assert Enum.take_random(map, 4) == [c: 3, b: 2, a: 1]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(map, 1) == [a: 1]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(map, 2) == [a: 1, c: 3]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(map, 3) == [a: 1, c: 3, b: 2]
+    :rand.seed(:exrop, seed2)
+    assert Enum.take_random(map, 4) == [a: 1, c: 3, b: 2]
   end
 
   test "reverse/1" do
@@ -1585,6 +1843,14 @@ defmodule EnumTest.Map do
 
     assert Stream.take(map, 3) |> Enum.fetch(3) == :error
     assert Stream.take(map, 5) |> Enum.fetch(4) == {:ok, {:e, 5}}
+  end
+
+  test "map_intersperse/3" do
+    assert Enum.map_intersperse(%{}, :a, & &1) == []
+    assert Enum.map_intersperse(%{foo: :bar}, :a, & &1) == [{:foo, :bar}]
+
+    assert Enum.map_intersperse(%{foo: :bar, baz: :bat}, :a, & &1) ==
+             [{:baz, :bat}, :a, {:foo, :bar}]
   end
 
   test "slice/2" do

@@ -21,31 +21,31 @@ defmodule Macro.Env do
 
   It contains the following fields:
 
-    * `module` - the current module name
+    * `aliases` -  a list of two-element tuples, where the first
+      element is the aliased name and the second one the actual name
+    * `context` - the context of the environment; it can be `nil`
+      (default context), `:guard` (inside a guard) or `:match` (inside a match)
+    * `context_modules` - a list of modules defined in the current context
     * `file` - the current file name as a binary
-    * `line` - the current line as an integer
     * `function` - a tuple as `{atom, integer}`, where the first
       element is the function name and the second its arity; returns
       `nil` if not inside a function
-    * `context` - the context of the environment; it can be `nil`
-      (default context), `:guard` (inside a guard) or `:match` (inside a match)
-    * `aliases` -  a list of two-element tuples, where the first
-      element is the aliased name and the second one the actual name
-    * `requires` - the list of required modules
     * `functions` - a list of functions imported from each module
-    * `macros` - a list of macros imported from each module
+    * `line` - the current line as an integer
     * `macro_aliases` - a list of aliases defined inside the current macro
-    * `context_modules` - a list of modules defined in the current context
-    * `lexical_tracker` - PID of the lexical tracker which is responsible for
-      keeping user info
+    * `macros` - a list of macros imported from each module
+    * `module` - the current module name
+    * `requires` - the list of required modules
 
-  The following fields pertain to variable handling and must not be accessed or
-  relied on. To get a list of all variables, see `vars/1`:
+  The following fields are private to Elixir's macro expansion mechanism and
+  must not be accessed directly:
 
-    * `current_vars`
-    * `unused_vars`
-    * `prematch_vars`
     * `contextual_vars`
+    * `current_vars`
+    * `lexical_tracker`
+    * `prematch_vars`
+    * `tracers`
+    * `unused_vars`
 
   The following fields are deprecated and must not be accessed or relied on:
 
@@ -53,69 +53,80 @@ defmodule Macro.Env do
 
   """
 
-  @type name_arity :: {atom, arity}
-  @type file :: binary
-  @type line :: non_neg_integer
   @type aliases :: [{module, module}]
-  @type macro_aliases :: [{module, {term, module}}]
   @type context :: :match | :guard | nil
-  @type requires :: [module]
-  @type functions :: [{module, [name_arity]}]
-  @type macros :: [{module, [name_arity]}]
   @type context_modules :: [module]
+  @type file :: binary
+  @type functions :: [{module, [name_arity]}]
   @type lexical_tracker :: pid | nil
+  @type line :: non_neg_integer
+  @type macro_aliases :: [{module, {term, module}}]
+  @type macros :: [{module, [name_arity]}]
+  @type name_arity :: {atom, arity}
+  @type requires :: [module]
   @type variable :: {atom, atom | term}
 
-  @typep vars :: [variable]
+  @typep contextual_vars :: [atom]
+  @typep current_vars ::
+           {%{optional(variable) => {var_version, var_type}},
+            %{optional(variable) => {var_version, var_type}} | false}
+  @typep unused_vars ::
+           {%{optional({atom, var_version}) => non_neg_integer | false}, non_neg_integer}
+  @typep prematch_vars ::
+           {%{optional(variable) => {var_version, var_type}}, non_neg_integer}
+           | :warn
+           | :raise
+           | :pin
+           | :apply
+  @typep tracers :: [module]
   @typep var_type :: :term
   @typep var_version :: non_neg_integer
-  @typep unused_vars :: %{optional({variable, var_version}) => non_neg_integer | false}
-  @typep current_vars :: %{optional(variable) => {var_version, var_type}}
-  @typep prematch_vars :: current_vars | :warn | :raise | :pin | :apply
-  @typep contextual_vars :: [atom]
+  @typep vars :: [variable]
 
   @type t :: %{
           __struct__: __MODULE__,
-          module: atom,
-          file: file,
-          line: line,
-          function: name_arity | nil,
-          context: context,
-          requires: requires,
           aliases: aliases,
-          functions: functions,
-          macros: macros,
-          macro_aliases: macro_aliases,
+          context: context,
           context_modules: context_modules,
-          vars: vars,
-          unused_vars: unused_vars,
+          contextual_vars: contextual_vars,
           current_vars: current_vars,
-          prematch_vars: prematch_vars,
+          file: file,
+          function: name_arity | nil,
+          functions: functions,
           lexical_tracker: lexical_tracker,
-          contextual_vars: contextual_vars
+          line: line,
+          macro_aliases: macro_aliases,
+          macros: macros,
+          module: atom,
+          prematch_vars: prematch_vars,
+          unused_vars: unused_vars,
+          requires: requires,
+          tracers: tracers,
+          vars: vars
         }
 
   # TODO: Remove :vars field on v2.0
   def __struct__ do
     %{
       __struct__: __MODULE__,
-      module: nil,
-      file: "nofile",
-      line: 0,
-      function: nil,
-      context: nil,
-      requires: [],
       aliases: [],
-      functions: [],
-      macros: [],
-      macro_aliases: [],
+      context: nil,
       context_modules: [],
-      vars: [],
-      unused_vars: %{},
-      current_vars: %{},
-      prematch_vars: :warn,
+      contextual_vars: [],
+      current_vars: {%{}, %{}},
+      file: "nofile",
+      function: nil,
+      functions: [],
       lexical_tracker: nil,
-      contextual_vars: []
+      line: 0,
+      macro_aliases: [],
+      macros: [],
+      module: nil,
+      prematch_vars: :warn,
+      requires: [],
+      tracers: [],
+      unused_vars: {%{}, 0},
+      vars: []
     }
   end
 
@@ -135,8 +146,8 @@ defmodule Macro.Env do
   @spec vars(t) :: [variable]
   def vars(env)
 
-  def vars(%{__struct__: Macro.Env, current_vars: current_vars}) do
-    Map.keys(current_vars)
+  def vars(%{__struct__: Macro.Env, current_vars: {read, _}}) do
+    Map.keys(read)
   end
 
   @doc """
@@ -146,8 +157,8 @@ defmodule Macro.Env do
   @spec has_var?(t, variable) :: boolean()
   def has_var?(env, var)
 
-  def has_var?(%{__struct__: Macro.Env, current_vars: current_vars}, var) do
-    Map.has_key?(current_vars, var)
+  def has_var?(%{__struct__: Macro.Env, current_vars: {read, _}}, var) do
+    Map.has_key?(read, var)
   end
 
   @doc """
@@ -169,8 +180,8 @@ defmodule Macro.Env do
     env
   end
 
-  def to_match(%{__struct__: Macro.Env, current_vars: vars} = env) do
-    %{env | context: :match, prematch_vars: vars}
+  def to_match(%{__struct__: Macro.Env, current_vars: {read, _}, unused_vars: {_, counter}} = env) do
+    %{env | context: :match, prematch_vars: {read, counter}}
   end
 
   @doc """

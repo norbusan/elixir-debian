@@ -234,7 +234,10 @@ defmodule Mix do
   Mix responds to the following variables:
 
     * `MIX_ARCHIVES` - specifies the directory into which the archives should be installed
-    * `MIX_BUILD_PATH` - sets the project build_path config
+    * `MIX_BUILD_PATH` - sets the project `Mix.Project.build_path/0` config. This option
+      must always point to a subdirectory inside a temporary directory. For instance,
+      never "/tmp" or "_build" but "_build/PROD" or "/tmp/PROD", as required by Mix
+    * `MIX_DEPS_PATH` - sets the project `Mix.Project.deps_path/0` config
     * `MIX_DEBUG` - outputs debug information about each task before running it
     * `MIX_ENV` - specifies which environment should be used. See [Environments](#module-environments)
     * `MIX_TARGET` - specifies which target should be used. See [Targets](#module-targets)
@@ -335,7 +338,7 @@ defmodule Mix do
   """
   @spec compilers() :: [atom()]
   def compilers do
-    [:yecc, :leex, :erlang, :elixir, :xref, :app]
+    [:yecc, :leex, :erlang, :elixir, :app]
   end
 
   @doc """
@@ -387,5 +390,18 @@ defmodule Mix do
   @spec raise(binary) :: no_return
   def raise(message) when is_binary(message) do
     Kernel.raise(Mix.Error, mix: true, message: message)
+  end
+
+  @doc """
+  The path for local archives or escripts.
+  """
+  @doc since: "1.10.0"
+  @spec path_for(:archives | :escripts) :: String.t()
+  def path_for(:archives) do
+    System.get_env("MIX_ARCHIVES") || Path.join(Mix.Utils.mix_home(), "archives")
+  end
+
+  def path_for(:escripts) do
+    Path.join(Mix.Utils.mix_home(), "escripts")
   end
 end

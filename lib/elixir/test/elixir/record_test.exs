@@ -78,7 +78,7 @@ defmodule RecordTest do
   def record_in_guard?(term, kind) when Record.is_record(term, kind), do: true
   def record_in_guard?(_, _), do: false
 
-  test "is_record/1/2 (in guard)" do
+  test "is_record/1,2 (in guard)" do
     assert record_in_guard?({User, "john", 27})
     refute record_in_guard?({"user", "john", 27})
 
@@ -122,9 +122,7 @@ defmodule RecordTest do
     record = user(_: :_, name: "meg")
     assert user(record, :name) == "meg"
     assert user(record, :age) == :_
-
     assert match?(user(_: _), user())
-    refute match?(user(_: "other"), user())
   end
 
   Record.defrecord(
@@ -287,6 +285,44 @@ defmodule RecordTest do
         require Record
         Record.defrecord(:a, [:a])
       end
+    end
+  end
+
+  describe "warnings" do
+    import ExUnit.CaptureIO
+
+    test "warns on bad record update input" do
+      assert capture_io(:stderr, fn ->
+               defmodule RecordSample do
+                 require Record
+                 Record.defrecord(:user, __MODULE__, name: "john", age: 25)
+
+                 def fun do
+                   user(user(), _: :_, name: "meg")
+                 end
+               end
+             end) =~
+               "updating a record with a default (:_) is equivalent to creating a new record"
+    after
+      purge(RecordSample)
+    end
+
+    test "defrecord warns with duplicate keys" do
+      assert capture_io(:stderr, fn ->
+               Code.eval_string("""
+               defmodule RecordSample do
+                 import Record
+                 defrecord :r, [:foo, :bar, foo: 1]
+               end
+               """)
+             end) =~ "duplicate key :foo found in record"
+    after
+      purge(RecordSample)
+    end
+
+    defp purge(module) when is_atom(module) do
+      :code.delete(module)
+      :code.purge(module)
     end
   end
 end

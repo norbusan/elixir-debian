@@ -1,0 +1,168 @@
+env:
+  CIRRUS_CLONE_DEPTH: 50
+  ELIXIR_ASSERT_TIMEOUT: 2000
+  ELIXIRC_OPTS: "--warnings-as-errors"
+  ERLC_OPTS: "+warnings_as_errors"
+  LANG: C.UTF-8
+
+test_template: &DEFAULT_TEST_SETTINGS
+  # don't cancel the task execution if it's master or a release branch
+  auto_cancellation: $CIRRUS_BRANCH != 'master' && $CIRRUS_BRANCH !=~ 'v\d+\.\d+.*'
+
+test_linux_task:
+  <<: *DEFAULT_TEST_SETTINGS
+
+  container:
+    image: buildpack-deps:trusty
+    cpu: 8
+    memory: 1536Mi
+
+  env:
+    PATH: "${CIRRUS_WORKING_DIR}/otp/bin:${PATH}"
+
+  matrix:
+    - name: Linux, ${OTP_RELEASE}, Ubuntu 14.04
+      alias: Linux Stable
+      matrix:
+        - env:
+            CHECK_POSIX_COMPLIANT: true
+            CHECK_REPRODUCIBLE: true
+            OTP_RELEASE: OTP-22.1
+        - env:
+            OTP_RELEASE: OTP-22.0
+        - env:
+            OTP_RELEASE: OTP-21.3.8
+        - env:
+            OTP_RELEASE: OTP-21.2
+        - env:
+            OTP_RELEASE: OTP-21.1
+        - env:
+            OTP_RELEASE: OTP-21.0
+
+    - name: Linux, OTP-${OTP_RELEASE}, development, Ubuntu 14.04
+      alias: Linux Development
+      allow_failures: true
+      skip_notifications: true
+      depends_on:
+        - Linux Stable
+        - FreeBSD Stable
+      matrix:
+        - env:
+            OTP_RELEASE: master
+        - env:
+            OTP_RELEASE: maint
+
+  install_script:
+    - wget -O otp.tar.gz https://repo.hex.pm/builds/otp/ubuntu-14.04/${OTP_RELEASE}.tar.gz
+    - mkdir -p otp
+    - tar zxf otp.tar.gz -C otp --strip-components=1
+    - otp/Install -minimal ${CIRRUS_WORKING_DIR}/otp
+    - rm -rf .git
+    - make compile
+
+  build_info_script: bin/elixir --version
+
+  test_formatted_script:
+    - make test_formatted &&
+      echo "All Elixir source code files are properly formatted."
+
+  dialyzer_script: dialyzer -pa lib/elixir/ebin --build_plt --output_plt elixir.plt --apps lib/elixir/ebin/elixir.beam lib/elixir/ebin/Elixir.Kernel.beam
+
+  test_erlang_script: make test_erlang
+
+  test_elixir_script: make test_elixir
+
+  check_posix_compliant_script: |
+    if [ -n "$CHECK_POSIX_COMPLIANT" ]; then
+      apt update
+      apt install -y shellcheck
+      shellcheck -e SC2039,2086 bin/elixir && echo "bin/elixir is POSIX compliant"
+      shellcheck bin/elixirc && echo "bin/elixirc is POSIX compliant"
+      shellcheck bin/iex && echo "bin/iex is POSIX compliant"
+    else
+      echo "The format of the shell scripts is only checked in the last stable Erlang/OTP version."
+    fi
+
+  check_reproducible_script: |
+    if [ -n "$CHECK_REPRODUCIBLE" ]; then
+      make check_reproducible
+    else
+      echo "The reproducibility of the build is only checked in the last stable Erlang/OTP version."
+    fi
+
+
+test_windows_task:
+  <<: *DEFAULT_TEST_SETTINGS
+
+  name: Windows, OTP-${OTP_RELEASE}, Windows Server 2019
+  alias: Windows Stable
+
+  matrix:
+    - env:
+        OS_VERSION: 2019
+        OTP_RELEASE: 22.0
+
+    - env:
+        OS_VERSION: 2019
+        OTP_RELEASE: 21.0.1
+
+  windows_container:
+    image: fertapric/elixir-ci:otp-win64-${OTP_RELEASE}
+    os_version: ${OS_VERSION}
+    cpu: 4
+    memory: 3840Mi
+
+  install_script:
+    - rmdir /s /q .git
+    - make compile
+
+  build_info_script: bin/elixir --version
+
+  test_formatted_script:
+    - make test_formatted &&
+      echo "All Elixir source code files are properly formatted."
+
+  test_erlang_script: make --keep-going test_erlang
+
+  test_elixir_script: make --keep-going test_elixir
+
+
+test_freebsd_task:
+  <<: *DEFAULT_TEST_SETTINGS
+
+  name: FreeBSD 12.0
+  alias: FreeBSD Stable
+
+  freebsd_instance:
+    image_family: freebsd-12-0
+    cpu: 8
+    memory: 7424Mi
+
+  env:
+    CHECK_REPRODUCIBLE: true
+    LC_ALL: en_US.UTF-8
+
+  install_script:
+    - sudo pkg update
+    - pkg install -y erlang git gmake
+    - rm -rf .git
+    - gmake compile
+
+  build_info_script: bin/elixir --version
+
+  test_formatted_script:
+    - gmake test_formatted &&
+      echo "All Elixir source code files are properly formatted."
+
+  dialyzer_script: dialyzer -pa lib/elixir/ebin --build_plt --output_plt elixir.plt --apps lib/elixir/ebin/elixir.beam lib/elixir/ebin/Elixir.Kernel.beam
+
+  test_erlang_script: gmake test_erlang
+
+  test_elixir_script: gmake test_elixir
+
+  check_reproducible_script: |
+    if [ -n "$CHECK_REPRODUCIBLE" ]; then
+      gmake check_reproducible
+    else
+      echo "The reproducibility of the build is only checked in the last stable Erlang/OTP version."
+    fi

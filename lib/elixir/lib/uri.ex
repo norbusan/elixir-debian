@@ -74,7 +74,7 @@ defmodule URI do
   Encodes an enumerable into a query string.
 
   Takes an enumerable that enumerates as a list of two-element
-  tuples (e.g., a map or a keyword list) and returns a string
+  tuples (for instance, a map or a keyword list) and returns a string
   in the form of `key1=value1&key2=value2...` where keys and
   values are URL encoded as per `encode_www_form/1`.
 
@@ -234,7 +234,7 @@ defmodule URI do
   the following characters are unreserved:
 
     * Alphanumeric characters: `A-Z`, `a-z`, `0-9`
-    * `~`, `_`, `-`
+    * `~`, `_`, `-`, `.`
 
   ## Examples
 
@@ -251,7 +251,8 @@ defmodule URI do
   Checks if `character` is allowed unescaped in a URI.
 
   This is the default used by `URI.encode/2` where both
-  reserved and unreserved characters are kept unescaped.
+  [reserved](`char_reserved?/1`) and [unreserved characters](`char_unreserved?/1`)
+  are kept unescaped.
 
   ## Examples
 
@@ -271,14 +272,15 @@ defmodule URI do
   so-called unreserved characters, which have the same meaning both
   escaped and unescaped, won't be escaped by default.
 
-  See `encode_www_form` if you are interested in escaping reserved
+  See `encode_www_form/1` if you are interested in escaping reserved
   characters too.
 
   This function also accepts a `predicate` function as an optional
   argument. If passed, this function will be called with each byte
   in `string` as its argument and should return a truthy value (anything other
   than `false` or `nil`) if the given byte should be left as is, or return a
-  falsy value (`false` or `nil`) if the character should be escaped.
+  falsy value (`false` or `nil`) if the character should be escaped. Defaults
+  to `URI.char_unescaped?/1`.
 
   ## Examples
 
@@ -452,18 +454,38 @@ defmodule URI do
 
   def parse(string) when is_binary(string) do
     # From https://tools.ietf.org/html/rfc3986#appendix-B
+    # Parts:    12                        3  4          5       6  7        8 9
     regex = ~r{^(([a-z][a-z0-9\+\-\.]*):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?}i
 
     parts = Regex.run(regex, string)
 
-    destructure [_, _, scheme, _, authority, path, query_with_question_mark, _, _, fragment],
+    destructure [
+                  _full,
+                  # 1
+                  _scheme_with_colon,
+                  # 2
+                  scheme,
+                  # 3
+                  authority_with_slashes,
+                  # 4
+                  _authority,
+                  # 5
+                  path,
+                  # 6
+                  query_with_question_mark,
+                  # 7
+                  _query,
+                  # 8
+                  _fragment_with_hash,
+                  # 9
+                  fragment
+                ],
                 parts
 
     scheme = nillify(scheme)
-    authority = nillify(authority)
     path = nillify(path)
     query = nillify_query(query_with_question_mark)
-    {userinfo, host, port} = split_authority(authority)
+    {authority, userinfo, host, port} = split_authority(authority_with_slashes)
 
     scheme = scheme && String.downcase(scheme)
     port = port || (scheme && default_port(scheme))
@@ -484,16 +506,24 @@ defmodule URI do
   defp nillify_query(_other), do: nil
 
   # Split an authority into its userinfo, host and port parts.
-  defp split_authority(string) do
+  defp split_authority("") do
+    {nil, nil, nil, nil}
+  end
+
+  defp split_authority("//") do
+    {"", nil, "", nil}
+  end
+
+  defp split_authority("//" <> authority) do
     regex = ~r/(^(.*)@)?(\[[a-zA-Z0-9:.]*\]|[^:]*)(:(\d*))?/
-    components = Regex.run(regex, string || "")
+    components = Regex.run(regex, authority)
 
     destructure [_, _, userinfo, host, _, port], components
     userinfo = nillify(userinfo)
     host = if nillify(host), do: host |> String.trim_leading("[") |> String.trim_trailing("]")
     port = if nillify(port), do: String.to_integer(port)
 
-    {userinfo, host, port}
+    {authority, userinfo, host, port}
   end
 
   # Regex.run returns empty strings sometimes. We want
@@ -506,10 +536,12 @@ defmodule URI do
 
   ## Examples
 
-      iex> URI.to_string(URI.parse("http://google.com"))
+      iex> uri = URI.parse("http://google.com")
+      iex> URI.to_string(uri)
       "http://google.com"
 
-      iex> URI.to_string(%URI{scheme: "foo", host: "bar.baz"})
+      iex> uri = URI.parse("foo://bar.baz")
+      iex> URI.to_string(uri)
       "foo://bar.baz"
 
   Note that when creating this string representation, the `:authority` value will be
@@ -624,6 +656,14 @@ defmodule URI do
 end
 
 defimpl String.Chars, for: URI do
+  def to_string(%{host: host, authority: authority, path: path} = uri)
+      when (host != nil or authority != nil) and is_binary(path) and
+             path != "" and binary_part(path, 0, 1) != "/" do
+    raise ArgumentError,
+          ":path in URI must be nil or an absolute path if :host or :authority are given, " <>
+            "got: #{inspect(uri)}"
+  end
+
   def to_string(%{scheme: scheme, port: port, path: path, query: query, fragment: fragment} = uri) do
     uri =
       case scheme && URI.default_port(scheme) do

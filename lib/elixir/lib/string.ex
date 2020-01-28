@@ -2,25 +2,85 @@ import Kernel, except: [length: 1]
 
 defmodule String do
   @moduledoc ~S"""
-  A String in Elixir is a UTF-8 encoded binary.
+  Strings in Elixir are UTF-8 encoded binaries.
+
+  Strings in Elixir are a sequence of Unicode characters,
+  typically written between double quoted strings, such
+  as `"hello"` and `"héllò"`.
+
+  In case a string must have a double-quote in itself,
+  the double quotes must be escaped with a backslash,
+  for example: `"this is a string with \"double quotes\""`.
+
+  You can concatenate two strings with the `<>/2` operator:
+
+      iex> "hello" <> " " <> "world"
+      "hello world"
+
+  ## Interpolation
+
+  Strings in Elixir also support interpolation. This allows
+  you to place some value in the middle of a string by using
+  the `#{}` syntax:
+
+      iex> name = "joe"
+      iex> "hello #{name}"
+      "hello joe"
+
+  Any Elixir expression is valid inside the interpolation.
+  If a string is given, the string is interpolated as is.
+  If any other value is given, Elixir will attempt to convert
+  it to a string using the `String.Chars` protocol. This
+  allows, for example, to output an integer from the interpolation:
+
+      iex> "2 + 2 = #{2 + 2}"
+      "2 + 2 = 4"
+
+  In case the value you want to interpolate cannot be
+  converted to a string, because it doesn't have an human
+  textual representation, a protocol error will be raised.
+
+  ## Escape characters
+
+  Besides allowing double-quotes to be escaped with a backslash,
+  strings also support the following escape characters:
+
+    * `\a` - Bell
+    * `\b` - Backspace
+    * `\t` - Horizontal tab
+    * `\n` - Line feed (New lines)
+    * `\v` - Vertical tab
+    * `\f` - Form feed
+    * `\r` - Carriage return
+    * `\e` - Command Escape
+    * `\#` - Returns the `#` character itself, skipping interpolation
+    * `\xNN` - A byte represented by the hexadecimal `NN`
+    * `\uNNNN` - A Unicode code point represented by `NNNN`
+
+  Note it is generally not advised to use `\xNN` in Elixir
+  strings, as introducing an invalid byte sequence would
+  make the string invalid. If you have to introduce a
+  character by its hexdecimal representation, it is best
+  to work with Unicode code points, such as `\uNNNN`. In fact,
+  understanding Unicode code points can be essential when doing
+  low-level manipulations of string, so let's explore them in
+  detail next.
 
   ## Code points and grapheme cluster
 
   The functions in this module act according to the Unicode
-  Standard, version 11.0.0.
+  Standard, version 12.1.0.
 
   As per the standard, a code point is a single Unicode Character,
   which may be represented by one or more bytes.
 
-  For example, the code point "é" is two bytes:
-
-      iex> byte_size("é")
-      2
-
-  However, this module returns the proper length:
+  For example, although the code point "é" is a single character,
+  its underlying representation uses two bytes:
 
       iex> String.length("é")
       1
+      iex> byte_size("é")
+      2
 
   Furthermore, this module also presents the concept of grapheme cluster
   (from now on referenced as graphemes). Graphemes can consist of multiple
@@ -49,11 +109,8 @@ defmodule String do
 
   In general, the functions in this module rely on the Unicode
   Standard, but do not contain any of the locale specific behaviour.
-
   More information about graphemes can be found in the [Unicode
   Standard Annex #29](https://www.unicode.org/reports/tr29/).
-  The current Elixir version implements Extended Grapheme Cluster
-  algorithm.
 
   For converting a binary to a different encoding and for Unicode
   normalization mechanisms, see Erlang's `:unicode` module.
@@ -74,7 +131,7 @@ defmodule String do
 
     * `Kernel.binary_part/3` - retrieves part of the binary
     * `Kernel.bit_size/1` and `Kernel.byte_size/1` - size related functions
-    * `Kernel.is_bitstring/1` and `Kernel.is_binary/1` - type checking function
+    * `Kernel.is_bitstring/1` and `Kernel.is_binary/1` - type-check function
     * Plus a number of functions for working with binaries (bytes)
       in the [`:binary` module](http://www.erlang.org/doc/man/binary.html)
 
@@ -160,8 +217,15 @@ defmodule String do
   As we have seen above, code points can be inserted into
   a string by their hexadecimal code:
 
-      "ol\u0061\u0301" #=>
+      iex> "ol\u00E1"
       "olá"
+
+  Finally, to convert a String into a list of integers
+  code points, usually known as "char lists", you can call
+  `Strig.to_charlist`:
+
+      iex> String.to_charlist("olá")
+      [111, 108, 225]
 
   ## Self-synchronization
 
@@ -180,7 +244,7 @@ defmodule String do
   responsible to check the validity of the encoding. `String.chunk/2`
   can be used for breaking a string into valid and invalid parts.
 
-  ## Patterns
+  ## Compile binary patterns
 
   Many functions in this module work with patterns. For example,
   `String.split/2` can split a string into multiple strings given
@@ -212,7 +276,7 @@ defmodule String do
   """
   @type t :: binary
 
-  @typedoc "A UTF-8 code point. It may be one or more bytes."
+  @typedoc "A single Unicode code point encoded in UTF-8. It may be one or more bytes."
   @type codepoint :: t
 
   @typedoc "Multiple code points that may be perceived as a single character by readers"
@@ -391,13 +455,13 @@ defmodule String do
   For example, take the grapheme "é" which is made of the characters
   "e" and the acute accent. The following will split the string into two parts:
 
-      iex> String.split(String.normalize("é", :nfd), "e")
+      iex> String.split(:unicode.characters_to_nfd_binary("é"), "e")
       ["", "́"]
 
   However, if "é" is represented by the single character "e with acute"
   accent, then it will split the string into just one part:
 
-      iex> String.split(String.normalize("é", :nfc), "e")
+      iex> String.split(:unicode.characters_to_nfc_binary("é"), "e")
       ["é"]
 
   """
@@ -420,15 +484,18 @@ defmodule String do
     end
   end
 
-  def split(string, pattern, []) when is_tuple(pattern) or is_binary(string) do
-    :binary.split(string, pattern, [:global])
-  end
-
   def split(string, pattern, options) when is_binary(string) do
     parts = Keyword.get(options, :parts, :infinity)
     trim = Keyword.get(options, :trim, false)
-    pattern = maybe_compile_pattern(pattern)
-    split_each(string, pattern, trim, parts_to_index(parts))
+
+    case {parts, trim} do
+      {:infinity, false} ->
+        :binary.split(string, pattern, [:global])
+
+      _ ->
+        pattern = maybe_compile_pattern(pattern)
+        split_each(string, pattern, trim, parts_to_index(parts))
+    end
   end
 
   defp parts_to_index(:infinity), do: 0
@@ -607,34 +674,8 @@ defmodule String do
     normalize(string1, :nfd) == normalize(string2, :nfd)
   end
 
-  @doc """
-  Converts all characters in `string` to Unicode normalization
-  form identified by `form`.
-
-  ## Forms
-
-  The supported forms are:
-
-    * `:nfd` - Normalization Form Canonical Decomposition.
-      Characters are decomposed by canonical equivalence, and
-      multiple combining characters are arranged in a specific
-      order.
-
-    * `:nfc` - Normalization Form Canonical Composition.
-      Characters are decomposed and then recomposed by canonical equivalence.
-
-  ## Examples
-
-      iex> String.normalize("yêṩ", :nfd)
-      "yêṩ"
-
-      iex> String.normalize("leña", :nfc)
-      "leña"
-
-  """
-  # TODO: Fully deprecate it on v1.10
-  @doc deprecated:
-         "Use :unicode.characters_to_nfc_binary/1 or :unicode.characters_to_nfd_binary/1 instead"
+  @doc false
+  @deprecated "Use :unicode.characters_to_nfc_binary/1 or :unicode.characters_to_nfd_binary/1 instead"
   def normalize(string, form)
 
   def normalize(string, :nfd) do
@@ -1303,7 +1344,7 @@ defmodule String do
       "a-b,c"
 
   The pattern may also be a list of strings and the replacement may also
-  be a function that receives the matched patterns:
+  be a function that receives the matches:
 
       iex> String.replace("a,b,c", ["a", "c"], fn <<char>> -> <<char + 1>> end)
       "b,b,d"
@@ -1317,8 +1358,7 @@ defmodule String do
 
   Notice we had to escape the backslash escape character (i.e., we used `\\N`
   instead of just `\N` to escape the backslash; same thing for `\\g{N}`). By
-  giving `\0`, one can inject the whole matched pattern in the replacement
-  string.
+  giving `\0`, one can inject the whole match in the replacement string.
 
   A compiled pattern can also be given:
 
@@ -1340,35 +1380,38 @@ defmodule String do
   """
   @spec replace(t, pattern | Regex.t(), t | (t -> t | iodata), keyword) :: t
   def replace(subject, pattern, replacement, options \\ [])
+      when is_binary(subject) and
+             (is_binary(replacement) or is_function(replacement, 1)) and
+             is_list(options) do
+    replace_guarded(subject, pattern, replacement, options)
+  end
 
-  def replace(subject, %{__struct__: Regex} = regex, replacement, options)
-      when is_binary(replacement) or is_function(replacement, 1) do
+  defp replace_guarded(subject, %{__struct__: Regex} = regex, replacement, options) do
     Regex.replace(regex, subject, replacement, options)
   end
 
-  def replace(subject, "", "", _) when is_binary(subject) do
+  defp replace_guarded(subject, "", "", _) do
     subject
   end
 
-  def replace(subject, "", replacement, options)
-      when is_binary(subject) and is_binary(replacement) do
+  defp replace_guarded(subject, "", replacement_binary, options)
+       when is_binary(replacement_binary) do
     if Keyword.get(options, :global, true) do
-      IO.iodata_to_binary([replacement | intersperse_bin(subject, replacement)])
+      IO.iodata_to_binary([replacement_binary | intersperse_bin(subject, replacement_binary)])
     else
-      replacement <> subject
+      replacement_binary <> subject
     end
   end
 
-  def replace(subject, "", replacement, options)
-      when is_binary(subject) and is_function(replacement, 1) do
+  defp replace_guarded(subject, "", replacement_fun, options) do
     if Keyword.get(options, :global, true) do
-      IO.iodata_to_binary([replacement.("") | intersperse_fun(subject, replacement)])
+      IO.iodata_to_binary([replacement_fun.("") | intersperse_fun(subject, replacement_fun)])
     else
-      IO.iodata_to_binary([replacement.("") | subject])
+      IO.iodata_to_binary([replacement_fun.("") | subject])
     end
   end
 
-  def replace(subject, pattern, replacement, options) when is_binary(subject) do
+  defp replace_guarded(subject, pattern, replacement, options) do
     if insert = Keyword.get(options, :insert_replaced) do
       IO.warn(
         "String.replace/4 with :insert_replaced option is deprecated. " <>
@@ -2250,7 +2293,7 @@ defmodule String do
   Passing a string that does not represent an integer leads to an error:
 
       String.to_integer("invalid data")
-      #=> ** (ArgumentError) argument error
+      ** (ArgumentError) argument error
 
   """
   @spec to_integer(String.t()) :: integer
@@ -2292,7 +2335,7 @@ defmodule String do
       3.0
 
       String.to_float("3")
-      #=> ** (ArgumentError) argument error
+      ** (ArgumentError) argument error
 
   """
   @spec to_float(String.t()) :: float

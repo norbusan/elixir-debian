@@ -1,10 +1,10 @@
 defmodule Keyword do
   @moduledoc """
-  A set of functions for working with keywords.
+  Keyword lists are lists of two-element tuples, where the first
+  element of the tuple is an atom and the second element can be any
+  value, used mostly to work with optional values.
 
-  A keyword list is a list of two-element tuples where the first
-  element of the tuple is an atom and the second element
-  can be any value.
+  ## Examples
 
   For example, the following is a keyword list:
 
@@ -15,62 +15,68 @@ defmodule Keyword do
 
       [exit_on_close: true, active: :once, packet_size: 1024]
 
-  This is also the syntax that Elixir uses to inspect keyword lists:
-
-      iex> [{:active, :once}]
-      [active: :once]
-
-  The two syntaxes are completely equivalent. Like atoms, keywords
-  must be composed of Unicode characters such as letters, numbers,
-  underscore, and `@`. If the keyword has a character that does not
-  belong to the category above, such as spaces, you can wrap it in
-  quotes:
+  The two syntaxes are completely equivalent. Like atoms, keyword
+  lists keys must be composed of Unicode characters such as letters,
+  numbers, underscore, and `@`. If the keyword has a character that
+  does not belong to the category above, such as spaces, you can wrap
+  it in quotes:
 
       iex> ["exit on close": true]
       ["exit on close": true]
 
-  Wrapping a keyword in quotes does not make it a string. Keywords are
-  always atoms. If you use quotes when all characters are a valid part
-  of a keyword without quotes, Elixir will warn.
+  Wrapping a keyword in quotes does not make it a string. Keyword lists
+  keys are always atoms. If you use quotes around the key when quoting
+  is not necessary, Elixir will warn.
 
-  Note that when keyword lists are passed as the last argument to a function,
-  if the short-hand syntax is used then the square brackets around the keyword list
-  can be omitted as well. For example, the following:
+  ## Duplicate keys and ordering
 
-      String.split("1-0", "-", trim: true, parts: 2)
+  A keyword may have duplicated keys so it is not strictly a key-value
+  data type. However most of the functions in this module behave exactly
+  as a key-value so they work similarly to the functions you would find
+  in the `Map` module. For example, `Keyword.get/3` will get the first
+  entry matching the given key, regardless if duplicated entries exist.
+  Similarly, `Keyword.put/3` and `Keyword.delete/2` ensure all duplicated
+  entries for a given key are removed when invoked. Note however that
+  keyword list operations need to traverse the list in order to find
+  keys, so these operations are slower than their map counterparts.
 
-  is equivalent to:
+  A handful of functions exist to handle duplicated keys, for example,
+  `get_values/2` returns all values for a given key and `delete_first/2`
+  deletes just one of the existing entries.
 
-      String.split("1-0", "-", [trim: true, parts: 2])
-
-  A keyword may have duplicated keys so it is not strictly
-  a key-value store. However most of the functions in this module
-  behave exactly as a dictionary so they work similarly to
-  the functions you would find in the `Map` module.
-
-  For example, `Keyword.get/3` will get the first entry matching
-  the given key, regardless if duplicated entries exist.
-  Similarly, `Keyword.put/3` and `Keyword.delete/3` ensure all
-  duplicated entries for a given key are removed when invoked.
-  Note that operations that require keys to be found in the keyword
-  list (like `Keyword.get/3`) need to traverse the list in order
-  to find keys, so these operations may be slower than their map
-  counterparts.
-
-  A handful of functions exist to handle duplicated keys, in
-  particular, `Enum.into/2` allows creating new keywords without
-  removing duplicated keys, `get_values/2` returns all values for
-  a given key and `delete_first/2` deletes just one of the existing
-  entries.
-
-  The functions in `Keyword` do not guarantee any property when
-  it comes to ordering. However, since a keyword list is simply a
-  list, all the operations defined in `Enum` and `List` can be
-  applied too, especially when ordering is required.
+  The functions in `Keyword` do not guarantee any property when it comes
+  to ordering. However, since a keyword list is simply a list, all the
+  operations defined in `Enum` and `List` can be applied too, especially
+  when ordering is required.
 
   Most of the functions in this module work in linear time. This means
   that, the time it takes to perform an operation grows at the same
   rate as the length of the list.
+
+  ## Call syntax
+
+  When keyword lists are passed as the last argument to a function, then
+  the square brackets around the keyword list can be omitted as well. For
+  example, the keyword list syntax:
+
+      String.split("1-0", "-", [trim: true, parts: 2])
+
+  can be written without the enclosing brackets whenever it is the last
+  argument of a function call:
+
+      String.split("1-0", "-", trim: true, parts: 2)
+
+  Since tuples, lists, maps, and others are treated the same as function
+  calls in Elixir syntax, this property is also available to them:
+
+      iex> {1, 2, foo: :bar}
+      {1, 2, [{:foo, :bar}]}
+
+      iex> [1, 2, foo: :bar]
+      [1, 2, {:foo, :bar}]
+
+      iex> %{1 => 2, foo: :bar}
+      %{1 => 2, :foo => :bar}
   """
 
   @compile :inline_list_funcs
@@ -409,13 +415,12 @@ defmodule Keyword do
   """
   @spec get_values(t, key) :: [value]
   def get_values(keywords, key) when is_list(keywords) and is_atom(key) do
-    fun = fn
-      {^key, val} -> {true, val}
-      {_, _} -> false
-    end
-
-    :lists.filtermap(fun, keywords)
+    get_values(keywords, key, [])
   end
+
+  defp get_values([{key, value} | tail], key, values), do: get_values(tail, key, [value | values])
+  defp get_values([{_, _} | tail], key, values), do: get_values(tail, key, values)
+  defp get_values([], _key, values), do: :lists.reverse(values)
 
   @doc """
   Returns all keys from the keyword list.
@@ -453,24 +458,8 @@ defmodule Keyword do
     :lists.map(fn {_, v} -> v end, keywords)
   end
 
-  @doc """
-  Deletes the entries in the keyword list for a `key` with `value`.
-
-  If no `key` with `value` exists, returns the keyword list unchanged.
-
-  ## Examples
-
-      iex> Keyword.delete([a: 1, b: 2], :a, 1)
-      [b: 2]
-      iex> Keyword.delete([a: 1, b: 2, a: 3], :a, 3)
-      [a: 1, b: 2]
-      iex> Keyword.delete([a: 1], :a, 5)
-      [a: 1]
-      iex> Keyword.delete([a: 1], :b, 5)
-      [a: 1]
-
-  """
-  @spec delete(t, key, value) :: t
+  @doc false
+  @deprecated "Use Keyword.fetch/2 + Keyword.delete/2 instead"
   def delete(keywords, key, value) when is_list(keywords) and is_atom(key) do
     case :lists.keymember(key, 1, keywords) do
       true -> delete_key_value(keywords, key, value)
@@ -516,17 +505,9 @@ defmodule Keyword do
     end
   end
 
-  defp delete_key([{key, _} | tail], key) do
-    delete_key(tail, key)
-  end
-
-  defp delete_key([{_, _} = pair | tail], key) do
-    [pair | delete_key(tail, key)]
-  end
-
-  defp delete_key([], _key) do
-    []
-  end
+  defp delete_key([{key, _} | tail], key), do: delete_key(tail, key)
+  defp delete_key([{_, _} = pair | tail], key), do: [pair | delete_key(tail, key)]
+  defp delete_key([], _key), do: []
 
   @doc """
   Deletes the first entry in the keyword list for a specific `key`.
@@ -648,8 +629,10 @@ defmodule Keyword do
 
   ## Examples
 
-      iex> Keyword.replace!([a: 1, b: 2, a: 4], :a, 3)
-      [a: 3, b: 2]
+      iex> Keyword.replace!([a: 1, b: 2, a: 3], :a, :new)
+      [a: :new, b: 2]
+      iex> Keyword.replace!([a: 1, b: 2, c: 3, b: 4], :b, :new)
+      [a: 1, b: :new, c: 3]
 
       iex> Keyword.replace!([a: 1], :b, 2)
       ** (KeyError) key :b not found in: [a: 1]
@@ -658,10 +641,19 @@ defmodule Keyword do
   @doc since: "1.5.0"
   @spec replace!(t, key, value) :: t
   def replace!(keywords, key, value) when is_list(keywords) and is_atom(key) do
-    case :lists.keyfind(key, 1, keywords) do
-      {^key, _} -> [{key, value} | delete(keywords, key)]
-      false -> raise KeyError, key: key, term: keywords
-    end
+    replace!(keywords, key, value, keywords)
+  end
+
+  defp replace!([{key, _} | keywords], key, value, _original) do
+    [{key, value} | delete(keywords, key)]
+  end
+
+  defp replace!([{_, _} = e | keywords], key, value, original) do
+    [e | replace!(keywords, key, value, original)]
+  end
+
+  defp replace!([], key, _value, original) when is_atom(key) do
+    raise(KeyError, key: key, term: original)
   end
 
   @doc """
@@ -821,10 +813,10 @@ defmodule Keyword do
 
   ## Examples
 
-      iex> Keyword.update!([a: 1], :a, &(&1 * 2))
-      [a: 2]
-      iex> Keyword.update!([a: 1, a: 2], :a, &(&1 * 2))
-      [a: 2]
+      iex> Keyword.update!([a: 1, b: 2, a: 3], :a, &(&1 * 2))
+      [a: 2, b: 2]
+      iex> Keyword.update!([a: 1, b: 2, c: 3], :b, &(&1 * 2))
+      [a: 1, b: 4, c: 3]
 
       iex> Keyword.update!([a: 1], :b, &(&1 * 2))
       ** (KeyError) key :b not found in: [a: 1]
@@ -836,16 +828,16 @@ defmodule Keyword do
     update!(keywords, key, fun, keywords)
   end
 
-  defp update!([{key, value} | keywords], key, fun, _dict) do
+  defp update!([{key, value} | keywords], key, fun, _original) do
     [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  defp update!([{_, _} = e | keywords], key, fun, dict) do
-    [e | update!(keywords, key, fun, dict)]
+  defp update!([{_, _} = e | keywords], key, fun, original) do
+    [e | update!(keywords, key, fun, original)]
   end
 
-  defp update!([], key, _fun, dict) when is_atom(key) do
-    raise(KeyError, key: key, term: dict)
+  defp update!([], key, _fun, original) when is_atom(key) do
+    raise(KeyError, key: key, term: original)
   end
 
   @doc """
@@ -976,13 +968,72 @@ defmodule Keyword do
   @spec pop(t, key, value) :: {value, t}
   def pop(keywords, key, default \\ nil) when is_list(keywords) and is_atom(key) do
     case fetch(keywords, key) do
-      {:ok, value} ->
-        {value, delete(keywords, key)}
-
-      :error ->
-        {default, keywords}
+      {:ok, value} -> {value, delete(keywords, key)}
+      :error -> {default, keywords}
     end
   end
+
+  @doc """
+  Returns the first value for `key` and removes all associated antries in the keyword list,
+  raising if `key` is not present.
+
+  This function behaves like `pop/3`, but raises in cases the `key` is not present in the
+  given `keywords`.
+
+  ## Examples
+
+      iex> Keyword.pop!([a: 1], :a)
+      {1, []}
+      iex> Keyword.pop!([a: 1, a: 2], :a)
+      {1, []}
+      iex> Keyword.pop!([a: 1], :b)
+      ** (KeyError) key :b not found in: [a: 1]
+
+  """
+  @doc since: "1.10.0"
+  @spec pop!(t, key) :: {value, t}
+  def pop!(keywords, key) when is_list(keywords) and is_atom(key) do
+    case fetch(keywords, key) do
+      {:ok, value} -> {value, delete(keywords, key)}
+      :error -> raise KeyError, key: key, term: keywords
+    end
+  end
+
+  @doc """
+  Returns all values for `key` and removes all associated entries in the keyword list.
+
+  It returns a tuple where the first element is a list of values for `key` and the
+  second element is a keyword list with all entries associated with `key` removed.
+  If the `key` is not present in the keyword list, `{[], keyword_list}` is
+  returned.
+
+  If you don't want to remove all the entries associated with `key` use `pop_first/3`
+  instead, that function will remove only the first entry.
+
+  ## Examples
+
+      iex> Keyword.pop_values([a: 1], :a)
+      {[1], []}
+      iex> Keyword.pop_values([a: 1], :b)
+      {[], [a: 1]}
+      iex> Keyword.pop_values([a: 1, a: 2], :a)
+      {[1, 2], []}
+
+  """
+  @doc since: "1.10.0"
+  @spec pop_values(t, key) :: {[value], t}
+  def pop_values(keywords, key) when is_list(keywords) and is_atom(key) do
+    pop_values(:lists.reverse(keywords), key, [], [])
+  end
+
+  defp pop_values([{key, value} | tail], key, values, acc),
+    do: pop_values(tail, key, [value | values], acc)
+
+  defp pop_values([{_, _} = pair | tail], key, values, acc),
+    do: pop_values(tail, key, values, [pair | acc])
+
+  defp pop_values([], _key, values, acc),
+    do: {values, acc}
 
   @doc """
   Lazily returns and removes all values associated with `key` in the keyword list.

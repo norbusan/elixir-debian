@@ -446,6 +446,14 @@ defmodule StringTest do
     end
   end
 
+  describe "replace/4" do
+    test "with incorrect params" do
+      assert_raise FunctionClauseError, "no function clause matching in String.replace/4", fn ->
+        String.replace("a,b,c", "a,b,c", ",", "")
+      end
+    end
+  end
+
   test "duplicate/2" do
     assert String.duplicate("abc", 0) == ""
     assert String.duplicate("abc", 1) == "abc"
@@ -499,46 +507,6 @@ defmodule StringTest do
     assert String.equivalent?("ṩ", "ṩ")
     refute String.equivalent?("ELIXIR", "elixir")
     refute String.equivalent?("døge", "dóge")
-  end
-
-  test "normalize/2" do
-    assert String.normalize("ŝ", :nfd) == "ŝ"
-    assert String.normalize("ḇravô", :nfd) == "ḇravô"
-    assert String.normalize("ṩierra", :nfd) == "ṩierra"
-    assert String.normalize("뢴", :nfd) == "뢴"
-    assert String.normalize("êchǭ", :nfc) == "êchǭ"
-    assert String.normalize("거̄", :nfc) == "거̄"
-    assert String.normalize("뢴", :nfc) == "뢴"
-
-    ## Cases from NormalizationTest.txt
-
-    # 05B8 05B9 05B1 0591 05C3 05B0 05AC 059F
-    # 05B1 05B8 05B9 0591 05C3 05B0 05AC 059F
-    # HEBREW POINT QAMATS, HEBREW POINT HOLAM, HEBREW POINT HATAF SEGOL,
-    # HEBREW ACCENT ETNAHTA, HEBREW PUNCTUATION SOF PASUQ, HEBREW POINT SHEVA,
-    # HEBREW ACCENT ILUY, HEBREW ACCENT QARNEY PARA
-    assert String.normalize("ֱָֹ֑׃ְ֬֟", :nfc) == "ֱָֹ֑׃ְ֬֟"
-
-    # 095D (exclusion list)
-    # 0922 093C
-    # DEVANAGARI LETTER RHA
-    assert String.normalize("ढ़", :nfc) == "ढ़"
-
-    # 0061 0315 0300 05AE 0340 0062
-    # 00E0 05AE 0300 0315 0062
-    # LATIN SMALL LETTER A, COMBINING COMMA ABOVE RIGHT, COMBINING GRAVE ACCENT,
-    # HEBREW ACCENT ZINOR, COMBINING GRAVE TONE MARK, LATIN SMALL LETTER B
-    assert String.normalize("à֮̀̕b", :nfc) == "à֮̀̕b"
-
-    # 0344
-    # 0308 0301
-    # COMBINING GREEK DIALYTIKA TONOS
-    assert String.normalize("\u0344", :nfc) == "\u0308\u0301"
-
-    # 115B9 0334 115AF
-    # 115B9 0334 115AF
-    # SIDDHAM VOWEL SIGN AI, COMBINING TILDE OVERLAY, SIDDHAM VOWEL SIGN AA
-    assert String.normalize("𑖹̴𑖯", :nfc) == "𑖹̴𑖯"
   end
 
   test "graphemes/1" do
@@ -660,7 +628,7 @@ defmodule StringTest do
     assert String.slice("", 1..1) == ""
     assert String.slice("あいうえお", -2..-4) == ""
     assert String.slice("あいうえお", -10..-15) == ""
-    assert String.slice("hello あいうえお unicode", 8..-1) == "うえお unicode"
+    assert String.slice("hello あいうえお Unicode", 8..-1) == "うえお Unicode"
     assert String.slice("abc", -1..14) == "c"
   end
 

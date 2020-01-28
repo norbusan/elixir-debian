@@ -84,7 +84,7 @@ defmodule IO do
   Building IO data is cheaper than concatenating binaries. Concatenating multiple
   pieces of IO data just means putting them together inside a list since IO data
   can be arbitrarily nested, and that's a cheap and efficient operation. Most of
-  the IO-based APIs, such as `:gen_tcp`, `IO`, etc, receive IO data and write it
+  the IO-based APIs, such as `:gen_tcp` and `IO`, receive IO data and write it
   to the socket directly without converting it to binary.
 
   One drawback of IO data is that you can't do things like pattern match on the
@@ -98,14 +98,14 @@ defmodule IO do
 
   Erlang and Elixir also have the idea of `t:chardata/0`. Chardata is very
   similar to IO data: the only difference is that integers in IO data represent
-  bytes while integers in chardata represent Unicode codepoints. Bytes
-  (`t:byte/0`) are integers in the `0..255` range, while Unicode codepoints
+  bytes while integers in chardata represent Unicode code points. Bytes
+  (`t:byte/0`) are integers in the `0..255` range, while Unicode code points
   (`t:char/0`) are integers in the range `0..0x10FFFF`. The `IO` module provides
   the `chardata_to_string/1` function for chardata as the "counter-part" of the
   `iodata_to_binary/1` function for IO data.
 
   If you try to use `iodata_to_binary/1` on chardata, it will result in an
-  argument error. For example, let's try to put a codepoint that is not
+  argument error. For example, let's try to put a code point that is not
   representable with one byte, like `?π`, inside IO data:
 
       iex> IO.iodata_to_binary(["The symbol for pi is: ", ?π])
@@ -148,7 +148,7 @@ defmodule IO do
   def read(device \\ :stdio, line_or_chars)
 
   def read(device, :all) do
-    do_read_all(map_dev(device), "")
+    do_read_all(map_dev(device), :empty)
   end
 
   def read(device, :line) do
@@ -161,11 +161,26 @@ defmodule IO do
 
   defp do_read_all(mapped_dev, acc) do
     case :io.get_line(mapped_dev, "") do
-      line when is_binary(line) -> do_read_all(mapped_dev, acc <> line)
-      :eof -> acc
+      line when is_binary(line) or is_list(line) -> do_read_all(mapped_dev, concat(acc, line))
+      :eof -> read_eof(mapped_dev, acc)
       other -> other
     end
   end
+
+  defp concat(:empty, line), do: line
+  defp concat(acc, line) when is_binary(acc), do: acc <> line
+  defp concat(acc, line) when is_list(acc), do: acc ++ line
+
+  defp read_eof(device, :empty) do
+    with [_ | _] = opts <- :io.getopts(device),
+         false <- Keyword.get(opts, :binary, true) do
+      ''
+    else
+      _ -> ""
+    end
+  end
+
+  defp read_eof(_device, acc), do: acc
 
   @doc """
   Reads from the IO `device`. The operation is Unicode unsafe.

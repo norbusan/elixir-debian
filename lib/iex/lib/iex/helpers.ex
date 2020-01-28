@@ -507,7 +507,7 @@ defmodule IEx.Helpers do
 
   @doc """
   Just like `runtime_info/0`, except accepts topic or a list of topics.
-  E.g. topic `:applications` will list the applications loaded.
+  For example, topic `:applications` will list the applications loaded.
   """
   def runtime_info(topic) when is_atom(topic) and topic in @runtime_info_topics do
     topic
@@ -1041,7 +1041,7 @@ defmodule IEx.Helpers do
   end
 
   @doc """
-  Similar to `import_file` but only imports the file it if it is available.
+  Similar to `import_file` but only imports the file if it is available.
 
   By default, `import_file/1` fails when the given file does not exist.
   However, since `import_file/1` is expanded at compile-time, it's not
@@ -1068,7 +1068,16 @@ defmodule IEx.Helpers do
     path = Path.expand(path)
 
     if not optional? or File.exists?(path) do
-      path |> File.read!() |> Code.string_to_quoted!(file: path)
+      if imported_paths = Process.get(:iex_imported_paths) do
+        if path in imported_paths do
+          IO.warn("path #{path} was already imported, skipping circular file imports", [])
+        else
+          Process.put(:iex_imported_paths, MapSet.put(imported_paths, path))
+          path |> File.read!() |> Code.string_to_quoted!(file: path)
+        end
+      else
+        path |> File.read!() |> Code.string_to_quoted!(file: path)
+      end
     end
   end
 

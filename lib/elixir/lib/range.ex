@@ -1,9 +1,7 @@
 defmodule Range do
   @moduledoc """
-  Defines a range.
-
-  A range represents a sequence of one or many,
-  ascending or descending, consecutive integers.
+  Ranges represent a sequence of one or many, ascending
+  or descending, consecutive integers.
 
   Ranges can be either increasing (`first <= last`) or
   decreasing (`first > last`). Ranges are also always
@@ -49,6 +47,12 @@ defmodule Range do
 
   @doc """
   Creates a new range.
+
+  ## Examples
+
+      iex> Range.new(-100, 100)
+      -100..100
+
   """
   @spec new(integer, integer) :: t
   def new(first, last) when is_integer(first) and is_integer(last) do

@@ -194,6 +194,10 @@ defmodule RegexTest do
     assert Regex.run(@re_19_3_little, "abcd abce", capture: :all_names) == ["d"]
   end
 
+  test "run/3 with regexes with options compiled in different systems" do
+    assert Regex.run(%{~r/foo/i | re_version: "bad version"}, "FOO") == ["FOO"]
+  end
+
   test "scan/2" do
     assert Regex.scan(~r"c(d|e)", "abcd abce") == [["cd", "d"], ["ce", "e"]]
     assert Regex.scan(~r"c(?:d|e)", "abcd abce") == [["cd"], ["ce"]]
@@ -211,6 +215,10 @@ defmodule RegexTest do
     assert Regex.scan(@re_21_3_little, "abcd abce", capture: :all_names) == [["d"], ["e"]]
     assert Regex.scan(@re_21_3_big, "abcd abce", capture: :all_names) == [["d"], ["e"]]
     assert Regex.scan(@re_19_3_little, "abcd abce", capture: :all_names) == [["d"], ["e"]]
+  end
+
+  test "scan/2 with regexes with options compiled in different systems" do
+    assert Regex.scan(%{~r/foo/i | re_version: "bad version"}, "FOO") == [["FOO"]]
   end
 
   test "split/2,3" do
@@ -267,6 +275,18 @@ defmodule RegexTest do
 
     assert Regex.split(~r/a/, "abc", include_captures: true) == ["", "a", "bc"]
     assert Regex.split(~r/c/, "abc", include_captures: true) == ["ab", "c", ""]
+
+    assert Regex.split(~r/[Ei]/, "Elixir", include_captures: true, parts: 2) ==
+             ["", "E", "lixir"]
+
+    assert Regex.split(~r/[Ei]/, "Elixir", include_captures: true, parts: 3) ==
+             ["", "E", "l", "i", "xir"]
+
+    assert Regex.split(~r/[Ei]/, "Elixir", include_captures: true, parts: 2, trim: true) ==
+             ["E", "lixir"]
+
+    assert Regex.split(~r/[Ei]/, "Elixir", include_captures: true, parts: 3, trim: true) ==
+             ["E", "l", "i", "xir"]
   end
 
   test "replace/3,4" do

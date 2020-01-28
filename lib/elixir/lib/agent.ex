@@ -201,7 +201,7 @@ defmodule Agent do
   @doc false
   defmacro __using__(opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
-      if Module.get_attribute(__MODULE__, :doc) == nil do
+      unless Module.has_attribute?(__MODULE__, :doc) do
         @doc """
         Returns a specification to start this module under a supervisor.
 
@@ -423,6 +423,15 @@ defmodule Agent do
   Same as `update/3` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
   argument to the given list of arguments.
+
+  ## Examples
+
+      iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
+      iex> Agent.update(pid, Kernel, :+, [12])
+      :ok
+      iex> Agent.get(pid, fn state -> state end)
+      54
+
   """
   @spec update(agent, module, atom, [term], timeout) :: :ok
   def update(agent, module, fun, args, timeout \\ 5000) do
@@ -438,6 +447,15 @@ defmodule Agent do
 
   Note that `cast` returns `:ok` immediately, regardless of whether `agent` (or
   the node it should live on) exists.
+
+  ## Examples
+
+      iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
+      iex> Agent.cast(pid, fn state -> state + 1 end)
+      :ok
+      iex> Agent.get(pid, fn state -> state end)
+      43
+
   """
   @spec cast(agent, (state -> state)) :: :ok
   def cast(agent, fun) when is_function(fun, 1) do
@@ -450,6 +468,15 @@ defmodule Agent do
   Same as `cast/2` but a module, function, and arguments are expected
   instead of an anonymous function. The state is added as first
   argument to the given list of arguments.
+
+  ## Examples
+
+      iex> {:ok, pid} = Agent.start_link(fn -> 42 end)
+      iex> Agent.cast(pid, Kernel, :+, [12])
+      :ok
+      iex> Agent.get(pid, fn state -> state end)
+      54
+
   """
   @spec cast(agent, module, atom, [term]) :: :ok
   def cast(agent, module, fun, args) do
