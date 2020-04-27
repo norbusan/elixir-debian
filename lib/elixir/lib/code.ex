@@ -43,6 +43,15 @@ defmodule Code do
   You can configure your list of tracers via `put_compiler_option/2`. The
   following events are available to tracers:
 
+    * `:start` - (since v1.11.0) invoked whenever the compiler starts to trace
+      a new lexical context, such as a new file. Keep in mind the compiler runs
+      in parallel, so multiple files may invoke `:start` and run at the same
+      time. The value of the `lexical_tracker` of the macro environment, albeit
+      opaque, can be used to uniquely identify the environment.
+
+    * `:stop` - (since v1.11.0) invoked whenever the compiler stops tracing a
+      new lexical context, such as a new file.
+
     * `{:import, meta, module, opts}` - traced whenever `module` is imported.
       `meta` is the import AST metadata and `opts` are the import options.
 
@@ -1392,6 +1401,6 @@ defmodule Code do
   defp verify_loaded(loaded) do
     maps_binaries = Enum.map(loaded, fn {_module, map, binary} -> {map, binary} end)
     Module.ParallelChecker.verify(maps_binaries, [])
-    Enum.map(loaded, fn {module, map, _binary} -> {module, map} end)
+    Enum.map(loaded, fn {module, _map, binary} -> {module, binary} end)
   end
 end

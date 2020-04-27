@@ -57,7 +57,8 @@ defmodule ExUnit.Diff do
   end
 
   defp diff_quoted({name, _, context} = left, right, env)
-       when is_atom(name) and is_atom(context) do
+       when is_atom(name) and is_atom(context) and
+              name not in [:__MODULE__, :__DIR__, :__STACKTRACE__, :__ENV__, :__CALLER__] do
     diff_var(left, right, env)
   end
 
@@ -81,20 +82,16 @@ defmodule ExUnit.Diff do
     diff_tuple(Tuple.to_list(left), Tuple.to_list(right), env)
   end
 
-  defp diff_quoted({:%, _, [struct, {:%{}, _, kw}]}, %{} = right, env)
-       when is_atom(struct) and is_list(kw) do
-    diff_quoted_struct([__struct__: struct] ++ kw, struct, right, env)
+  defp diff_quoted({:%, _, [struct, {:%{}, _, kw}]}, %{} = right, env) when is_list(kw) do
+    diff_quoted_struct([__struct__: struct] ++ kw, right, env)
   end
 
-  defp diff_quoted({:%{}, _, items}, %{} = right, env) when is_list(items) do
-    if struct = items[:__struct__] do
-      diff_quoted_struct(items, struct, right, env)
-    else
-      diff_map(items, right, nil, maybe_struct(right), env)
-    end
+  defp diff_quoted({:%{}, _, kw}, %{} = right, env) when is_list(kw) do
+    diff_quoted_struct(kw, right, env)
   end
 
-  defp diff_quoted({:<>, _, _} = left, right, env) when is_binary(right) do
+  defp diff_quoted({:<>, _, [literal, _]} = left, right, env)
+       when is_binary(literal) and is_binary(right) do
     diff_string_concat(left, right, env)
   end
 
@@ -225,7 +222,7 @@ defmodule ExUnit.Diff do
   defp diff_pin({:^, _, [var]} = pin, right, %{pins: pins} = env) do
     identifier = var_context(var)
     %{^identifier => pin_value} = pins
-    {diff, post_env} = diff(pin_value, right, env)
+    {diff, post_env} = diff_value(pin_value, right, env)
 
     diff_left = update_diff_meta(pin, not diff.equivalent?)
     {%{diff | left: diff_left}, post_env}
@@ -626,8 +623,9 @@ defmodule ExUnit.Diff do
 
   # Structs
 
-  defp diff_quoted_struct(kw, struct1, right, env) do
-    left = load_struct(struct1)
+  defp diff_quoted_struct(kw, right, env) do
+    struct1 = kw[:__struct__]
+    left = load_struct(kw[:__struct__])
 
     if left && Enum.all?(kw, fn {k, _} -> Map.has_key?(left, k) end) do
       if Macro.quoted_literal?(kw) do
@@ -674,7 +672,8 @@ defmodule ExUnit.Diff do
   end
 
   defp load_struct(struct) do
-    if Code.ensure_loaded?(struct) and function_exported?(struct, :__struct__, 0) do
+    if is_atom(struct) and struct != nil and
+         Code.ensure_loaded?(struct) and function_exported?(struct, :__struct__, 0) do
       struct.__struct__
     end
   end
@@ -761,11 +760,10 @@ defmodule ExUnit.Diff do
     String.bag_distance(left, right) > 0.4
   end
 
-  defp parse_string({:<>, _, [literal, rest]}) do
+  defp parse_string({:<>, _, [literal, rest]}) when is_binary(literal) do
     {parsed, quoted, indexes, parsed_length} = parse_string(rest)
     literal_length = String.length(literal)
     length = literal_length + parsed_length
-
     {literal <> parsed, quoted, [literal_length | indexes], length}
   end
 
