@@ -1,3 +1,11 @@
+elixir-lang (1.9.1.dfsg-1.3) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Add remove-test-executes-rpc-instructions.patch, as this test reliably
+    fails on arm64 and mips64el.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 04 Nov 2019 11:27:07 +0100
+
 elixir-lang (1.9.1.dfsg-1.2) unstable; urgency=medium
 
   * Non-maintainer upload.
