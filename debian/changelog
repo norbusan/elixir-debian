@@ -1,3 +1,10 @@
+elixir-lang (1.9.1.dfsg-1.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Re-attempt unit testing (up to 3 times) if failed (Closes: #942688).
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 30 Oct 2019 12:23:33 +0100
+
 elixir-lang (1.9.1.dfsg-1.1) unstable; urgency=medium
 
   * Non-maintainer upload.

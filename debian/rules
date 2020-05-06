@@ -8,8 +8,18 @@ export PREFIX=/usr
 %:
 	dh $@
 
+
 override_dh_auto_test: .home
-	rc=0; HOME=$(CURDIR)/.home dh_auto_test || rc=$$?; epmd -kill; exit $$rc
+	CNT=3 ; rc=1 ; while [ $$CNT != 0 ] && [ $$rc != 0 ] ; do \
+		if HOME=$(CURDIR)/.home dh_auto_test ; then \
+			rc=0 ; \
+		else \
+			rc=1 ; \
+			epmd -kill ; \
+		fi ; \
+		CNT=$$(( $$CNT - 1)) ; \
+	done ; \
+	if [ $${rc} != 0 ] ; then exit $$rc ; else epmd -kill ; fi
 
 override_dh_auto_clean:
 	$(RM) -r .home
