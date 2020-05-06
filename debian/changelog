@@ -1,3 +1,14 @@
+elixir-lang (1.9.1.dfsg-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Add a dependency of the elixir binary package on erlang-pcre-<version>
+    virtual package to prevent installation when PCRE in Erlang changes,
+    invalidating precompiled regexes (closes: #941124).
+  * Move to ${erlang:Depends} substitution variable to calculate the
+    dependencies automatically.
+
+ -- Sergei Golovan <sgolovan@debian.org>  Fri, 11 Oct 2019 12:06:29 +0300
+
 elixir-lang (1.9.1.dfsg-1) unstable; urgency=medium
 
   * New upstream release.

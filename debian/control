@@ -18,8 +18,7 @@ Homepage: http://elixir-lang.org/
 
 Package: elixir
 Architecture: any
-Depends: erlang-base:any (>= 1:20) | erlang-base-hipe:any (>= 1:20),
-         ${misc:Depends}
+Depends: ${erlang:Depends}, ${erlang-pcre:Depends}, ${misc:Depends}
 Description: functional meta-programming aware language
  Elixir is a functional meta-programming aware language intended primarily for
  developing distributed, fault-tolerant and scalable systems. Elixir source
