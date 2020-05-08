@@ -1,6 +1,6 @@
 elixir-lang (1.10.3.dfsg-1) unstable; urgency=medium
 
-  * New upstream release (closes: #959701, #959160).
+  * New upstream release (closes: #959701, #959160, #959988).
   * Remove patches/remove-test-executes-rpc-instructions.patch.
   * Require Erlang 21.0 or later.
 
