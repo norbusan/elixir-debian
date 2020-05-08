@@ -3,9 +3,11 @@ Description: use rebar instead of rebar3 in tests
  Fix bug which made the Mix tests use only rebar3 when they should
  test Mix with both rebar and rebar3.
 
---- elixir-lang-1.7.4.orig/lib/mix/test/mix/rebar_test.exs
-+++ elixir-lang-1.7.4/lib/mix/test/mix/rebar_test.exs
-@@ -162,15 +162,15 @@ defmodule Mix.RebarTest do
+Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
+===================================================================
+--- elixir-lang.orig/lib/mix/test/mix/rebar_test.exs
++++ elixir-lang/lib/mix/test/mix/rebar_test.exs
+@@ -167,15 +167,15 @@ defmodule Mix.RebarTest do
      end
  
      test "gets and compiles dependencies for Rebar" do
