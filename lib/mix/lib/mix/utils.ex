@@ -41,27 +41,6 @@ defmodule Mix.Utils do
   end
 
   @doc """
-  Gets all paths defined in the MIX_PATH env variable.
-
-  `MIX_PATH` may contain multiple paths. If on Windows, those
-  paths should be separated by `;`, if on Unix systems, use `:`.
-  """
-  def mix_paths do
-    if path = System.get_env("MIX_PATH") do
-      String.split(path, path_separator())
-    else
-      []
-    end
-  end
-
-  defp path_separator do
-    case :os.type() do
-      {:win32, _} -> ";"
-      {:unix, _} -> ":"
-    end
-  end
-
-  @doc """
   Parses a string into module, function and arity.
 
   It returns `{:ok, mfa_list}`, where a `mfa_list` is
@@ -507,7 +486,9 @@ defmodule Mix.Utils do
   ## Options
 
     * `:sha512` - checks against the given SHA-512 checksum. Returns
-      `{:checksum, message}` in case it fails
+      `{:checksum, message}` in case it fails. This option is required
+      for URLs unless the `:unsafe_uri` is given (WHICH IS NOT RECOMMENDED
+      unless another security mechanism is in place, such as private keys)
 
     * `:timeout` - times out the request after the given milliseconds.
       Returns `{:remote, timeout_message}` if it fails. Defaults to 60
@@ -523,7 +504,14 @@ defmodule Mix.Utils do
   def read_path(path, opts \\ []) do
     cond do
       url?(path) ->
-        task = Task.async(fn -> read_httpc(path) |> checksum(opts) end)
+        task =
+          Task.async(fn ->
+            with :ok <- require_checksum(opts),
+                 {:ok, binary} <- read_httpc(path) do
+              checksum(binary, opts)
+            end
+          end)
+
         timeout = Keyword.get(opts, :timeout, 60_000)
 
         case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
@@ -532,7 +520,9 @@ defmodule Mix.Utils do
         end
 
       file?(path) ->
-        read_file(path) |> checksum(opts)
+        with {:ok, binary} <- read_file(path) do
+          checksum(binary, opts)
+        end
 
       true ->
         :badpath
@@ -541,8 +531,21 @@ defmodule Mix.Utils do
 
   @checksums [:sha512]
 
-  defp checksum({:ok, binary} = return, opts) do
-    Enum.find_value(@checksums, return, fn hash ->
+  defp require_checksum(opts) do
+    cond do
+      Keyword.take(opts, @checksums) != [] ->
+        :ok
+
+      Keyword.get(opts, :unsafe_uri) ->
+        :ok
+
+      true ->
+        {:checksum, "fetching from URIs require a checksum to be given"}
+    end
+  end
+
+  defp checksum(binary, opts) do
+    Enum.find_value(@checksums, {:ok, binary}, fn hash ->
       with expected when expected != nil <- opts[hash],
            actual when actual != expected <- hexhash(binary, hash) do
         message = """
@@ -557,10 +560,6 @@ defmodule Mix.Utils do
         _ -> nil
       end
     end)
-  end
-
-  defp checksum({_, _} = error, _opts) do
-    error
   end
 
   defp hexhash(binary, hash) do

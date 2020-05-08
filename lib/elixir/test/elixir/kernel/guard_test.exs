@@ -161,15 +161,17 @@ defmodule Kernel.GuardTest do
         end
       end
 
-      assert_raise CompileError, ~r"undefined function is_even/1", fn ->
-        defmodule IntegerPrivateFunctionUtils do
-          import IntegerPrivateGuards
+      assert_raise CompileError,
+                   ~r"undefined function is_even/1",
+                   fn ->
+                     defmodule IntegerPrivateFunctionUtils do
+                       import IntegerPrivateGuards
 
-          def is_even_and_small?(value) do
-            if is_even(value) and value <= 100, do: true, else: false
-          end
-        end
-      end
+                       def is_even_and_small?(value) do
+                         if is_even(value) and value <= 100, do: true, else: false
+                       end
+                     end
+                   end
     end
 
     test "requires a proper macro name" do

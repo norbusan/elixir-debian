@@ -45,6 +45,8 @@ defmodule ModuleTest do
 
   doctest Module
 
+  Module.register_attribute(__MODULE__, :register_unset_example, persist: true)
+  Module.register_attribute(__MODULE__, :register_empty_example, accumulate: true, persist: true)
   Module.register_attribute(__MODULE__, :register_example, accumulate: true, persist: true)
   @register_example :it_works
   @register_example :still_works
@@ -73,6 +75,38 @@ defmodule ModuleTest do
       assert @return([:foo, :bar]) == :ok
       _ = @return
     end
+  end
+
+  test "raises on write access attempts from __after_compile__/2" do
+    contents =
+      quote do
+        @after_compile __MODULE__
+
+        def __after_compile__(%Macro.Env{module: module}, bin) when is_binary(bin) do
+          Module.put_attribute(module, :foo, 42)
+        end
+      end
+
+    assert_raise ArgumentError,
+                 "could not call Module.__put_attribute__/4 because the module ModuleTest.Raise is in read-only mode (@after_compile)",
+                 fn ->
+                   Module.create(ModuleTest.Raise, contents, __ENV__)
+                 end
+  end
+
+  test "supports read access to module from __after_compile__/2" do
+    contents =
+      quote do
+        @after_compile __MODULE__
+
+        @foo 42
+
+        def __after_compile__(%Macro.Env{module: module}, bin) when is_binary(bin) do
+          Module.get_attribute(module, :foo)
+        end
+      end
+
+    Module.create(ModuleTest.NoRaise, contents, __ENV__)
   end
 
   test "in memory modules are tagged as so" do
@@ -124,6 +158,7 @@ defmodule ModuleTest do
     assert [{:foo, _, _}, {:bar, _, _}] = args
     assert [] = guards
     assert [do: {:+, _, [{:foo, _, nil}, {:bar, _, nil}]}] = expr
+    assert Module.defines?(env.module, {:hello, 2})
   end
 
   test "executes on definition callback" do
@@ -153,16 +188,21 @@ defmodule ModuleTest do
     assert OverridableWithBeforeCompile.constant() == 1
   end
 
-  ## Attributes
+  describe "__info__(:attributes)" do
+    test "reserved attributes" do
+      assert List.keyfind(ExUnit.Server.__info__(:attributes), :behaviour, 0) ==
+               {:behaviour, [GenServer]}
+    end
 
-  test "reserved attributes" do
-    assert List.keyfind(ExUnit.Server.__info__(:attributes), :behaviour, 0) ==
-             {:behaviour, [GenServer]}
-  end
+    test "registered attributes" do
+      assert Enum.filter(__MODULE__.__info__(:attributes), &match?({:register_example, _}, &1)) ==
+               [{:register_example, [:it_works]}, {:register_example, [:still_works]}]
+    end
 
-  test "registered attributes" do
-    assert Enum.filter(__MODULE__.__info__(:attributes), &match?({:register_example, _}, &1)) ==
-             [{:register_example, [:it_works]}, {:register_example, [:still_works]}]
+    test "registered attributes with no values are not present" do
+      refute List.keyfind(__MODULE__.__info__(:attributes), :register_unset_example, 0)
+      refute List.keyfind(__MODULE__.__info__(:attributes), :register_empty_example, 0)
+    end
   end
 
   @some_attribute [1]
@@ -279,6 +319,8 @@ defmodule ModuleTest do
     assert Elixir.ModuleTest.NonAtomAlias.hello() == :world
   end
 
+  @compile {:no_warn_undefined, ModuleCreateSample}
+
   test "create" do
     contents =
       quote do
@@ -299,6 +341,8 @@ defmodule ModuleTest do
       {:module, Elixir, _, _} = Module.create(Elixir, contents, __ENV__)
     end
   end
+
+  @compile {:no_warn_undefined, ModuleHygiene}
 
   test "create with aliases/var hygiene" do
     contents =
@@ -328,6 +372,8 @@ defmodule ModuleTest do
     funs = for {:function, _, name, arity, _} <- abstract_code, do: {name, arity}
     assert funs == [__info__: 1, baz: 1, foo: 1]
   end
+
+  @compile {:no_warn_undefined, ModuleCreateGenerated}
 
   test "create with generated true does not emit warnings" do
     contents =
@@ -459,6 +505,40 @@ defmodule ModuleTest do
     test "returns the passed default if the attribute does not exist" do
       in_module do
         assert Module.get_attribute(__MODULE__, :attribute, :default) == :default
+      end
+    end
+  end
+
+  describe "has_attribute?/2" do
+    test "returns true when attribute has been defined" do
+      in_module do
+        @foo 1
+        Module.register_attribute(__MODULE__, :bar, [])
+        Module.register_attribute(__MODULE__, :baz, accumulate: true)
+        Module.put_attribute(__MODULE__, :qux, 2)
+
+        # silence warning
+        _ = @foo
+
+        assert Module.has_attribute?(__MODULE__, :foo)
+        assert Module.has_attribute?(__MODULE__, :bar)
+        assert Module.has_attribute?(__MODULE__, :baz)
+        assert Module.has_attribute?(__MODULE__, :qux)
+      end
+    end
+
+    test "returns false when attribute has not been defined" do
+      in_module do
+        refute Module.has_attribute?(__MODULE__, :foo)
+      end
+    end
+
+    test "returns false when attribute has been deleted" do
+      in_module do
+        @foo 1
+        Module.delete_attribute(__MODULE__, :foo)
+
+        refute Module.has_attribute?(__MODULE__, :foo)
       end
     end
   end

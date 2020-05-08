@@ -186,7 +186,7 @@ defmodule System do
     * `:build` - the Elixir version, short Git revision hash and
       Erlang/OTP release it was compiled with
     * `:date` - a string representation of the ISO8601 date and time it was built
-    * `:opt_release` - OTP release it was compiled with
+    * `:otp_release` - OTP release it was compiled with
     * `:revision` - short Git revision hash. If Git was not available at building
       time, it is set to `""`
     * `:version` - the Elixir version
@@ -312,7 +312,9 @@ defmodule System do
   """
   @spec user_home() :: String.t() | nil
   def user_home do
-    :elixir_config.get(:home)
+    {:ok, [[home] | _]} = :init.get_argument(:home)
+    encoding = :file.native_name_encoding()
+    :unicode.characters_to_binary(home, encoding, encoding)
   end
 
   @doc """
@@ -335,7 +337,7 @@ defmodule System do
     1. the directory named by the TMPDIR environment variable
     2. the directory named by the TEMP environment variable
     3. the directory named by the TMP environment variable
-    4. `C:\TMP` on Windows or `/tmp` on Unix
+    4. `C:\TMP` on Windows or `/tmp` on Unix-like operating systems
     5. as a last resort, the current working directory
 
   Returns `nil` if none of the above are writable.
@@ -396,7 +398,7 @@ defmodule System do
 
   The handler always executes in a different process from the one it was
   registered in. As a consequence, any resources managed by the calling process
-  (ETS tables, open files, etc.) won't be available by the time the handler
+  (ETS tables, open files, and others) won't be available by the time the handler
   function is invoked.
 
   The function must receive the exit status code as an argument.
@@ -411,8 +413,8 @@ defmodule System do
   Locates an executable on the system.
 
   This function looks up an executable program given
-  its name using the environment variable PATH on Unix
-  and Windows. It also considers the proper executable
+  its name using the environment variable PATH on Windows and Unix-like
+  operating systems. It also considers the proper executable
   extension for each operating system, so for Windows it will try to
   lookup files with `.com`, `.cmd` or similar extensions.
   """
@@ -527,6 +529,8 @@ defmodule System do
 
   For more information, see `:os.getpid/0`.
   """
+  # TODO: deprecate permanently on v1.13
+  @doc deprecated: "Use System.pid/0 instead"
   @spec get_pid() :: binary
   def get_pid, do: IO.iodata_to_binary(:os.getpid())
 
@@ -634,7 +638,7 @@ defmodule System do
   Returns the operating system PID for the current Erlang runtime system instance.
 
   Returns a string containing the (usually) numerical identifier for a process.
-  On UNIX, this is typically the return value of the `getpid()` system call.
+  On Unix-like operating systems, this is typically the return value of the `getpid()` system call.
   On Windows, the process ID as returned by the `GetCurrentProcessId()` system
   call is used.
 
@@ -944,7 +948,7 @@ defmodule System do
   time and the Erlang VM system time.
 
   The result is returned in the given time unit `unit`. The returned
-  offset, added to an Erlang monotonic time (e.g., obtained with
+  offset, added to an Erlang monotonic time (for instance, one obtained with
   `monotonic_time/1`), gives the Erlang system time that corresponds
   to that monotonic time.
   """

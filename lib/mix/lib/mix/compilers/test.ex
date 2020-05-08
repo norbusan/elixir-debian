@@ -11,6 +11,7 @@ defmodule Mix.Compilers.Test do
     runtime_references: [],
     external: []
 
+  @compile {:no_warn_undefined, ExUnit.Server}
   @stale_manifest "compile.test_stale"
   @manifest_vsn 1
 
@@ -187,22 +188,17 @@ defmodule Mix.Compilers.Test do
     [elixir_manifest] = Mix.Tasks.Compile.Elixir.manifests()
 
     if Mix.Utils.stale?([elixir_manifest], [test_manifest]) do
-      elixir_manifest_entries =
-        CE.read_manifest(elixir_manifest, Mix.Project.compile_path())
-        |> Enum.group_by(&elem(&1, 0))
+      compile_path = Mix.Project.compile_path()
+      {elixir_modules, elixir_sources} = CE.read_manifest(elixir_manifest)
 
       stale_modules =
-        for CE.module(module: module, beam: beam) <- elixir_manifest_entries.module,
+        for CE.module(module: module) <- elixir_modules,
+            beam = Path.join(compile_path, Atom.to_string(module) <> ".beam"),
             Mix.Utils.stale?([beam], [test_manifest]),
             do: module,
             into: MapSet.new()
 
-      stale_modules =
-        find_all_dependent_on(
-          stale_modules,
-          elixir_manifest_entries.source,
-          elixir_manifest_entries.module
-        )
+      stale_modules = find_all_dependent_on(stale_modules, elixir_modules, elixir_sources)
 
       for module <- stale_modules,
           source(source: source, runtime_references: r, compile_references: c) <- test_sources,
@@ -214,7 +210,7 @@ defmodule Mix.Compilers.Test do
     end
   end
 
-  defp find_all_dependent_on(modules, sources, all_modules, resolved \\ MapSet.new()) do
+  defp find_all_dependent_on(modules, all_modules, sources, resolved \\ MapSet.new()) do
     new_modules =
       for module <- modules,
           module not in resolved,
@@ -225,13 +221,18 @@ defmodule Mix.Compilers.Test do
     if MapSet.size(new_modules) == MapSet.size(modules) do
       new_modules
     else
-      find_all_dependent_on(new_modules, sources, all_modules, modules)
+      find_all_dependent_on(new_modules, all_modules, sources, modules)
     end
   end
 
   defp dependent_modules(module, modules, sources) do
-    for CE.source(source: source, runtime_references: r, compile_references: c) <- sources,
-        module in r or module in c,
+    for CE.source(
+          source: source,
+          runtime_references: r,
+          compile_references: c,
+          struct_references: s
+        ) <- sources,
+        module in r or module in c or module in s,
         CE.module(sources: sources, module: dependent_module) <- modules,
         source in sources,
         do: dependent_module
@@ -258,8 +259,8 @@ defmodule Mix.Compilers.Test do
       file = Path.relative_to(file, cwd)
       {source, sources} = List.keytake(sources, file, source(:source))
 
-      {compile_references, struct_references, runtime_references} =
-        Kernel.LexicalTracker.remote_references(lexical)
+      {compile_references, struct_references, runtime_references, _compile_env} =
+        Kernel.LexicalTracker.references(lexical)
 
       source =
         source(

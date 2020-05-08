@@ -296,7 +296,7 @@ defmodule IEx do
   results in:
 
       $ iex
-      Erlang/OTP 20 [...]
+      Erlang/OTP 21 [...]
 
       hello world
       Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
@@ -320,7 +320,7 @@ defmodule IEx do
   Now run the shell:
 
       $ iex
-      Erlang/OTP 20 [...]
+      Erlang/OTP 21 [...]
 
       Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
       iex(1)> [1, 2, 3, 4, 5]
@@ -338,7 +338,9 @@ defmodule IEx do
     * `:width`
     * `:history_size`
     * `:default_prompt`
+    * `:continuation_prompt`
     * `:alive_prompt`
+    * `:alive_continuation_prompt`
 
   They are discussed individually in the sections below.
 
@@ -381,7 +383,7 @@ defmodule IEx do
       IEx.configure(colors: [syntax_colors: [atom: :red]])
 
   Configuration for most built-in data types are supported: `:atom`,
-  `:string`, `:binary`, `:list`, `:number`, `:boolean`, `:nil`, etc.
+  `:string`, `:binary`, `:list`, `:number`, `:boolean`, `:nil`, and others.
   The default is:
 
       [number: :magenta, atom: :cyan, string: :green,
@@ -420,7 +422,14 @@ defmodule IEx do
   The value is a keyword list with two possible keys representing prompt types:
 
     * `:default_prompt` - used when `Node.alive?/0` returns `false`
-    * `:alive_prompt`   - used when `Node.alive?/0` returns `true`
+
+    * `:continuation_prompt` - used when `Node.alive?/0` returns `false`
+      and more input is expected
+
+    * `:alive_prompt` - used when `Node.alive?/0` returns `true`
+
+    * `:alive_continuation_prompt` - used when `Node.alive?/0` returns
+      `true` and more input is expected
 
   The following values in the prompt string will be replaced appropriately:
 
@@ -607,7 +616,7 @@ defmodule IEx do
     end
   end
 
-  def __break__!({:/, _, [call, arity]} = ast, stops, env) when is_integer(arity) do
+  def __break__!({:/, _, [call, arity]} = ast, stops, env) when arity in 0..255 do
     with {module, fun, []} <- Macro.decompose_call(call),
          module when is_atom(module) <- Macro.expand(module, env) do
       IEx.Pry.break!(module, fun, arity, stops)
@@ -766,9 +775,8 @@ defmodule IEx do
 
   """
   @doc since: "1.5.0"
-  def break!(module, function, arity, stops \\ 1) when is_integer(arity) do
-    IEx.Pry.break!(module, function, arity, stops)
-  end
+  @spec break!(module, atom, arity, non_neg_integer) :: IEx.Pry.id()
+  defdelegate break!(module, function, arity, stops \\ 1), to: IEx.Pry
 
   ## Callbacks
 

@@ -145,7 +145,7 @@ defmodule Mix.Tasks.DepsGitTest do
       assert File.exists?("deps/deps_on_git_repo/.fetch")
       assert File.exists?("deps/git_repo/.fetch")
 
-      # Clear tasks to recompile git repo but unload it so...
+      # Clear tasks to recompile Git repo but unload it so...
       Mix.Task.clear()
       Mix.Tasks.Deps.Compile.run(["git_repo"])
       assert File.exists?("_build/dev/lib/git_repo/ebin")
@@ -398,7 +398,7 @@ defmodule Mix.Tasks.DepsGitTest do
       assert File.read!("mix.lock") =~ first
 
       Mix.Task.clear()
-      Mix.ProjectStack.clear_cache()
+      Mix.State.clear_cache()
       purge([DepsOnGitRepo.MixProject])
 
       Mix.Tasks.Deps.Update.run(["deps_on_git_repo"])

@@ -116,13 +116,13 @@ defmodule URITest do
     test "works with \"file\" scheme" do
       expected_uri = %URI{
         scheme: "file",
-        host: nil,
+        host: "",
         path: "/foo/bar/baz",
         userinfo: nil,
         query: nil,
         fragment: nil,
         port: nil,
-        authority: nil
+        authority: ""
       }
 
       assert URI.parse("file:///foo/bar/baz") == expected_uri
@@ -179,8 +179,8 @@ defmodule URITest do
     test "works with LDAP scheme" do
       expected_uri = %URI{
         scheme: "ldap",
-        host: nil,
-        authority: nil,
+        host: "",
+        authority: "",
         userinfo: nil,
         path: "/dc=example,dc=com",
         query: "?sub?(givenName=John)",
@@ -331,6 +331,9 @@ defmodule URITest do
     assert to_string(URI.parse("http://google.com")) == "http://google.com"
     assert to_string(URI.parse("http://google.com:443")) == "http://google.com:443"
     assert to_string(URI.parse("https://google.com:443")) == "https://google.com"
+    assert to_string(URI.parse("file:/path")) == "file:/path"
+    assert to_string(URI.parse("file:///path")) == "file:///path"
+    assert to_string(URI.parse("file://///path")) == "file://///path"
     assert to_string(URI.parse("http://lol:wut@google.com")) == "http://lol:wut@google.com"
     assert to_string(URI.parse("http://google.com/elixir")) == "http://google.com/elixir"
     assert to_string(URI.parse("http://google.com?q=lol")) == "http://google.com?q=lol"
@@ -342,9 +345,18 @@ defmodule URITest do
     assert to_string(URI.parse("http://[2001:db8::]")) == "http://[2001:db8::]"
 
     assert URI.to_string(URI.parse("http://google.com")) == "http://google.com"
+    assert URI.to_string(URI.parse("gid:hello/123")) == "gid:hello/123"
 
     assert URI.to_string(URI.parse("//user:password@google.com/")) ==
              "//user:password@google.com/"
+
+    assert_raise ArgumentError,
+                 ~r":path in URI must be nil or an absolute path if :host or :authority are given",
+                 fn -> %URI{authority: "foo.com", path: "hello/123"} |> URI.to_string() end
+
+    assert_raise ArgumentError,
+                 ~r":path in URI must be nil or an absolute path if :host or :authority are given",
+                 fn -> %URI{host: "foo.com", path: "hello/123"} |> URI.to_string() end
   end
 
   test "merge/2" do

@@ -11,7 +11,8 @@ expand(Meta, Clauses, E) when is_list(Clauses) ->
       true ->
         form_error(Meta, E, ?MODULE, defaults_in_args);
       false ->
-        {EClause, EAcc} = elixir_clauses:clause(Meta, fn, fun elixir_clauses:head/2, Clause, Acc),
+        EReset = elixir_env:reset_unused_vars(Acc),
+        {EClause, EAcc} = elixir_clauses:clause(Meta, fn, fun elixir_clauses:head/2, Clause, EReset),
         {EClause, elixir_env:merge_and_check_unused_vars(Acc, EAcc)}
     end
   end,
@@ -34,22 +35,13 @@ fn_arity(Args) -> length(Args).
 
 %% Capture
 
-capture(Meta, {'/', _, [{{'.', _, [_, F]} = Dot, RequireMeta, []}, A]}, E) when is_atom(F), is_integer(A) ->
+capture(Meta, {'/', _, [{{'.', _, [_, F]} = Dot, _, []}, A]}, E) when is_atom(F), is_integer(A) ->
   Args = args_from_arity(Meta, A, E),
-  capture_require(Meta, {Dot, RequireMeta, Args}, E, true);
+  capture_require(Meta, {Dot, Meta, Args}, E, true);
 
 capture(Meta, {'/', _, [{F, _, C}, A]}, E) when is_atom(F), is_integer(A), is_atom(C) ->
   Args = args_from_arity(Meta, A, E),
-  ImportMeta =
-    case lists:keyfind(import_fa, 1, Meta) of
-      {import_fa, {Receiver, Context}} ->
-        lists:keystore(context, 1,
-          lists:keystore(import, 1, Meta, {import, Receiver}),
-          {context, Context}
-        );
-      false -> Meta
-    end,
-  capture_import(Meta, {F, ImportMeta, Args}, E, true);
+  capture_import(Meta, {F, Meta, Args}, E, true);
 
 capture(Meta, {{'.', _, [_, Fun]}, _, Args} = Expr, E) when is_atom(Fun), is_list(Args) ->
   capture_require(Meta, Expr, E, is_sequential_and_not_empty(Args));

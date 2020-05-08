@@ -31,7 +31,7 @@
 # 4. Finally, in some other circumstances, printing messages may become
 #    borked. This can be verified with:
 #
-#      $ iex -e ':error_logger.info_msg("foo~nbar", [])'
+#      $ iex -e ":logger.info('foo~nbar', [])"
 #
 # By the time those instructions have been written, all tests above pass.
 defmodule IEx.CLI do
@@ -60,9 +60,12 @@ defmodule IEx.CLI do
         )
       end
 
-      :application.set_env(:stdlib, :shell_prompt_func, {__MODULE__, :prompt})
       :user.start()
-      local_start()
+
+      # IEx.Broker is capable of considering all groups under user_drv but
+      # when we use :user.start(), we need to explicitly register it instead.
+      # If we don't register, pry doesn't work.
+      IEx.start([register: true] ++ options(), {:elixir, :start_cli, []})
     end
   end
 
@@ -115,17 +118,13 @@ defmodule IEx.CLI do
     end
   end
 
-  def local_start do
-    IEx.start(options(), {:elixir, :start_cli, []})
-  end
-
   def remote_start(parent, ref) do
     send(parent, {:begin, ref, self()})
     receive do: ({:done, ^ref} -> :ok)
   end
 
   defp local_start_mfa do
-    {__MODULE__, :local_start, []}
+    {IEx, :start, [options(), {:elixir, :start_cli, []}]}
   end
 
   defp remote_start_mfa do

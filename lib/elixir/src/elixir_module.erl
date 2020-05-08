@@ -1,5 +1,5 @@
 -module(elixir_module).
--export([file/1, data_tables/1, is_open/1, delete_definition_attributes/6,
+-export([file/1, data_tables/1, is_open/1, mode/1, delete_definition_attributes/6,
          compile/4, expand_callback/6, format_error/1, compiler_modules/0,
          write_cache/3, read_cache/2, next_counter/1]).
 -include("elixir.hrl").
@@ -29,6 +29,16 @@ data_tables(Module) ->
 is_open(Module) ->
   ets:member(elixir_modules, Module).
 
+mode(Module) ->
+  try ets:lookup_element(elixir_modules, Module, 5) of
+    Mode -> Mode
+  catch
+    _:badarg -> closed
+  end.
+
+make_readonly(Module) ->
+  ets:update_element(elixir_modules, Module, {5, readonly}).
+
 delete_definition_attributes(#{module := Module}, _, _, _, _, _) ->
   {DataSet, _} = data_tables(Module),
   ets:delete(DataSet, doc),
@@ -56,22 +66,29 @@ next_counter(Module) ->
 
 compile(Module, _Block, _Vars, #{line := Line, file := File}) when Module == nil; is_boolean(Module) ->
   elixir_errors:form_error([{line, Line}], File, ?MODULE, {invalid_module, Module});
-compile(Module, Block, Vars, #{line := Line} = Env) when is_atom(Module) ->
+compile(Module, Block, Vars, Env) when is_atom(Module) ->
+  #{line := Line, current_vars := {Read, _}, function := Function} = Env,
+
   %% In case we are generating a module from inside a function,
   %% we get rid of the lexical tracker information as, at this
   %% point, the lexical tracker process is long gone.
-  LexEnv = case ?key(Env, function) of
-    nil -> Env#{module := Module, unused_vars := #{}};
-    _   -> Env#{lexical_tracker := nil, function := nil, module := Module, unused_vars := #{}}
-  end,
+  ResetEnv = elixir_env:reset_unused_vars(Env),
 
-  case ?key(LexEnv, lexical_tracker) of
-    nil ->
-      elixir_lexical:run(?key(LexEnv, file), fun(Pid) ->
-        compile(Line, Module, Block, Vars, LexEnv#{lexical_tracker := Pid})
-      end);
+  MaybeLexEnv =
+    case Function of
+      nil -> ResetEnv#{module := Module, current_vars := {Read, false}};
+      _   -> ResetEnv#{lexical_tracker := nil, function := nil, module := Module, current_vars := {Read, false}}
+    end,
+
+  case MaybeLexEnv of
+    #{lexical_tracker := nil} ->
+      elixir_lexical:run(
+        MaybeLexEnv,
+        fun(LexEnv) -> compile(Line, Module, Block, Vars, LexEnv) end,
+        fun(_LexEnv) -> ok end
+      );
     _ ->
-      compile(Line, Module, Block, Vars, LexEnv)
+      compile(Line, Module, Block, Vars, MaybeLexEnv)
   end;
 compile(Module, _Block, _Vars, #{line := Line, file := File}) ->
   elixir_errors:form_error([{line, Line}], File, ?MODULE, {invalid_module, Module}).
@@ -86,6 +103,7 @@ compile(Line, Module, Block, Vars, E) ->
 
   try
     put_compiler_modules([Module | CompilerModules]),
+    elixir_env:trace({defmodule, [{line, Line}]}, E),
     {Result, NE} = eval_form(Line, Module, DataBag, Block, Vars, E),
 
     PersistedAttributes = ets:lookup_element(DataBag, persisted_attributes, 2),
@@ -95,6 +113,7 @@ compile(Line, Module, Block, Vars, E) ->
     %% We stop tracking locals here to avoid race conditions in case after_load
     %% evaluates code in a separate process that may write to locals table.
     elixir_locals:stop({DataSet, DataBag}),
+    make_readonly(Module),
 
     (not elixir_config:get(bootstrap)) andalso
      'Elixir.Module':check_behaviours_and_impls(E, DataSet, DataBag, AllDefinitions),
@@ -114,17 +133,18 @@ compile(Line, Module, Block, Vars, E) ->
       definitions => AllDefinitions,
       unreachable => Unreachable,
       compile_opts => CompileOpts,
-      deprecated => get_deprecated(DataBag)
+      deprecated => get_deprecated(DataBag),
+      is_behaviour => is_behaviour(DataBag)
     },
 
     Binary = elixir_erl:compile(ModuleMap),
     warn_unused_attributes(File, DataSet, DataBag, PersistedAttributes),
     autoload_module(Module, Binary, CompileOpts, NE),
     eval_callbacks(Line, DataBag, after_compile, [NE, Binary], NE),
-    make_module_available(Module, Binary),
+    make_module_available(Module, Binary, ModuleMap),
     {module, Module, Binary, Result}
   catch
-    ?WITH_STACKTRACE(error, undef, Stacktrace)
+    error:undef:Stacktrace ->
       case Stacktrace of
         [{Module, Fun, Args, _Info} | _] = Stack when is_list(Args) ->
           compile_undef(Module, Fun, length(Args), Stack);
@@ -180,6 +200,9 @@ validate_on_load_attribute({on_load, Def}, Defs, File, Line) ->
   end;
 validate_on_load_attribute(false, _Defs, _File, _Line) -> ok.
 
+is_behaviour(DataBag) ->
+  ets:member(DataBag, {accumulate, callback}) orelse ets:member(DataBag, {accumulate, macrocallback}).
+
 %% An undef error for a function in the module being compiled might result in an
 %% exception message suggesting the current module is not loaded. This is
 %% misleading so use a custom reason.
@@ -205,7 +228,7 @@ check_module_availability(Line, File, Module) ->
     false -> ok
   end,
 
-  case elixir_compiler:get_opt(ignore_module_conflict) of
+  case elixir_config:get(ignore_module_conflict) of
     false ->
       case code:ensure_loaded(Module) of
         {module, _} ->
@@ -237,7 +260,7 @@ build(Line, File, Module) ->
   %% In the bag table we store:
   %%
   %% * {{accumulate, Attribute}, ...} (includes typespecs)
-  %% * {attributes, ...}
+  %% * {warn_attributes, ...}
   %% * {impls, ...}
   %% * {deprecated, ...}
   %% * {persisted_attributes, ...}
@@ -289,13 +312,13 @@ build(Line, File, Module) ->
   Tables = {DataSet, DataBag},
   elixir_def:setup(Tables),
   elixir_locals:setup(Tables),
-  Tuple = {Module, Tables, Line, File},
+  Tuple = {Module, Tables, Line, File, all},
 
   Ref =
     case elixir_code_server:call({defmodule, Module, self(), Tuple}) of
       {ok, ModuleRef} ->
         ModuleRef;
-      {error, {Module, _, OldLine, OldFile}} ->
+      {error, {Module, _, OldLine, OldFile, _}} ->
         ets:delete(DataSet),
         ets:delete(DataBag),
         Error = {module_in_definition, Module, OldFile, OldLine},
@@ -334,10 +357,10 @@ expand_callback(Line, M, F, Args, E, Fun) ->
       ET;
     true ->
       try
-        {_Value, _Binding, EF, _S} = elixir:eval_forms(EE, [], ET),
+        {_Value, _Binding, EF} = elixir:eval_forms(EE, [], ET),
         EF
       catch
-        ?WITH_STACKTRACE(Kind, Reason, Stacktrace)
+        Kind:Reason:Stacktrace ->
           Info = {M, F, length(Args), location(Line, E)},
           erlang:raise(Kind, Reason, prune_stacktrace(Info, Stacktrace))
       end
@@ -350,13 +373,14 @@ attributes(DataSet, DataBag, PersistedAttributes) ->
 
 lookup_attribute(DataSet, DataBag, Key) when is_atom(Key) ->
   case ets:lookup(DataSet, Key) of
-    [{Key, _, accumulate}] -> bag_lookup_element(DataBag, {accumulate, Key}, 2);
-    [{Key, Value, _}] -> [Value];
+    [{_, _, accumulate}] -> bag_lookup_element(DataBag, {accumulate, Key}, 2);
+    [{_, _, unset}] -> [];
+    [{_, Value, _}] -> [Value];
     [] -> []
   end.
 
 warn_unused_attributes(File, DataSet, DataBag, PersistedAttrs) ->
-  StoredAttrs = bag_lookup_element(DataBag, attributes, 2),
+  StoredAttrs = bag_lookup_element(DataBag, warn_attributes, 2),
   %% This is the same list as in Module.put_attribute
   %% without moduledoc which are never warned on.
   Attrs = [doc, typedoc, impl, deprecated | StoredAttrs -- PersistedAttrs],
@@ -392,10 +416,10 @@ beam_location(#{module := Module}) ->
 
 %% Integration with elixir_compiler that makes the module available
 
-make_module_available(Module, Binary) ->
+make_module_available(Module, Binary, ModuleMap) ->
   case get(elixir_module_binaries) of
     Current when is_list(Current) ->
-      put(elixir_module_binaries, [{Module, Binary} | Current]);
+      put(elixir_module_binaries, [{Module, ModuleMap, Binary} | Current]);
     _ ->
       ok
   end,
@@ -405,7 +429,7 @@ make_module_available(Module, Binary) ->
       ok;
     PID ->
       Ref = make_ref(),
-      PID ! {module_available, self(), Ref, get(elixir_compiler_file), Module, Binary},
+      PID ! {module_available, self(), Ref, get(elixir_compiler_file), Module, Binary, ModuleMap},
       receive {Ref, ack} -> ok end
   end.
 

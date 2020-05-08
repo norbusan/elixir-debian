@@ -64,6 +64,20 @@ defmodule EExTest do
       assert_eval("  • • •\n  Jößé Vâlìm Jößé Vâlìm\n", template)
     end
 
+    test "no spaces" do
+      string = """
+      <%=cond do%>
+      <%false ->%>
+        this
+      <%true ->%>
+        that
+      <%end%>
+      """
+
+      expected = "\n  that\n\n"
+      assert_eval(expected, string, [])
+    end
+
     test "trim mode" do
       string = "<%= 123 %> \n456\n  <%= 789 %>"
       expected = "123456\n789"
@@ -96,6 +110,20 @@ defmodule EExTest do
       assert_eval(expected, string, [], trim: true)
     end
 
+    test "trim mode with no spaces" do
+      string = """
+      <%=cond do%>
+      <%false ->%>
+        this
+      <%true ->%>
+        that
+      <%end%>
+      """
+
+      expected = "  that\n"
+      assert_eval(expected, string, [], trim: true)
+    end
+
     test "embedded code" do
       assert_eval("foo bar", "foo <%= :bar %>")
     end
@@ -112,7 +140,7 @@ defmodule EExTest do
       assert_eval("foo ", "foo <%= if false do %>bar<% end %>")
     end
 
-    test "embedded code with do preceeded by bracket" do
+    test "embedded code with do preceded by bracket" do
       assert_eval("foo bar", "foo <%= if {true}do %>bar<% end %>")
       assert_eval("foo bar", "foo <%= if (true)do %>bar<% end %>")
       assert_eval("foo bar", "foo <%= if [true]do %>bar<% end %>")

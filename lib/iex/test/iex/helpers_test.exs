@@ -5,6 +5,8 @@ defmodule IEx.HelpersTest do
 
   import IEx.Helpers
 
+  @compile {:no_warn_undefined, [:sample, Sample, Sample2]}
+
   describe "whereami" do
     test "is disabled by default" do
       assert capture_iex("whereami()") =~ "Pry session is not currently enabled"
@@ -380,7 +382,7 @@ defmodule IEx.HelpersTest do
         "* def left == right\n\n  @spec term() == term() :: boolean()\n\nguard: true\n\nReturns `true` if the two terms are equal.\n\n"
 
       def_h =
-        "* defmacro def(call, expr \\\\ nil)\n\nDefines a function with the given name and body."
+        "* defmacro def(call, expr \\\\ nil)\n\nDefines a public function with the given name and body."
 
       assert capture_io(fn -> h(IEx.Helpers.pwd() / 0) end) =~ pwd_h
       assert capture_io(fn -> h(IEx.Helpers.c() / 2) end) =~ c_h
@@ -642,14 +644,15 @@ defmodule IEx.HelpersTest do
       content = """
       defmodule Macrocallbacks do
         @macrocallback test(:foo) :: integer
+        @macrocallback test(:bar) :: var when var: integer
       end
       """
 
       with_file(filename, content, fn ->
         assert c(filename, ".") == [Macrocallbacks]
-
-        assert capture_io(fn -> b(Macrocallbacks) end) =~
-                 "@macrocallback test(:foo) :: integer()\n\n"
+        callbacks = capture_io(fn -> b(Macrocallbacks) end)
+        assert callbacks =~ "@macrocallback test(:foo) :: integer()\n"
+        assert callbacks =~ "@macrocallback test(:bar) :: var when var: integer()\n"
       end)
     after
       cleanup_modules([Macrocallbacks])
@@ -997,6 +1000,17 @@ defmodule IEx.HelpersTest do
 
     test "does not raise if file is missing and using import_file_if_available" do
       assert "nil" == capture_iex("import_file_if_available \"nonexistent\"")
+    end
+
+    test "circular imports" do
+      dot_1 = "import_file \"dot-iex-2\""
+      dot_2 = "import_file \"dot-iex-1\""
+
+      with_file(["dot-iex-1", "dot-iex-2"], [dot_1, dot_2], fn ->
+        assert capture_io(:stderr, fn ->
+                 assert capture_iex(":ok", [], dot_iex_path: "dot-iex-1") == ":ok"
+               end) =~ "dot-iex-2 was already imported, skipping circular file imports"
+      end)
     end
   end
 

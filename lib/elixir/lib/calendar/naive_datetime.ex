@@ -118,6 +118,53 @@ defmodule NaiveDateTime do
   end
 
   @doc """
+  Returns the "local time" for the machine the Elixir program is running on.
+
+  WARNING: This function can cause insidious bugs. It depends on the time zone
+  configuration at run time. This can changed and be set to a time zone that has
+  daylight saving jumps (spring forward or fall back).
+
+  This function can be used to display what the time is right now for the time
+  zone configuration that the machine happens to have. An example would be a
+  desktop program displaying a clock to the user. For any other uses it is
+  probably a bad idea to use this function.
+
+  For most cases, use `DateTime.now/2` or `DateTime.utc_now/1` instead.
+
+  Does not include fractional seconds.
+
+  ## Examples
+
+      iex> naive_datetime = NaiveDateTime.local_now()
+      iex> naive_datetime.year >= 2019
+      true
+
+  """
+  @doc since: "1.10.0"
+  @spec local_now(Calendar.calendar()) :: t
+  def local_now(calendar \\ Calendar.ISO)
+
+  def local_now(Calendar.ISO) do
+    {{year, month, day}, {hour, minute, second}} = :erlang.localtime()
+    {:ok, ndt} = NaiveDateTime.new(year, month, day, hour, minute, second)
+    ndt
+  end
+
+  def local_now(calendar) do
+    naive_datetime = local_now()
+
+    case convert(naive_datetime, calendar) do
+      {:ok, value} ->
+        value
+
+      {:error, :incompatible_calendars} ->
+        raise ArgumentError,
+              ~s(cannot get "local now" in target calendar #{inspect(calendar)}, ) <>
+                "reason: cannot convert from Calendar.ISO to #{inspect(calendar)}."
+    end
+  end
+
+  @doc """
   Builds a new ISO naive datetime.
 
   Expects all values to be integers. Returns `{:ok, naive_datetime}`
@@ -161,7 +208,7 @@ defmodule NaiveDateTime do
           Calendar.hour(),
           Calendar.minute(),
           Calendar.second(),
-          Calendar.microsecond(),
+          Calendar.microsecond() | non_neg_integer,
           Calendar.calendar()
         ) :: {:ok, t} | {:error, atom}
   def new(year, month, day, hour, minute, second, microsecond \\ {0, 0}, calendar \\ Calendar.ISO)
@@ -534,35 +581,21 @@ defmodule NaiveDateTime do
 
   """
   @spec from_iso8601(String.t(), Calendar.calendar()) :: {:ok, t} | {:error, atom}
-  def from_iso8601(string, calendar \\ Calendar.ISO)
-
-  def from_iso8601(<<?-, rest::binary>>, calendar) do
-    with {:ok, %{year: year} = naive_datetime} <- raw_from_iso8601(rest, calendar) do
-      {:ok, %{naive_datetime | year: -year}}
-    end
-  end
-
-  def from_iso8601(<<rest::binary>>, calendar) do
-    raw_from_iso8601(rest, calendar)
-  end
-
-  @sep [?\s, ?T]
-  [match_date, guard_date, read_date] = Calendar.ISO.__match_date__()
-  [match_time, guard_time, read_time] = Calendar.ISO.__match_time__()
-
-  defp raw_from_iso8601(string, calendar) do
-    with <<unquote(match_date), sep, unquote(match_time), rest::binary>> <- string,
-         true <- unquote(guard_date) and sep in @sep and unquote(guard_time),
-         {microsec, rest} <- Calendar.ISO.parse_microsecond(rest),
-         {_offset, ""} <- Calendar.ISO.parse_offset(rest) do
-      {year, month, day} = unquote(read_date)
-      {hour, min, sec} = unquote(read_time)
-
-      with {:ok, iso_naive_dt} <- new(year, month, day, hour, min, sec, microsec, Calendar.ISO) do
-        convert(iso_naive_dt, calendar)
-      end
-    else
-      _ -> {:error, :invalid_format}
+  def from_iso8601(string, calendar \\ Calendar.ISO) do
+    with {:ok, {year, month, day, hour, minute, second, microsecond}} <-
+           Calendar.ISO.parse_naive_datetime(string) do
+      convert(
+        %NaiveDateTime{
+          year: year,
+          month: month,
+          day: day,
+          hour: hour,
+          minute: minute,
+          second: second,
+          microsecond: microsecond
+        },
+        calendar
+      )
     end
   end
 
@@ -640,16 +673,8 @@ defmodule NaiveDateTime do
       microsecond: microsecond
     } = naive_datetime
 
-    Calendar.ISO.naive_datetime_to_iso8601(
-      year,
-      month,
-      day,
-      hour,
-      minute,
-      second,
-      microsecond,
-      format
-    )
+    Calendar.ISO.date_to_string(year, month, day, format) <>
+      "T" <> Calendar.ISO.time_to_string(hour, minute, second, microsecond, format)
   end
 
   def to_iso8601(%{calendar: _} = naive_datetime, format) when format in [:basic, :extended] do
@@ -672,8 +697,8 @@ defmodule NaiveDateTime do
       iex> NaiveDateTime.to_erl(~N[2000-01-01 13:30:15])
       {{2000, 1, 1}, {13, 30, 15}}
 
-  This function can also be used to convert a DateTime to a erl format
-  without the time zone information:
+  This function can also be used to convert a DateTime to an Erlang
+  datetime tuple without the time zone information:
 
       iex> dt = %DateTime{year: 2000, month: 2, day: 29, zone_abbr: "CET",
       ...>                hour: 23, minute: 0, second: 7, microsecond: {0, 0},
@@ -936,7 +961,7 @@ defmodule NaiveDateTime do
   end
 
   defimpl Inspect do
-    def inspect(%{calendar: Calendar.ISO} = naive_datetime, _) do
+    def inspect(naive_datetime, _) do
       %{
         year: year,
         month: month,
@@ -944,17 +969,17 @@ defmodule NaiveDateTime do
         hour: hour,
         minute: minute,
         second: second,
-        microsecond: microsecond
+        microsecond: microsecond,
+        calendar: calendar
       } = naive_datetime
 
       formatted =
-        Calendar.ISO.naive_datetime_to_string(year, month, day, hour, minute, second, microsecond)
+        calendar.naive_datetime_to_string(year, month, day, hour, minute, second, microsecond)
 
-      "~N[" <> formatted <> "]"
+      "~N[" <> formatted <> suffix(calendar) <> "]"
     end
 
-    def inspect(naive, opts) do
-      Inspect.Any.inspect(naive, opts)
-    end
+    defp suffix(Calendar.ISO), do: ""
+    defp suffix(calendar), do: " " <> inspect(calendar)
   end
 end

@@ -47,7 +47,7 @@ defmodule Logger.Formatter do
   @replacement "�"
 
   @doc """
-  Prunes non-valid UTF-8 code points.
+  Prunes invalid Unicode code points from lists and invalid UTF-8 bytes.
 
   Typically called after formatting when the data cannot be printed.
   """
@@ -158,19 +158,9 @@ defmodule Logger.Formatter do
   defp output(:time, _, _, {_date, time}, _), do: format_time(time)
   defp output(:level, level, _, _, _), do: Atom.to_string(level)
   defp output(:node, _, _, _, _), do: Atom.to_string(node())
-
   defp output(:metadata, _, _, _, []), do: ""
-
-  defp output(:metadata, _, _, _, meta) do
-    Enum.map(meta, fn {key, val} ->
-      [to_string(key), ?=, metadata(key, val), ?\s]
-    end)
-  end
-
-  defp output(:levelpad, level, _, _, _) do
-    levelpad(level)
-  end
-
+  defp output(:metadata, _, _, _, meta), do: metadata(meta)
+  defp output(:levelpad, level, _, _, _), do: levelpad(level)
   defp output(other, _, _, _, _), do: other
 
   defp levelpad(:debug), do: ""
@@ -178,19 +168,26 @@ defmodule Logger.Formatter do
   defp levelpad(:warn), do: " "
   defp levelpad(:error), do: ""
 
-  defp metadata(:initial_call, {mod, fun, arity})
-       when is_atom(mod) and is_atom(fun) and is_integer(arity) do
-    Exception.format_mfa(mod, fun, arity)
+  defp metadata([{key, value} | metadata]) do
+    if formatted = metadata(key, value) do
+      [to_string(key), ?=, formatted, ?\s | metadata(metadata)]
+    else
+      metadata(metadata)
+    end
   end
 
-  defp metadata(_, pid) when is_pid(pid) do
-    :erlang.pid_to_list(pid)
+  defp metadata([]) do
+    []
   end
 
-  defp metadata(_, ref) when is_reference(ref) do
-    '#Ref' ++ rest = :erlang.ref_to_list(ref)
-    rest
-  end
+  defp metadata(:time, _), do: nil
+  defp metadata(:gl, _), do: nil
+
+  defp metadata(_, nil), do: nil
+  defp metadata(_, string) when is_binary(string), do: string
+  defp metadata(_, integer) when is_integer(integer), do: Integer.to_string(integer)
+  defp metadata(_, float) when is_float(float), do: Float.to_string(float)
+  defp metadata(_, pid) when is_pid(pid), do: :erlang.pid_to_list(pid)
 
   defp metadata(_, atom) when is_atom(atom) do
     case Atom.to_string(atom) do
@@ -200,5 +197,26 @@ defmodule Logger.Formatter do
     end
   end
 
-  defp metadata(_, other), do: to_string(other)
+  defp metadata(_, ref) when is_reference(ref) do
+    '#Ref' ++ rest = :erlang.ref_to_list(ref)
+    rest
+  end
+
+  defp metadata(:file, file) when is_list(file), do: file
+
+  defp metadata(:domain, [head | tail]) when is_atom(head) do
+    Enum.map_intersperse([head | tail], ?., &Atom.to_string/1)
+  end
+
+  defp metadata(:mfa, {mod, fun, arity})
+       when is_atom(mod) and is_atom(fun) and is_integer(arity) do
+    Exception.format_mfa(mod, fun, arity)
+  end
+
+  defp metadata(:initial_call, {mod, fun, arity})
+       when is_atom(mod) and is_atom(fun) and is_integer(arity) do
+    Exception.format_mfa(mod, fun, arity)
+  end
+
+  defp metadata(_, _), do: nil
 end

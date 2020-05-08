@@ -39,9 +39,15 @@ defmodule Config.Provider do
         end
       end
 
-  Then when specifying your release, you can specify the provider:
+  Then when specifying your release, you can specify the provider in
+  the release configuration:
 
-      config_providers: [{JSONConfigProvider, "/etc/config.json"}]
+      releases: [
+        demo: [
+          # ...,
+          config_providers: [{JSONConfigProvider, "/etc/config.json"}]
+        ]
+      ]
 
   Now once the system boots, it will invoke the provider early in
   the boot process, save the merged configuration to the disk, and
@@ -59,8 +65,9 @@ defmodule Config.Provider do
 
     * a binary representing an absolute path
 
-    * a tuple {:system, system_var, path} where the config is the
-      concatenation of the `system_var` with the given `path`
+    * a `{:system, system_var, path}` tuple where the config is the
+      concatenation of the environment variable `system_var` with
+      the given `path`
 
   """
   @type config_path :: {:system, binary(), binary()} | binary()
@@ -98,7 +105,14 @@ defmodule Config.Provider do
   @callback load(config, state) :: config
 
   @doc false
-  defstruct [:providers, :config_path, extra_config: [], prune_after_boot: false]
+  defstruct [
+    :providers,
+    :config_path,
+    extra_config: [],
+    prune_after_boot: false,
+    reboot_after_config: true,
+    validate_compile_env: false
+  ]
 
   @doc """
   Validates a `t:config_path/0`.
@@ -141,7 +155,7 @@ defmodule Config.Provider do
   end
 
   @doc false
-  def boot(app, key, restart_fun \\ &System.restart/0) do
+  def boot(app, key, restart_fun \\ &restart_and_sleep/0) do
     # The app with the config provider settings may not
     # have been loaded at this point, so make sure we load
     # its environment before querying it.
@@ -152,32 +166,146 @@ defmodule Config.Provider do
     # before we go around running Elixir code.
     {:ok, _} = :application.ensure_all_started(:elixir)
 
-    case :application.get_env(app, key) do
-      {:ok, %Config.Provider{} = provider} ->
-        path = resolve_config_path!(provider.config_path)
-        validate_no_cyclic_boot!(path)
+    # The key we store if the system already booted
+    booted_key = :"#{key}_booted"
 
-        read_config!(path)
-        |> Config.__merge__([{app, [{key, booted_key(provider, path)}]} | provider.extra_config])
-        |> run_providers(provider)
-        |> write_config!(path)
-
-        restart_fun.()
-
+    case :application.get_env(app, booted_key) do
       {:ok, {:booted, path}} ->
-        File.rm(path)
-        :booted
+        path && File.rm(path)
 
-      {:ok, :booted} ->
+        with {:ok, %Config.Provider{} = provider} <- :application.get_env(app, key) do
+          maybe_validate_compile_env(provider)
+        end
+
         :booted
 
       _ ->
-        :skip
+        case :application.get_env(app, key) do
+          {:ok, %Config.Provider{} = provider} ->
+            path = resolve_config_path!(provider.config_path)
+            reboot_config = [{app, [{booted_key, booted_value(provider, path)}]}]
+            boot_providers(path, provider, reboot_config, restart_fun)
+
+          _ ->
+            :skip
+        end
     end
   end
 
-  defp booted_key(%{prune_after_boot: true}, path), do: {:booted, path}
-  defp booted_key(%{prune_after_boot: false}, _path), do: :booted
+  defp boot_providers(path, provider, reboot_config, restart_fun) do
+    validate_no_cyclic_boot!(path)
+    loaded_applications = :application.loaded_applications()
+    original_config = read_config!(path)
+
+    config =
+      original_config
+      |> Config.__merge__(provider.extra_config)
+      |> run_providers(provider)
+
+    if provider.reboot_after_config do
+      config
+      |> Config.__merge__(reboot_config)
+      |> write_config!(path)
+
+      restart_fun.()
+    else
+      for {app, _, _} <- loaded_applications, config[app] != original_config[app] do
+        abort("""
+        Cannot configure #{inspect(app)} because :reboot_after_config has been set \
+        to false and #{inspect(app)} has already been loaded, meaning any further \
+        configuration won't have an effect.
+
+        The configuration for #{inspect(app)} before config providers was:
+
+        #{inspect(original_config[app])}
+
+        The configuration for #{inspect(app)} after config providers was:
+
+        #{inspect(config[app])}
+        """)
+      end
+
+      _ = Application.put_all_env(config, persistent: true)
+      maybe_validate_compile_env(provider)
+      :ok
+    end
+  end
+
+  defp maybe_validate_compile_env(provider) do
+    with [_ | _] = compile_env <- provider.validate_compile_env do
+      validate_compile_env(compile_env)
+    end
+  end
+
+  @doc false
+  def validate_compile_env(compile_env) do
+    for {app, [key | path], compile_return} <- compile_env,
+        Application.ensure_loaded(app) == :ok do
+      try do
+        traverse_env(Application.fetch_env(app, key), path)
+      rescue
+        e ->
+          abort("""
+          application #{inspect(app)} failed reading its compile environment #{path(key, path)}:
+
+          #{Exception.format(:error, e, __STACKTRACE__)}
+
+          Expected it to match the compile time value of #{return_to_text(compile_return)}.
+
+          #{compile_env_tips(app)}
+          """)
+      else
+        ^compile_return ->
+          :ok
+
+        runtime_return ->
+          abort("""
+          the application #{inspect(app)} has a different value set #{path(key, path)} \
+          during runtime compared to compile time. Since this application environment entry was \
+          marked as compile time, this difference can lead to different behaviour than expected:
+
+            * Compile time value #{return_to_text(compile_return)}
+            * Runtime value #{return_to_text(runtime_return)}
+
+          #{compile_env_tips(app)}
+          """)
+      end
+    end
+
+    :ok
+  end
+
+  defp path(key, []), do: "for key #{inspect(key)}"
+  defp path(key, path), do: "for path #{inspect(path)} inside key #{inspect(key)}"
+
+  defp compile_env_tips(app),
+    do: """
+    To fix this error, you might:
+
+      * Make the runtime value match the compile time one
+
+      * Recompile your project. If the misconfigured application is a dependency, \
+    you may need to run "mix deps.compile #{app} --force"
+
+      * Alternatively, you can disable this check. If you are using releases, you can \
+    set :validate_compile_env to false in your release configuration. If you are \
+    using Mix to start your system, you can pass the --no-validate-compile-env flag
+    """
+
+  defp return_to_text({:ok, value}), do: "was set to: #{inspect(value)}"
+  defp return_to_text(:error), do: "was not set"
+
+  defp traverse_env(return, []), do: return
+  defp traverse_env(:error, _paths), do: :error
+  defp traverse_env({:ok, value}, [key | keys]), do: traverse_env(Access.fetch(value, key), keys)
+
+  defp restart_and_sleep do
+    :init.restart()
+    Process.sleep(:infinity)
+  end
+
+  defp booted_value(%{prune_after_boot: true}, path), do: {:booted, path}
+  defp booted_value(%{prune_after_boot: false}, _path), do: {:booted, nil}
 
   defp validate_no_cyclic_boot!(path) do
     if System.get_env("ELIXIR_CONFIG_PROVIDER_BOOTED") do
@@ -244,6 +372,6 @@ defmodule Config.Provider do
 
   defp abort(msg) do
     IO.puts(:stderr, "ERROR! " <> msg)
-    raise(msg)
+    :erlang.raise(:error, "aborting boot", [{Config.Provider, :boot, 2, []}])
   end
 end

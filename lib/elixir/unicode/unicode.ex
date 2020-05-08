@@ -11,25 +11,28 @@
 
 defmodule String.Unicode do
   @moduledoc false
-  def version, do: {11, 0, 0}
+  def version, do: {12, 1, 0}
 
   cluster_path = Path.join(__DIR__, "GraphemeBreakProperty.txt")
   regex = ~r/(?:^([0-9A-F]+)(?:\.\.([0-9A-F]+))?)\s+;\s(\w+)/m
 
   cluster =
-    Enum.reduce(File.stream!(cluster_path), %{}, fn line, acc ->
+    cluster_path
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.reduce(%{}, fn line, acc ->
       case Regex.run(regex, line, capture: :all_but_first) do
         ["D800", "DFFF", _class] ->
           acc
 
         [first, "", class] ->
           codepoint = <<String.to_integer(first, 16)::utf8>>
-          Map.update(acc, class, [codepoint], &[<<String.to_integer(first, 16)::utf8>> | &1])
+          :maps.put(class, [codepoint | :maps.get(class, acc, [])], acc)
 
         [first, last, class] ->
           range = String.to_integer(first, 16)..String.to_integer(last, 16)
           codepoints = Enum.map(range, fn int -> <<int::utf8>> end)
-          Map.update(acc, class, codepoints, &(codepoints ++ &1))
+          :maps.put(class, codepoints ++ :maps.get(class, acc, []), acc)
 
         nil ->
           acc
@@ -46,6 +49,11 @@ defmodule String.Unicode do
     def next_grapheme_size(<<unquote(codepoint), rest::binary>>) do
       {unquote(byte_size(codepoint)), rest}
     end
+  end
+
+  # Avoid Unicode codepoint creation if possible
+  def next_grapheme_size(<<cp, rest::binary>>) when cp <= 0x007F do
+    next_extend_size(rest, 1, :other)
   end
 
   # Break on Prepend*
@@ -93,7 +101,6 @@ defmodule String.Unicode do
   # Handle extended entries
   def next_grapheme_size(<<cp::utf8, rest::binary>>) do
     case cp do
-      x when x <= 0x007F -> next_extend_size(rest, 1, :other)
       x when x <= 0x07FF -> next_extend_size(rest, 2, :other)
       x when x <= 0xFFFF -> next_extend_size(rest, 3, :other)
       _ -> next_extend_size(rest, 4, :other)

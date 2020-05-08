@@ -55,17 +55,17 @@ defmodule Config do
 
   It has to be replaced by:
 
-      for config <- "apps/*/config/config.exs" |> Path.expand() |> Path.wildcard() do
+      for config <- "../apps/*/config/config.exs" |> Path.expand(__DIR__) |> Path.wildcard() do
         import_config config
       end
 
   ## config/releases.exs
 
-  If you are using releases, see `mix release`, there another configuration
+  If you are using releases, see `mix release`, there is another configuration
   file called `config/releases.exs`. While `config/config.exs` and friends
   mentioned in the previous section are executed whenever you run a Mix
   command, including when you assemble a release, `config/releases.exs` is
-  execute every time your production system boots. Since Mix is not available
+  executed every time your production system boots. Since Mix is not available
   in a production system, `config/releases.exs` must not use any of the
   functions from Mix.
   """
@@ -196,7 +196,7 @@ defmodule Config do
   end
 
   @doc false
-  @spec __import__!(Path.t()) :: keyword()
+  @spec __import__!(Path.t()) :: {term, Code.binding()}
   def __import__!(file) when is_binary(file) do
     current_files = get_files!()
 

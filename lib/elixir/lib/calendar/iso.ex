@@ -20,9 +20,48 @@ defmodule Calendar.ISO do
   unix_end = 315_569_519_999_999_999 - @unix_epoch * 1_000_000
   @unix_range_microseconds unix_start..unix_end
 
+  @typedoc """
+  "Before the Current Era" or "Before the Common Era" (BCE), for those years less than `1`.
+  """
+  @type bce :: 0
+
+  @typedoc """
+  The "Current Era" or the "Common Era" (CE) which starts in year `1`.
+  """
+  @type ce :: 1
+
+  @typedoc """
+  The calendar era.
+
+  The ISO calendar has two eras:
+  * [CE](`t:ce/0`) - which starts in year `1` and is defined as era `1`.
+  * [BCE](`t:bce/0`) - for those years less than `1` and is defined as era `0`.
+  """
+  @type era :: bce | ce
   @type year :: -9999..9999
   @type month :: 1..12
   @type day :: 1..31
+  @type hour :: 0..23
+  @type minute :: 0..59
+  @type second :: 0..59
+
+  @typedoc """
+  Microseconds with stored precision.
+
+  The precision represents the number of digits that must be used when
+  representing the microseconds to external format. If the precision is 0,
+  it means microseconds must be skipped.
+  """
+  @type microsecond :: {0..999_999, 0..6}
+
+  @typedoc """
+  Integer that represents the day of the week, where 1 is Monday and 7 is Sunday.
+  """
+  @type day_of_week :: 1..7
+
+  @type day_of_year :: 1..366
+  @type quarter_of_year :: 1..4
+  @type year_of_era :: {1..10000, era}
 
   @seconds_per_minute 60
   @seconds_per_hour 60 * 60
@@ -32,18 +71,16 @@ defmodule Calendar.ISO do
   @microseconds_per_second 1_000_000
   @parts_per_day @seconds_per_day * @microseconds_per_second
 
+  @sep [?\s, ?T]
   @days_per_nonleap_year 365
   @days_per_leap_year 366
-
-  @months_in_year 12
 
   # The ISO epoch starts, in this implementation,
   # with ~D[0000-01-01]. Era "1" starts
   # on ~D[0001-01-01] which is 366 days later.
   @iso_epoch 366
 
-  @doc false
-  def __match_date__ do
+  [match_date, guard_date, read_date] =
     quote do
       [
         <<y1, y2, y3, y4, ?-, m1, m2, ?-, d1, d2>>,
@@ -57,10 +94,8 @@ defmodule Calendar.ISO do
         }
       ]
     end
-  end
 
-  @doc false
-  def __match_time__ do
+  [match_time, guard_time, read_time] =
     quote do
       [
         <<h1, h2, ?:, i1, i2, ?:, s1, s2>>,
@@ -72,6 +107,276 @@ defmodule Calendar.ISO do
           (s1 - ?0) * 10 + (s2 - ?0)
         }
       ]
+    end
+
+  defguardp is_year(year) when year in -9999..9999
+  defguardp is_year_BCE(year) when year in -9999..0
+  defguardp is_year_CE(year) when year in 1..9999
+  defguardp is_month(month) when month in 1..12
+  defguardp is_day(day) when day in 1..31
+  defguardp is_hour(hour) when hour in 0..23
+  defguardp is_minute(minute) when minute in 0..59
+  defguardp is_second(second) when second in 0..59
+
+  defguardp is_microsecond(microsecond, precision)
+            when microsecond in 0..999_999 and precision in 0..6
+
+  defguardp is_time_zone(term) when is_binary(term)
+  defguardp is_zone_abbr(term) when is_binary(term)
+  defguardp is_utc_offset(offset) when is_integer(offset)
+  defguardp is_std_offset(offset) when is_integer(offset)
+
+  @doc """
+  Parses a time string.
+
+  ## Examples
+
+      iex> Calendar.ISO.parse_time("23:50:07")
+      {:ok, {23, 50, 7, {0, 0}}}
+      iex> Calendar.ISO.parse_time("23:50:07Z")
+      {:ok, {23, 50, 7, {0, 0}}}
+      iex> Calendar.ISO.parse_time("T23:50:07Z")
+      {:ok, {23, 50, 7, {0, 0}}}
+
+      iex> Calendar.ISO.parse_time("23:50:07,0123456")
+      {:ok, {23, 50, 7, {12345, 6}}}
+      iex> Calendar.ISO.parse_time("23:50:07.0123456")
+      {:ok, {23, 50, 7, {12345, 6}}}
+      iex> Calendar.ISO.parse_time("23:50:07.123Z")
+      {:ok, {23, 50, 7, {123000, 3}}}
+
+      iex> Calendar.ISO.parse_time("2015:01:23 23-50-07")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_time("23:50:07A")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_time("23:50:07.")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_time("23:50:61")
+      {:error, :invalid_time}
+
+  """
+  @doc since: "1.10.0"
+  @impl true
+  def parse_time("T" <> string) when is_binary(string),
+    do: do_parse_time(string)
+
+  def parse_time(string) when is_binary(string),
+    do: do_parse_time(string)
+
+  defp do_parse_time(string) do
+    with <<unquote(match_time), rest::binary>> <- string,
+         true <- unquote(guard_time),
+         {microsecond, rest} <- parse_microsecond(rest),
+         {_offset, ""} <- parse_offset(rest) do
+      {hour, minute, second} = unquote(read_time)
+
+      if valid_time?(hour, minute, second, microsecond) do
+        {:ok, {hour, minute, second, microsecond}}
+      else
+        {:error, :invalid_time}
+      end
+    else
+      _ -> {:error, :invalid_format}
+    end
+  end
+
+  @doc """
+  Parses a date string.
+
+  ## Examples
+
+      iex> Calendar.ISO.parse_date("2015-01-23")
+      {:ok, {2015, 1, 23}}
+      iex> Calendar.ISO.parse_date("-2015-01-23")
+      {:ok, {-2015, 1, 23}}
+      iex> Calendar.ISO.parse_date("2015:01:23")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_date("2015-01-32")
+      {:error, :invalid_date}
+
+  """
+  @doc since: "1.10.0"
+  @impl true
+  def parse_date("-" <> string) when is_binary(string),
+    do: parse_date(string, -1)
+
+  def parse_date(string) when is_binary(string),
+    do: parse_date(string, 1)
+
+  defp parse_date(string, multiplier) do
+    with unquote(match_date) <- string, true <- unquote(guard_date) do
+      {year, month, day} = unquote(read_date)
+      year = multiplier * year
+
+      if valid_date?(year, month, day) do
+        {:ok, {year, month, day}}
+      else
+        {:error, :invalid_date}
+      end
+    else
+      _ ->
+        {:error, :invalid_format}
+    end
+  end
+
+  @doc """
+  Parses a naive datetime string.
+
+  ## Examples
+
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:07")
+      {:ok, {2015, 1, 23, 23, 50, 7, {0, 0}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07")
+      {:ok, {2015, 1, 23, 23, 50, 7, {0, 0}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07Z")
+      {:ok, {2015, 1, 23, 23, 50, 7, {0, 0}}}
+
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:07.0")
+      {:ok, {2015, 1, 23, 23, 50, 7, {0, 1}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:07,0123456")
+      {:ok, {2015, 1, 23, 23, 50, 7, {12345, 6}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:07.0123456")
+      {:ok, {2015, 1, 23, 23, 50, 7, {12345, 6}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123Z")
+      {:ok, {2015, 1, 23, 23, 50, 7, {123000, 3}}}
+
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23P23:50:07")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_naive_datetime("2015:01:23 23-50-07")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:07A")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23 23:50:61")
+      {:error, :invalid_time}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-32 23:50:07")
+      {:error, :invalid_date}
+
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123+02:30")
+      {:ok, {2015, 1, 23, 23, 50, 7, {123000, 3}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123+00:00")
+      {:ok, {2015, 1, 23, 23, 50, 7, {123000, 3}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123-02:30")
+      {:ok, {2015, 1, 23, 23, 50, 7, {123000, 3}}}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123-00:00")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123-00:60")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_naive_datetime("2015-01-23T23:50:07.123-24:00")
+      {:error, :invalid_format}
+
+  """
+  @doc since: "1.10.0"
+  @impl true
+  def parse_naive_datetime("-" <> string) when is_binary(string),
+    do: parse_naive_datetime(string, -1)
+
+  def parse_naive_datetime(string) when is_binary(string),
+    do: parse_naive_datetime(string, 1)
+
+  defp parse_naive_datetime(string, multiplier) do
+    with <<unquote(match_date), sep, unquote(match_time), rest::binary>> <- string,
+         true <- unquote(guard_date) and sep in @sep and unquote(guard_time),
+         {microsecond, rest} <- parse_microsecond(rest),
+         {_offset, ""} <- parse_offset(rest) do
+      {year, month, day} = unquote(read_date)
+      {hour, minute, second} = unquote(read_time)
+      year = multiplier * year
+
+      cond do
+        not valid_date?(year, month, day) ->
+          {:error, :invalid_date}
+
+        not valid_time?(hour, minute, second, microsecond) ->
+          {:error, :invalid_time}
+
+        true ->
+          {:ok, {year, month, day, hour, minute, second, microsecond}}
+      end
+    else
+      _ -> {:error, :invalid_format}
+    end
+  end
+
+  @doc """
+  Parses a UTC datetime string.
+
+  ## Examples
+
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23T23:50:07Z")
+      {:ok, {2015, 1, 23, 23, 50, 7, {0, 0}}, 0}
+
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23T23:50:07.123+02:30")
+      {:ok, {2015, 1, 23, 21, 20, 7, {123000, 3}}, 9000}
+
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23T23:50:07,123+02:30")
+      {:ok, {2015, 1, 23, 21, 20, 7, {123000, 3}}, 9000}
+
+      iex> Calendar.ISO.parse_utc_datetime("-2015-01-23T23:50:07Z")
+      {:ok, {-2015, 1, 23, 23, 50, 7, {0, 0}}, 0}
+
+      iex> Calendar.ISO.parse_utc_datetime("-2015-01-23T23:50:07,123+02:30")
+      {:ok, {-2015, 1, 23, 21, 20, 7, {123000, 3}}, 9000}
+
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23P23:50:07")
+      {:error, :invalid_format}
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23T23:50:07")
+      {:error, :missing_offset}
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23 23:50:61")
+      {:error, :invalid_time}
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-32 23:50:07")
+      {:error, :invalid_date}
+      iex> Calendar.ISO.parse_utc_datetime("2015-01-23T23:50:07.123-00:00")
+      {:error, :invalid_format}
+
+  """
+  @doc since: "1.10.0"
+  @impl true
+  def parse_utc_datetime("-" <> string) when is_binary(string),
+    do: parse_utc_datetime(string, -1)
+
+  def parse_utc_datetime(string) when is_binary(string),
+    do: parse_utc_datetime(string, 1)
+
+  defp parse_utc_datetime(string, multiplier) do
+    with <<unquote(match_date), sep, unquote(match_time), rest::binary>> <- string,
+         true <- unquote(guard_date) and sep in @sep and unquote(guard_time),
+         {microsecond, rest} <- parse_microsecond(rest),
+         {offset, ""} <- parse_offset(rest) do
+      {year, month, day} = unquote(read_date)
+      {hour, minute, second} = unquote(read_time)
+      year = multiplier * year
+
+      cond do
+        not valid_date?(year, month, day) ->
+          {:error, :invalid_date}
+
+        not valid_time?(hour, minute, second, microsecond) ->
+          {:error, :invalid_time}
+
+        offset == 0 ->
+          {:ok, {year, month, day, hour, minute, second, microsecond}, offset}
+
+        is_nil(offset) ->
+          {:error, :missing_offset}
+
+        true ->
+          day_fraction = time_to_day_fraction(hour, minute, second, {0, 0})
+
+          {{year, month, day}, {hour, minute, second, _}} =
+            case add_day_fraction_to_iso_days({0, day_fraction}, -offset, 86400) do
+              {0, day_fraction} ->
+                {{year, month, day}, time_from_day_fraction(day_fraction)}
+
+              {extra_days, day_fraction} ->
+                base_days = date_to_iso_days(year, month, day)
+                {date_from_iso_days(base_days + extra_days), time_from_day_fraction(day_fraction)}
+            end
+
+          {:ok, {year, month, day, hour, minute, second, microsecond}, offset}
+      end
+    else
+      _ ->
+        {:error, :invalid_format}
     end
   end
 
@@ -179,7 +484,7 @@ defmodule Calendar.ISO do
   @doc since: "1.5.0"
   @impl true
   @spec time_from_day_fraction(Calendar.day_fraction()) ::
-          {Calendar.hour(), Calendar.minute(), Calendar.second(), Calendar.microsecond()}
+          {hour(), minute(), second(), microsecond()}
   def time_from_day_fraction({0, _}) do
     {0, 0, 0, {0, 6}}
   end
@@ -212,7 +517,7 @@ defmodule Calendar.ISO do
     719_528
   end
 
-  def date_to_iso_days(year, month, day) when year in -9999..9999 do
+  def date_to_iso_days(year, month, day) do
     ensure_day_in_month!(year, month, day)
 
     days_in_previous_years(year) + days_before_month(month) + leap_day_offset(year, month) + day -
@@ -263,14 +568,16 @@ defmodule Calendar.ISO do
   @doc since: "1.4.0"
   @spec days_in_month(year, month) :: 28..31
   @impl true
-  def days_in_month(year, month)
+  def days_in_month(year, month) when is_year(year) and is_month(month) do
+    days_in_month_guarded(year, month)
+  end
 
-  def days_in_month(year, 2) do
+  defp days_in_month_guarded(year, 2) do
     if leap_year?(year), do: 29, else: 28
   end
 
-  def days_in_month(_, month) when month in [4, 6, 9, 11], do: 30
-  def days_in_month(_, month) when month in 1..12, do: 31
+  defp days_in_month_guarded(_, month) when month in [4, 6, 9, 11], do: 30
+  defp days_in_month_guarded(_, _), do: 31
 
   @doc """
   Returns how many months there are in the given year.
@@ -284,8 +591,8 @@ defmodule Calendar.ISO do
   @doc since: "1.7.0"
   @impl true
   @spec months_in_year(year) :: 12
-  def months_in_year(_year) do
-    @months_in_year
+  def months_in_year(year) when is_year(year) do
+    12
   end
 
   @doc """
@@ -308,7 +615,7 @@ defmodule Calendar.ISO do
   @doc since: "1.3.0"
   @spec leap_year?(year) :: boolean()
   @impl true
-  def leap_year?(year) when is_integer(year) do
+  def leap_year?(year) when is_year(year) do
     rem(year, 4) === 0 and (rem(year, 100) !== 0 or rem(year, 400) === 0)
   end
 
@@ -338,11 +645,11 @@ defmodule Calendar.ISO do
 
   """
   @doc since: "1.4.0"
-  @spec day_of_week(year, month, day) :: 1..7
+  @spec day_of_week(year, month, day) :: day_of_week()
   @impl true
-  def day_of_week(year, month, day)
-      when is_integer(year) and is_integer(month) and is_integer(day) do
-    iso_days_to_day_of_week(date_to_iso_days(year, month, day))
+  def day_of_week(year, month, day) do
+    date_to_iso_days(year, month, day)
+    |> iso_days_to_day_of_week()
   end
 
   defp iso_days_to_day_of_week(iso_days) do
@@ -365,10 +672,9 @@ defmodule Calendar.ISO do
 
   """
   @doc since: "1.8.0"
-  @spec day_of_year(year, month, day) :: 1..366
+  @spec day_of_year(year, month, day) :: day_of_year()
   @impl true
-  def day_of_year(year, month, day)
-      when is_integer(year) and is_integer(month) and is_integer(day) do
+  def day_of_year(year, month, day) do
     ensure_day_in_month!(year, month, day)
     days_before_month(month) + leap_day_offset(year, month) + day
   end
@@ -391,20 +697,19 @@ defmodule Calendar.ISO do
 
   """
   @doc since: "1.8.0"
-  @spec quarter_of_year(year, month, day) :: 1..4
+  @spec quarter_of_year(year, month, day) :: quarter_of_year()
   @impl true
   def quarter_of_year(year, month, day)
-      when is_integer(year) and is_integer(month) and is_integer(day) do
+      when is_year(year) and is_month(month) and is_day(day) do
     div(month - 1, 3) + 1
   end
 
   @doc """
   Calculates the year and era from the given `year`.
 
-  The ISO calendar has two eras: the current era which
-  starts in year 1 and is defined as era "1". And a
-  second era for those years less than 1 defined as
-  era "0".
+  The ISO calendar has two eras: the "current era" (CE) which
+  starts in year `1` and is defined as era `1`. And "before the current
+  era" (BCE) for those years less than `1`, defined as era `0`.
 
   ## Examples
 
@@ -419,13 +724,13 @@ defmodule Calendar.ISO do
 
   """
   @doc since: "1.8.0"
-  @spec year_of_era(year) :: {year, era :: 0..1}
+  @spec year_of_era(year) :: {1..10000, era}
   @impl true
-  def year_of_era(year) when is_integer(year) and year > 0 do
+  def year_of_era(year) when is_year_CE(year) do
     {year, 1}
   end
 
-  def year_of_era(year) when is_integer(year) and year < 1 do
+  def year_of_era(year) when is_year_BCE(year) do
     {abs(year) + 1, 0}
   end
 
@@ -447,16 +752,14 @@ defmodule Calendar.ISO do
 
   """
   @doc since: "1.8.0"
-  @spec day_of_era(year, month, day) :: {day :: pos_integer(), era :: 0..1}
+  @spec day_of_era(year, month, day) :: Calendar.day_of_era()
   @impl true
-  def day_of_era(year, month, day)
-      when is_integer(year) and is_integer(month) and is_integer(day) and year > 0 do
+  def day_of_era(year, month, day) when is_year_CE(year) do
     day = date_to_iso_days(year, month, day) - @iso_epoch + 1
     {day, 1}
   end
 
-  def day_of_era(year, month, day)
-      when is_integer(year) and is_integer(month) and is_integer(day) and year < 1 do
+  def day_of_era(year, month, day) when is_year_BCE(year) do
     day = abs(date_to_iso_days(year, month, day) - @iso_epoch)
     {day, 0}
   end
@@ -492,14 +795,23 @@ defmodule Calendar.ISO do
           Calendar.microsecond(),
           :basic | :extended
         ) :: String.t()
-  def time_to_string(hour, minute, second, microsecond, format \\ :extended)
+  def time_to_string(
+        hour,
+        minute,
+        second,
+        {ms_value, ms_precision} = microsecond,
+        format \\ :extended
+      )
+      when is_hour(hour) and is_minute(minute) and is_second(second) and
+             is_microsecond(ms_value, ms_precision) and format in [:basic, :extended] do
+    time_to_string_guarded(hour, minute, second, microsecond, format)
+  end
 
-  def time_to_string(hour, minute, second, {_, 0}, format) when format in [:basic, :extended] do
+  defp time_to_string_guarded(hour, minute, second, {_, 0}, format) do
     time_to_string_format(hour, minute, second, format)
   end
 
-  def time_to_string(hour, minute, second, {microsecond, precision}, format)
-      when format in [:basic, :extended] do
+  defp time_to_string_guarded(hour, minute, second, {microsecond, precision}, format) do
     time_to_string_format(hour, minute, second, format) <>
       "." <> (microsecond |> zero_pad(6) |> binary_part(0, precision))
   end
@@ -538,12 +850,16 @@ defmodule Calendar.ISO do
   @spec date_to_string(year, month, day, :basic | :extended) :: String.t()
   @impl true
   def date_to_string(year, month, day, format \\ :extended)
+      when is_integer(year) and is_integer(month) and is_integer(day) and
+             format in [:basic, :extended] do
+    date_to_string_guarded(year, month, day, format)
+  end
 
-  def date_to_string(year, month, day, :extended) do
+  defp date_to_string_guarded(year, month, day, :extended) do
     zero_pad(year, 4) <> "-" <> zero_pad(month, 2) <> "-" <> zero_pad(day, 2)
   end
 
-  def date_to_string(year, month, day, :basic) do
+  defp date_to_string_guarded(year, month, day, :basic) do
     zero_pad(year, 4) <> zero_pad(month, 2) <> zero_pad(day, 2)
   end
 
@@ -586,8 +902,7 @@ defmodule Calendar.ISO do
         second,
         microsecond,
         format \\ :extended
-      )
-      when format in [:basic, :extended] do
+      ) do
     date_to_string(year, month, day, format) <>
       " " <> time_to_string(hour, minute, second, microsecond, format)
   end
@@ -600,6 +915,14 @@ defmodule Calendar.ISO do
   by passing the `:basic` option.
 
   ## Examples
+
+      iex> time_zone = "Etc/UTC"
+      iex> Calendar.ISO.datetime_to_string(2017, 8, 1, 1, 2, 3, {4, 5}, time_zone, "UTC", 0, 0)
+      "2017-08-01 01:02:03.00000Z"
+      iex> Calendar.ISO.datetime_to_string(2017, 8, 1, 1, 2, 3, {4, 5}, time_zone, "UTC", 3600, 0)
+      "2017-08-01 01:02:03.00000+01:00"
+      iex> Calendar.ISO.datetime_to_string(2017, 8, 1, 1, 2, 3, {4, 5}, time_zone, "UTC", 3600, 3600)
+      "2017-08-01 01:02:03.00000+02:00"
 
       iex> time_zone = "Europe/Berlin"
       iex> Calendar.ISO.datetime_to_string(2017, 8, 1, 1, 2, 3, {4, 5}, time_zone, "CET", 3600, 0)
@@ -648,13 +971,36 @@ defmodule Calendar.ISO do
         std_offset,
         format \\ :extended
       )
-      when format in [:basic, :extended] do
+      when is_time_zone(time_zone) and is_zone_abbr(zone_abbr) and is_utc_offset(utc_offset) and
+             is_std_offset(std_offset) do
     date_to_string(year, month, day, format) <>
       " " <>
       time_to_string(hour, minute, second, microsecond, format) <>
       offset_to_string(utc_offset, std_offset, time_zone, format) <>
       zone_to_string(utc_offset, std_offset, zone_abbr, time_zone)
   end
+
+  @doc false
+  def offset_to_string(0, 0, "Etc/UTC", _format), do: "Z"
+
+  def offset_to_string(utc, std, _zone, format) do
+    total = utc + std
+    second = abs(total)
+    minute = second |> rem(3600) |> div(60)
+    hour = div(second, 3600)
+    format_offset(total, hour, minute, format)
+  end
+
+  defp format_offset(total, hour, minute, :extended) do
+    sign(total) <> zero_pad(hour, 2) <> ":" <> zero_pad(minute, 2)
+  end
+
+  defp format_offset(total, hour, minute, :basic) do
+    sign(total) <> zero_pad(hour, 2) <> zero_pad(minute, 2)
+  end
+
+  defp zone_to_string(_, _, _, "Etc/UTC"), do: ""
+  defp zone_to_string(_, _, abbr, zone), do: " " <> abbr <> " " <> zone
 
   @doc """
   Determines if the date given is valid according to the proleptic Gregorian calendar.
@@ -674,9 +1020,9 @@ defmodule Calendar.ISO do
   @doc since: "1.5.0"
   @impl true
   @spec valid_date?(year, month, day) :: boolean
-  def valid_date?(year, month, day) do
-    month in 1..12 and year in -9999..9999 and
-      (is_integer(day) and day >= 1 and day <= days_in_month(year, month))
+  def valid_date?(year, month, day)
+      when is_integer(year) and is_integer(month) and is_integer(day) do
+    is_year(year) and is_month(month) and day in 1..days_in_month(year, month)
   end
 
   @doc """
@@ -700,9 +1046,11 @@ defmodule Calendar.ISO do
   @impl true
   @spec valid_time?(Calendar.hour(), Calendar.minute(), Calendar.second(), Calendar.microsecond()) ::
           boolean
-  def valid_time?(hour, minute, second, {microsecond, precision}) do
-    hour in 0..23 and minute in 0..59 and second in 0..59 and microsecond in 0..999_999 and
-      precision in 0..6
+  def valid_time?(hour, minute, second, {ms_value, ms_precision} = _microsecond)
+      when is_integer(hour) and is_integer(minute) and is_integer(second) and is_integer(ms_value) and
+             is_integer(ms_value) do
+    is_hour(hour) and is_minute(minute) and is_second(second) and
+      is_microsecond(ms_value, ms_precision)
   end
 
   @doc """
@@ -714,27 +1062,6 @@ defmodule Calendar.ISO do
   def day_rollover_relative_to_midnight_utc() do
     {0, 1}
   end
-
-  defp offset_to_string(0, 0, "Etc/UTC", _format), do: "Z"
-
-  defp offset_to_string(utc, std, _zone, format) do
-    total = utc + std
-    second = abs(total)
-    minute = second |> rem(3600) |> div(60)
-    hour = div(second, 3600)
-    format_offset(total, hour, minute, format)
-  end
-
-  defp format_offset(total, hour, minute, :extended) do
-    sign(total) <> zero_pad(hour, 2) <> ":" <> zero_pad(minute, 2)
-  end
-
-  defp format_offset(total, hour, minute, :basic) do
-    sign(total) <> zero_pad(hour, 2) <> zero_pad(minute, 2)
-  end
-
-  defp zone_to_string(0, 0, _abbr, "Etc/UTC"), do: ""
-  defp zone_to_string(_, _, abbr, zone), do: " " <> abbr <> " " <> zone
 
   defp sign(total) when total < 0, do: "-"
   defp sign(_), do: "+"
@@ -777,44 +1104,7 @@ defmodule Calendar.ISO do
     end
   end
 
-  @doc false
-  def naive_datetime_to_iso8601(
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        microsecond,
-        format \\ :extended
-      ) do
-    date_to_string(year, month, day, format) <>
-      "T" <> time_to_string(hour, minute, second, microsecond, format)
-  end
-
-  @doc false
-  def datetime_to_iso8601(
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        microsecond,
-        time_zone,
-        _zone_abbr,
-        utc_offset,
-        std_offset,
-        format \\ :extended
-      ) do
-    date_to_string(year, month, day, format) <>
-      "T" <>
-      time_to_string(hour, minute, second, microsecond, format) <>
-      offset_to_string(utc_offset, std_offset, time_zone, format)
-  end
-
-  @doc false
-  def parse_microsecond("." <> rest) do
+  defp parse_microsecond("." <> rest) do
     case parse_microsecond(rest, 0, "") do
       {"", 0, _} ->
         :error
@@ -828,11 +1118,11 @@ defmodule Calendar.ISO do
     end
   end
 
-  def parse_microsecond("," <> rest) do
+  defp parse_microsecond("," <> rest) do
     parse_microsecond("." <> rest)
   end
 
-  def parse_microsecond(rest) do
+  defp parse_microsecond(rest) do
     {{0, 0}, rest}
   end
 
@@ -841,26 +1131,25 @@ defmodule Calendar.ISO do
 
   defp parse_microsecond(rest, precision, acc), do: {acc, precision, rest}
 
-  @doc false
-  def parse_offset(""), do: {nil, ""}
-  def parse_offset("Z"), do: {0, ""}
-  def parse_offset("-00:00"), do: :error
+  defp parse_offset(""), do: {nil, ""}
+  defp parse_offset("Z"), do: {0, ""}
+  defp parse_offset("-00:00"), do: :error
 
-  def parse_offset(<<?+, hour::2-bytes, ?:, min::2-bytes, rest::binary>>),
+  defp parse_offset(<<?+, hour::2-bytes, ?:, min::2-bytes, rest::binary>>),
     do: parse_offset(1, hour, min, rest)
 
-  def parse_offset(<<?-, hour::2-bytes, ?:, min::2-bytes, rest::binary>>),
+  defp parse_offset(<<?-, hour::2-bytes, ?:, min::2-bytes, rest::binary>>),
     do: parse_offset(-1, hour, min, rest)
 
-  def parse_offset(<<?+, hour::2-bytes, min::2-bytes, rest::binary>>),
+  defp parse_offset(<<?+, hour::2-bytes, min::2-bytes, rest::binary>>),
     do: parse_offset(1, hour, min, rest)
 
-  def parse_offset(<<?-, hour::2-bytes, min::2-bytes, rest::binary>>),
+  defp parse_offset(<<?-, hour::2-bytes, min::2-bytes, rest::binary>>),
     do: parse_offset(-1, hour, min, rest)
 
-  def parse_offset(<<?+, hour::2-bytes, rest::binary>>), do: parse_offset(1, hour, "00", rest)
-  def parse_offset(<<?-, hour::2-bytes, rest::binary>>), do: parse_offset(-1, hour, "00", rest)
-  def parse_offset(_), do: :error
+  defp parse_offset(<<?+, hour::2-bytes, rest::binary>>), do: parse_offset(1, hour, "00", rest)
+  defp parse_offset(<<?-, hour::2-bytes, rest::binary>>), do: parse_offset(-1, hour, "00", rest)
+  defp parse_offset(_), do: :error
 
   defp parse_offset(sign, hour, min, rest) do
     with {hour, ""} when hour < 24 <- Integer.parse(hour),
@@ -1037,7 +1326,7 @@ defmodule Calendar.ISO do
     {hour, minute, second}
   end
 
-  defp ensure_day_in_month!(year, month, day) do
+  defp ensure_day_in_month!(year, month, day) when is_integer(day) do
     if day < 1 or day > days_in_month(year, month) do
       raise ArgumentError, "invalid date: #{date_to_string(year, month, day)}"
     end

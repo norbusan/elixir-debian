@@ -79,14 +79,39 @@ defmodule Logger.Translator do
     {:ok, ["Application ", Atom.to_string(app), " exited: " | Application.format_error(reason)]}
   end
 
-  ## Erlang/OTP 20 and before
-  # TODO: These clauses can be removed when we support only Erlang/OTP 21+.
-
-  def translate(min_level, :error, :format, message) do
+  def translate(
+        _min_level,
+        :error,
+        :report,
+        {{Task.Supervisor, :terminating},
+         %{
+           name: name,
+           starter: starter,
+           function: function,
+           args: args,
+           reason: reason
+         }}
+      ) do
     opts = Application.get_env(:logger, :translator_inspect_opts)
 
+    {formatted, reason} = format_reason(reason)
+    metadata = [crash_reason: reason] ++ registered_name(name)
+
+    msg =
+      ["Task #{inspect(name)} started from #{inspect(starter)} terminating"] ++
+        [formatted, "\nFunction: #{inspect(function, opts)}"] ++
+        ["\n    Args: #{inspect(args, opts)}"]
+
+    {:ok, msg, metadata}
+  end
+
+  def translate(min_level, :error, :format, message) do
     case message do
+      # This is no longer emitted by Erlang/OTP but it may be
+      # manually emitted by libraries like connection.
+      # TODO: Remove this translation on Elixir v1.14
       {'** Generic server ' ++ _, [name, last, state, reason | client]} ->
+        opts = Application.get_env(:logger, :translator_inspect_opts)
         {formatted, reason} = format_reason(reason)
         metadata = [crash_reason: reason] ++ registered_name(name)
 
@@ -100,31 +125,6 @@ defmodule Logger.Translator do
         else
           {:ok, msg, metadata}
         end
-
-      {'** gen_event handler ' ++ _, [name, manager, last, state, reason]} ->
-        {formatted, reason} = format_reason(reason)
-        metadata = [crash_reason: reason] ++ registered_name(manager)
-
-        msg =
-          [":gen_event handler #{inspect(name)} installed in #{inspect(manager)} terminating"] ++
-            [formatted, "\nLast message: #{inspect(last, opts)}"]
-
-        if min_level == :debug do
-          {:ok, [msg | "\nState: #{inspect(state, opts)}"], metadata}
-        else
-          {:ok, msg, metadata}
-        end
-
-      {'** Task ' ++ _, [name, starter, function, args, reason]} ->
-        {formatted, reason} = format_reason(reason)
-        metadata = [crash_reason: reason] ++ registered_name(name)
-
-        msg =
-          ["Task #{inspect(name)} started from #{inspect(starter)} terminating"] ++
-            [formatted, "\nFunction: #{inspect(function, opts)}"] ++
-            ["\n    Args: #{inspect(args, opts)}"]
-
-        {:ok, msg, metadata}
 
       {'Error in process ' ++ _, [pid, node, {reason, stack}]} ->
         reason = Exception.normalize(:error, reason, stack)
@@ -389,7 +389,9 @@ defmodule Logger.Translator do
       {false, _} ->
         :skip
 
-      {true, user_metadata} ->
+      {true, _user_metadata} ->
+        user_metadata = Keyword.get(dictionary, :"$logger_metadata$", %{}) |> Map.to_list()
+
         msg =
           ["Process ", crash_name(pid, name), " terminating", format(kind, reason, stack)] ++
             [crash_info(min_level, extra ++ crashed, [?\n]), crash_linked(min_level, linked)]

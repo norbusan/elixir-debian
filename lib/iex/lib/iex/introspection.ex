@@ -576,11 +576,7 @@ defmodule IEx.Introspection do
         #   * The arguments contain an additional first argument: the caller
         #   * The arity is increased by 1
         #
-        specs =
-          Enum.map(specs, fn {:type, line1, :fun, [{:type, line2, :product, [_ | args]}, spec]} ->
-            {:type, line1, :fun, [{:type, line2, :product, args}, spec]}
-          end)
-
+        specs = Enum.map(specs, &unpack_caller/1)
         {kind_name_arity, specs}
 
       kind_name_arity ->
@@ -588,7 +584,15 @@ defmodule IEx.Introspection do
     end
   end
 
-  defp translate_callback_name_arity({name, arity}) do
+  defp unpack_caller({:type, line1, :fun, [{:type, line2, :product, [_ | args]} | tail]}) do
+    {:type, line1, :fun, [{:type, line2, :product, args} | tail]}
+  end
+
+  defp unpack_caller({:type, line, :bounded_fun, [head | tail]}) do
+    {:type, line, :bounded_fun, [unpack_caller(head) | tail]}
+  end
+
+  def translate_callback_name_arity({name, arity}) do
     case Atom.to_string(name) do
       "MACRO-" <> macro_name -> {:macrocallback, String.to_atom(macro_name), arity - 1}
       _ -> {:callback, name, arity}

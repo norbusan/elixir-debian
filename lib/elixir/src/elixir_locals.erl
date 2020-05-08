@@ -105,9 +105,15 @@ warn_unused_local(File, Module, All, Private) ->
 
 ensure_no_undefined_local(File, Module, All) ->
   if_tracker(Module, [], fun(Tracker) ->
-    [elixir_errors:form_error(Meta, File, ?MODULE, {Error, Tuple})
-     || {Meta, Tuple, Error} <- ?tracker:collect_undefined_locals(Tracker, All)],
-    ok
+    case ?tracker:collect_undefined_locals(Tracker, All) of
+      [] -> ok;
+
+      List ->
+        [{FirstMeta, FirstTuple, FirstError} | Rest] = lists:sort(List),
+        [elixir_errors:form_warn(Meta, File, ?MODULE, {Error, Tuple}) || {Meta, Tuple, Error} <- lists:reverse(Rest)],
+        elixir_errors:form_error(FirstMeta, File, ?MODULE, {FirstError, FirstTuple}),
+        ok
+    end
   end).
 
 format_error({function_conflict, {Receiver, {Name, Arity}}}) ->

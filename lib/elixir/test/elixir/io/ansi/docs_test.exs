@@ -57,6 +57,103 @@ defmodule IO.ANSI.DocsTest do
     assert result == "\e[33m### wibble\e[0m\n\e[0m\ntext\n\e[0m"
   end
 
+  test "short single-line quote block is converted into single-line quote" do
+    result =
+      format("""
+      line
+
+      > normal *italics* `code`
+
+      line2
+      """)
+
+    assert result ==
+             """
+             line
+             \e[0m
+             \e[90m> \e[0mnormal \e[1mitalics\e[0m \e[36mcode\e[0m
+             \e[0m
+             line2
+             \e[0m\
+             """
+  end
+
+  test "short multi-line quote block is converted into single-line quote" do
+    result =
+      format("""
+      line
+
+      > normal
+      > *italics*
+      > `code`
+
+      line2
+      """)
+
+    assert result ==
+             """
+             line
+             \e[0m
+             \e[90m> \e[0mnormal \e[1mitalics\e[0m \e[36mcode\e[0m
+             \e[0m
+             line2
+             \e[0m\
+             """
+  end
+
+  test "long multi-line quote block is converted into wrapped multi-line quote" do
+    result =
+      format("""
+      line
+
+      > normal
+      > *italics*
+      > `code`
+      > some-extremly-long-word-which-can-not-possibly-fit-into-the-previous-line
+
+      line2
+      """)
+
+    assert result ==
+             """
+             line
+             \e[0m
+             \e[90m> \e[0mnormal \e[1mitalics\e[0m \e[36mcode\e[0m
+             \e[90m> \e[0msome-extremly-long-word-which-can-not-possibly-fit-into-the-previous-line
+             \e[0m
+             line2
+             \e[0m\
+             """
+  end
+
+  test "multi-line quote block containing empty lines is converted into wrapped multi-line quote" do
+    result =
+      format("""
+      line
+
+      > normal
+      > *italics*
+      >
+      > `code`
+      > some-extremly-long-word-which-can-not-possibly-fit-into-the-previous-line
+
+      line2
+      """)
+
+    assert result ==
+             """
+             line
+             \e[0m
+             \e[90m> \e[0mnormal \e[1mitalics\e[0m
+             \e[90m> \e[0m
+             \e[90m> \e[0m\e[36mcode\e[0m
+             \e[90m> \e[0msome-extremly-long-word-which-can-not-possibly-fit-into-the-previous-line
+             \e[0m
+             line2
+             \e[0m\
+             """
+  end
+
   test "code block is converted" do
     result = format("line\n\n    code\n    code2\n\nline2\n")
     assert result == "line\n\e[0m\n\e[36m    code\n    code2\e[0m\n\e[0m\nline2\n\e[0m"
@@ -326,54 +423,94 @@ defmodule IO.ANSI.DocsTest do
              "List (\e[36mList\e[0m) (\e[36m[1, 2, 3]\e[0m), Map (\e[36mMap\e[0m)\n\e[0m"
   end
 
-  test "lone thing that looks like a table line isn't" do
-    assert format("one\n2 | 3\ntwo\n") == "one 2 | 3 two\n\e[0m"
-  end
-
-  test "lone table line at end of input isn't" do
-    assert format("one\n2 | 3") == "one 2 | 3\n\e[0m"
-  end
-
-  test "two successive table lines are a table" do
-    # note spacing
-    assert format("a | b\none | two\n") == "a   | b  \none | two\n\e[0m"
-  end
-
-  test "table with heading" do
-    assert format("column 1 | and 2\n-- | --\na | b\none | two\n") ==
-             "\e[7mcolumn 1 | and 2\e[0m\na        | b    \none      | two  \n\e[0m"
-  end
-
-  test "table with heading alignment" do
-    table = """
-    column 1 | 2        | and three
-    -------: | :------: | :-----
-        a    |  even    | c\none | odd | three
-    """
-
-    expected =
-      """
-      \e[7mcolumn 1 |   2   | and three\e[0m
-             a | even  | c\s\s\s\s\s\s\s\s
-           one |  odd  | three\s\s\s\s
-      \e[0m
-      """
-      |> String.trim_trailing()
-
-    assert format(table) == expected
-  end
-
-  test "table with formatting in cells" do
-    assert format("`a` | _b_\nc | d") == "\e[36ma\e[0m | \e[4mb\e[0m\nc | d\n\e[0m"
-    assert format("`abc` | d \n`e` | f") == "\e[36mabc\e[0m | d\n\e[36me\e[0m   | f\n\e[0m"
-  end
-
-  test "table with variable number of columns" do
-    assert format("a | b | c\nd | e") == "a | b | c\nd | e |  \n\e[0m"
-  end
-
   test "one reference link label per line" do
     assert format("  [id]: //example.com\n  [Elixir]:  https://elixir-lang.org") ==
              "  [id]: //example.com\n  [Elixir]:  https://elixir-lang.org"
+  end
+
+  describe "tables" do
+    test "lone thing that looks like a table line isn't" do
+      assert format("one\n2 | 3\ntwo\n") == "one 2 | 3 two\n\e[0m"
+    end
+
+    test "lone table line at end of input isn't" do
+      assert format("one\n2 | 3") == "one 2 | 3\n\e[0m"
+    end
+
+    test "two successive table lines are a table" do
+      # note spacing
+      assert format("a | b\none | two\n") == "a   | b  \none | two\n\e[0m"
+    end
+
+    test "table with heading" do
+      assert format("column 1 | and 2\n-- | --\na | b\none | two\n") ==
+               "\e[7mcolumn 1 | and 2\e[0m\na        | b    \none      | two  \n\e[0m"
+    end
+
+    test "table with heading alignment" do
+      table = """
+      column 1 | 2        | and three
+      -------: | :------: | :-----
+          a    |  even    | c\none | odd | three
+      """
+
+      expected =
+        """
+        \e[7mcolumn 1 |   2   | and three\e[0m
+               a | even  | c\s\s\s\s\s\s\s\s
+             one |  odd  | three\s\s\s\s
+        \e[0m
+        """
+        |> String.trim_trailing()
+
+      assert format(table) == expected
+    end
+
+    test "table with heading alignment and no space around \"|\"" do
+      table = """
+      | Value | Encoding | Value | Encoding |
+      |------:|:---------|------:|:---------|
+      |     0 | A        |    17 | R        |
+      |     1 | B        |    18 | S        |
+      """
+
+      expected =
+        "\e[7m" <>
+          "Value | Encoding | Value | Encoding\e[0m\n" <>
+          "    0 | A        |    17 | R       \n" <>
+          "    1 | B        |    18 | S       \n\e[0m"
+
+      assert format(table) == expected
+    end
+
+    test "table with formatting in cells" do
+      assert format("`a` | _b_\nc | d") == "\e[36ma\e[0m | \e[4mb\e[0m\nc | d\n\e[0m"
+      assert format("`abc` | d \n`e` | f") == "\e[36mabc\e[0m | d\n\e[36me\e[0m   | f\n\e[0m"
+    end
+
+    test "table with variable number of columns" do
+      assert format("a | b | c\nd | e") == "a | b | c\nd | e |  \n\e[0m"
+    end
+
+    test "table with last two columns empty" do
+      table = """
+      AAA |     |     |
+      BBB | CCC |     |
+      GGG | HHH | III |
+      JJJ | KKK | LLL | MMM
+      """
+
+      expected =
+        """
+        AAA |     |     |\s\s\s\s
+        BBB | CCC |     |\s\s\s\s
+        GGG | HHH | III |\s\s\s\s
+        JJJ | KKK | LLL | MMM
+        \e[0m
+        """
+        |> String.trim_trailing()
+
+      assert format(table) == expected
+    end
   end
 end

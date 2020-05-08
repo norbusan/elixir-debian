@@ -29,6 +29,13 @@ defmodule ExUnit.AssertionsTest do
     end
   end
 
+  defmacrop assert_ok_with_pin_from_quoted_var(arg) do
+    quote do
+      kind = :ok
+      assert {^kind, value} = unquote(arg)
+    end
+  end
+
   require Record
   Record.defrecordp(:vec, x: 0, y: 0, z: 0)
 
@@ -36,6 +43,15 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert inside macro" do
     assert_ok(42)
+  end
+
+  test "assert inside macro with pins" do
+    try do
+      assert_ok_with_pin_from_quoted_var({:error, :oops})
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "match (=) failed" = error.message
+    end
   end
 
   test "assert with truthy value" do
@@ -185,6 +201,22 @@ defmodule ExUnit.AssertionsTest do
     end
   end
 
+  test "assert match? with guards" do
+    true = assert match?(tuple when is_tuple(tuple), Value.tuple())
+
+    try do
+      "This should never be tested" = assert match?(tuple when not is_tuple(tuple), error(true))
+    rescue
+      error in [ExUnit.AssertionError] ->
+        "match (match?) failed" = error.message
+
+        "assert(match?(tuple when not(is_tuple(tuple)), error(true)))" =
+          Macro.to_string(error.expr)
+
+        "{:error, true}" = Macro.to_string(error.right)
+    end
+  end
+
   test "refute match?" do
     false = refute match?({1, 1}, Value.tuple())
 
@@ -261,7 +293,7 @@ defmodule ExUnit.AssertionsTest do
       error in [ExUnit.AssertionError] ->
         true =
           error.message =~ "Found message matching :hello after 100ms" or
-            error.message =~ "No message matching :hello after 100ms"
+            error.message =~ "no matching message after 100ms"
     end
   end
 
@@ -315,12 +347,14 @@ defmodule ExUnit.AssertionsTest do
     rescue
       error in [ExUnit.AssertionError] ->
         """
-        No message matching {:status, ^status} after 0ms.
+        Assertion failed, no matching message after 0ms
         The following variables were pinned:
           status = :valid
-        Process mailbox:
-          {:status, :invalid}\
+        Showing 1 of 1 message in the mailbox\
         """ = error.message
+
+        "assert_received({:status, ^status})" = Macro.to_string(error.expr)
+        "{:status, ^status}" = Macro.to_string(error.left)
     end
   end
 
@@ -333,12 +367,15 @@ defmodule ExUnit.AssertionsTest do
     rescue
       error in [ExUnit.AssertionError] ->
         """
-        No message matching {:status, ^status, ^status} after 0ms.
+        Assertion failed, no matching message after 0ms
         The following variables were pinned:
           status = :valid
-        Process mailbox:
-          {:status, :invalid, :invalid}\
+        Showing 1 of 1 message in the mailbox\
         """ = error.message
+
+        "assert_received({:status, ^status, ^status})" = Macro.to_string(error.expr)
+        "{:status, ^status, ^status}" = Macro.to_string(error.left)
+        "\n\nAssertion failed" <> _ = Exception.message(error)
     end
   end
 
@@ -352,13 +389,15 @@ defmodule ExUnit.AssertionsTest do
     rescue
       error in [ExUnit.AssertionError] ->
         """
-        No message matching {:status, ^status, ^other_status} after 0ms.
+        Assertion failed, no matching message after 0ms
         The following variables were pinned:
           status = :valid
           other_status = :invalid
-        Process mailbox:
-          {:status, :invalid, :invalid}\
+        Showing 1 of 1 message in the mailbox\
         """ = error.message
+
+        "assert_received({:status, ^status, ^other_status})" = Macro.to_string(error.expr)
+        "{:status, ^status, ^other_status}" = Macro.to_string(error.left)
     end
   end
 
@@ -367,7 +406,10 @@ defmodule ExUnit.AssertionsTest do
       "This should never be tested" = assert_received :hello
     rescue
       error in [ExUnit.AssertionError] ->
-        "No message matching :hello after 0ms.\nThe process mailbox is empty." = error.message
+        "Assertion failed, no matching message after 0ms\nThe process mailbox is empty." =
+          error.message
+
+        "assert_received(:hello)" = Macro.to_string(error.expr)
     end
   end
 
@@ -379,10 +421,12 @@ defmodule ExUnit.AssertionsTest do
     rescue
       error in [ExUnit.AssertionError] ->
         """
-        No message matching :hello after 0ms.
-        Process mailbox:
-          {:message, :not_expected, :at_all}\
+        Assertion failed, no matching message after 0ms
+        Showing 1 of 1 message in the mailbox\
         """ = error.message
+
+        "assert_received(:hello)" = Macro.to_string(error.expr)
+        ":hello" = Macro.to_string(error.left)
     end
   end
 
@@ -394,20 +438,12 @@ defmodule ExUnit.AssertionsTest do
     rescue
       error in [ExUnit.AssertionError] ->
         """
-        No message matching x when x == :hello after 0ms.
-        Process mailbox:
-          {:message, 2}
-          {:message, 3}
-          {:message, 4}
-          {:message, 5}
-          {:message, 6}
-          {:message, 7}
-          {:message, 8}
-          {:message, 9}
-          {:message, 10}
-          {:message, 11}
-        Showing only last 10 of 11 messages.\
+        Assertion failed, no matching message after 0ms
+        Showing 10 of 11 messages in the mailbox\
         """ = error.message
+
+        "assert_received(x when x == :hello)" = Macro.to_string(error.expr)
+        "x when x == :hello" = Macro.to_string(error.left)
     end
   end
 
@@ -563,6 +599,8 @@ defmodule ExUnit.AssertionsTest do
     error = assert_raise ArgumentError, fn -> raise ArgumentError, "test error" end
     "test error" = error.message
   end
+
+  @compile {:no_warn_undefined, Not.Defined}
 
   test "assert raise with some other error" do
     "This should never be tested" =
@@ -822,6 +860,7 @@ defmodule ExUnit.AssertionsTest do
 
       match (=) failed
       code:  assert :a = :b
+      left:  :a
       right: :b
       """ = Exception.message(error)
   end

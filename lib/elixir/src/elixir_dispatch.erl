@@ -16,7 +16,7 @@ default_functions() ->
 default_macros() ->
   [{?kernel, elixir_imported_macros()}].
 default_requires() ->
-  ['Elixir.Kernel', 'Elixir.Kernel.Typespec'].
+  ['Elixir.Application', 'Elixir.Kernel', 'Elixir.Kernel.Typespec'].
 
 %% This is used by elixir_quote. Note we don't record the
 %% import locally because at that point there is no
@@ -26,10 +26,10 @@ find_import(Meta, Name, Arity, E) ->
 
   case find_dispatch(Meta, Tuple, [], E) of
     {function, Receiver} ->
-      elixir_lexical:record_import(Receiver, Name, Arity, ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
+      elixir_env:trace({imported_function, Meta, Receiver, Name, Arity}, E),
       Receiver;
     {macro, Receiver} ->
-      elixir_lexical:record_import(Receiver, Name, Arity, nil, ?line(Meta), ?key(E, lexical_tracker)),
+      elixir_env:trace({imported_macro, Meta, Receiver, Name, Arity}, E),
       Receiver;
     _ ->
       false
@@ -41,7 +41,7 @@ import_function(Meta, Name, Arity, E) ->
   Tuple = {Name, Arity},
   case find_dispatch(Meta, Tuple, [], E) of
     {function, Receiver} ->
-      elixir_lexical:record_import(Receiver, Name, Arity, ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
+      elixir_env:trace({imported_function, Meta, Receiver, Name, Arity}, E),
       elixir_locals:record_import(Tuple, Receiver, ?key(E, module), ?key(E, function)),
       remote_function(Meta, Receiver, Name, Arity, E);
     {macro, _Receiver} ->
@@ -50,10 +50,20 @@ import_function(Meta, Name, Arity, E) ->
       require_function(Meta, Receiver, Name, Arity, E);
     false ->
       case elixir_import:special_form(Name, Arity) of
-        true  -> false;
+        true ->
+          false;
         false ->
-          elixir_locals:record_local(Tuple, ?key(E, module), ?key(E, function), Meta, false),
-          {local, Name, Arity}
+          Function = ?key(E, function),
+
+          case (Function /= nil) andalso (Function /= Tuple) andalso
+                elixir_def:local_for(?key(E, module), Name, Arity, [defmacro, defmacrop]) of
+            false ->
+              elixir_env:trace({local_function, Meta, Name, Arity}, E),
+              elixir_locals:record_local(Tuple, ?key(E, module), ?key(E, function), Meta, false),
+              {local, Name, Arity};
+            _ ->
+              false
+          end
       end
   end.
 
@@ -62,12 +72,12 @@ require_function(Meta, Receiver, Name, Arity, E) ->
   case is_element({Name, Arity}, get_macros(Receiver, Required)) of
     true  -> false;
     false ->
-      elixir_lexical:record_remote(Receiver, ?key(E, function), ?key(E, lexical_tracker)),
+      elixir_env:trace({remote_function, Meta, Receiver, Name, Arity}, E),
       remote_function(Meta, Receiver, Name, Arity, E)
   end.
 
 remote_function(Meta, Receiver, Name, Arity, E) ->
-  check_deprecation(Meta, Receiver, Name, Arity, E),
+  check_deprecated(Meta, Receiver, Name, Arity, E),
 
   case elixir_rewrite:inline(Receiver, Name, Arity) of
     {AR, AN} -> {remote, AR, AN, Arity};
@@ -86,6 +96,20 @@ dispatch_import(Meta, Name, Args, E, Callback) ->
     error ->
       Callback()
   end.
+
+dispatch_require(Meta, 'Elixir.System', stacktrace, [], #{contextual_vars := Vars} = E, Callback) ->
+  case lists:member('__STACKTRACE__', Vars) of
+    true ->
+      {{'__STACKTRACE__', [], nil}, E};
+    false ->
+      Message =
+        "System.stacktrace/0 outside of rescue/catch clauses is deprecated. "
+          "If you want to support only Elixir v1.7+, you must access __STACKTRACE__ "
+          "inside a rescue/catch. If you want to support earlier Elixir versions, "
+          "move System.stacktrace/0 inside a rescue/catch",
+      elixir_errors:erl_warn(?line(Meta), ?key(E, file), Message),
+      Callback('Elixir.System', stacktrace, [])
+  end;
 
 dispatch_require(Meta, Receiver, Name, Args, E, Callback) when is_atom(Receiver) ->
   Arity = length(Args),
@@ -131,6 +155,7 @@ expand_import(Meta, {Name, Arity} = Tuple, Args, E, Extra, External) ->
 
         %% Dispatch to the local.
         _ ->
+          elixir_env:trace({local_macro, Meta, Name, Arity}, E),
           elixir_locals:record_local(Tuple, Module, Function, Meta, true),
           {ok, Module, expand_macro_fun(Meta, Local, Module, Name, Args, E)}
       end
@@ -139,12 +164,12 @@ expand_import(Meta, {Name, Arity} = Tuple, Args, E, Extra, External) ->
 do_expand_import(Meta, {Name, Arity} = Tuple, Args, Module, E, Result) ->
   case Result of
     {function, Receiver} ->
-      elixir_lexical:record_import(Receiver, Name, Arity, ?key(E, function), ?line(Meta), ?key(E, lexical_tracker)),
+      elixir_env:trace({imported_function, Meta, Receiver, Name, Arity}, E),
       elixir_locals:record_import(Tuple, Receiver, Module, ?key(E, function)),
       {ok, Receiver, Name, Args};
     {macro, Receiver} ->
-      check_deprecation(Meta, Receiver, Name, Arity, E),
-      elixir_lexical:record_import(Receiver, Name, Arity, nil, ?line(Meta), ?key(E, lexical_tracker)),
+      check_deprecated(Meta, Receiver, Name, Arity, E),
+      elixir_env:trace({imported_macro, Meta, Receiver, Name, Arity}, E),
       elixir_locals:record_import(Tuple, Receiver, Module, ?key(E, function)),
       {ok, Receiver, expand_macro_named(Meta, Receiver, Name, Arity, Args, E)};
     {import, Receiver} ->
@@ -162,15 +187,15 @@ do_expand_import(Meta, {Name, Arity} = Tuple, Args, Module, E, Result) ->
   end.
 
 expand_require(Meta, Receiver, {Name, Arity} = Tuple, Args, E) ->
-  check_deprecation(Meta, Receiver, Name, Arity, E),
+  check_deprecated(Meta, Receiver, Name, Arity, E),
   Required = (Receiver == ?key(E, module)) orelse required(Meta) orelse is_element(Receiver, ?key(E, requires)),
 
   case is_element(Tuple, get_macros(Receiver, Required)) of
     true when Required ->
-      elixir_lexical:record_remote(Receiver, Name, Arity, nil, ?line(Meta), ?key(E, lexical_tracker)),
+      elixir_env:trace({remote_macro, Meta, Receiver, Name, Arity}, E),
       {ok, Receiver, expand_macro_named(Meta, Receiver, Name, Arity, Args, E)};
     true ->
-      Info = {unrequired_module, {Receiver, Name, length(Args), ?key(E, requires)}},
+      Info = {unrequired_module, {Receiver, Name, length(Args)}},
       elixir_errors:form_error(Meta, E, ?MODULE, Info);
     false ->
       error
@@ -185,7 +210,7 @@ expand_macro_fun(Meta, Fun, Receiver, Name, Args, E) ->
   try
     apply(Fun, [EArg | Args])
   catch
-    ?WITH_STACKTRACE(Kind, Reason, Stacktrace)
+    Kind:Reason:Stacktrace ->
       Arity = length(Args),
       MFA  = {Receiver, elixir_utils:macro_name(Name), Arity+1},
       Info = [{Receiver, Name, Arity, [{file, "expanding macro"}]}, caller(Line, E)],
@@ -207,7 +232,7 @@ expand_quoted(Meta, Receiver, Name, Arity, Quoted, E) ->
       elixir_quote:linify_with_context_counter(Line, {Receiver, Next}, Quoted),
       E)
   catch
-    ?WITH_STACKTRACE(Kind, Reason, Stacktrace)
+    Kind:Reason:Stacktrace ->
       MFA  = {Receiver, elixir_utils:macro_name(Name), Arity+1},
       Info = [{Receiver, Name, Arity, [{file, "expanding macro"}]}, caller(Line, E)],
       erlang:raise(Kind, Reason, prune_stacktrace(Stacktrace, MFA, Info, error))
@@ -272,7 +297,7 @@ prune_stacktrace([], _MFA, Info, _E) ->
 
 %% ERROR HANDLING
 
-format_error({unrequired_module, {Receiver, Name, Arity, _Required}}) ->
+format_error({unrequired_module, {Receiver, Name, Arity}}) ->
   Module = elixir_aliases:inspect(Receiver),
   io_lib:format("you must require ~ts before invoking the macro ~ts.~ts/~B",
     [Module, Module, Name, Arity]);
@@ -282,13 +307,16 @@ format_error({macro_conflict, {Receiver, Name, Arity}}) ->
     [Name, Arity, elixir_aliases:inspect(Receiver), Name, Arity]);
 format_error({ambiguous_call, {Mod1, Mod2, Name, Arity}}) ->
   io_lib:format("function ~ts/~B imported from both ~ts and ~ts, call is ambiguous",
-    [Name, Arity, elixir_aliases:inspect(Mod1), elixir_aliases:inspect(Mod2)]).
+    [Name, Arity, elixir_aliases:inspect(Mod1), elixir_aliases:inspect(Mod2)]);
+format_error({deprecated, Mod, '__using__', 1, Message}) ->
+  io_lib:format("use ~s is deprecated. ~s", [elixir_aliases:inspect(Mod), Message]);
+format_error({deprecated, Mod, Fun, Arity, Message}) ->
+  io_lib:format("~s.~s/~B is deprecated. ~s",[elixir_aliases:inspect(Mod), Fun, Arity, Message]).
 
 %% INTROSPECTION
 
-%% TODO: Do not rely on erlang:module_loaded/1 on Erlang/OTP 21+.
 is_ensure_loaded(Receiver) ->
-  erlang:module_loaded(Receiver) orelse (code:ensure_loaded(Receiver) == {module, Receiver}).
+  code:ensure_loaded(Receiver) == {module, Receiver}.
 
 %% Do not try to get macros from Erlang. Speeds up compilation a bit.
 get_macros(erlang, _) -> [];
@@ -305,8 +333,9 @@ get_macros(Receiver, true) ->
     false -> []
   end.
 
-get_deprecations(Receiver) ->
-  get_info(Receiver, deprecated).
+%% Kernel deprecations are inlined.
+get_deprecations(?kernel) -> [];
+get_deprecations(Receiver) -> get_info(Receiver, deprecated).
 
 get_info(Receiver, Key) ->
   case erlang:function_exported(Receiver, '__info__', 1) of
@@ -334,52 +363,28 @@ elixir_imported_macros() ->
     error:undef -> []
   end.
 
-%% Inline common cases.
-check_deprecation(Meta, ?kernel, to_char_list, 1, E) ->
-  Message = "Kernel.to_char_list/1 is deprecated. Use Kernel.to_charlist/1 instead",
-  elixir_errors:erl_warn(?line(Meta), ?key(E, file), Message);
-check_deprecation(_, ?kernel, _, _, _) ->
+check_deprecated(_, erlang, _, _, _) ->
   ok;
-check_deprecation(_, erlang, _, _, _) ->
+check_deprecated(_, _, _, _, #{module := 'Elixir.HashDict'}) ->
   ok;
-check_deprecation(Meta, 'Elixir.System', stacktrace, 0, #{contextual_vars := Vars} = E) ->
-  case lists:member('__STACKTRACE__', Vars) of
+check_deprecated(Meta, Receiver, Name, Arity, E) ->
+  case (?key(E, function) == nil) andalso is_ensure_loaded(Receiver) of
     true ->
-      ok;
-    false ->
-      Message =
-        "System.stacktrace/0 outside of rescue/catch clauses is deprecated. "
-          "If you want to support only Elixir v1.7+, you must access __STACKTRACE__ "
-          "inside a rescue/catch. If you want to support earlier Elixir versions, "
-          "move System.stacktrace/0 inside a rescue/catch",
-      elixir_errors:erl_warn(?line(Meta), ?key(E, file), Message)
-  end;
-check_deprecation(Meta, Receiver, Name, Arity, E) ->
-  case (get(elixir_compiler_dest) == undefined) andalso
-         is_ensure_loaded(Receiver) andalso get_deprecations(Receiver) of
-    [_ | _] = Deprecations ->
-      case lists:keyfind({Name, Arity}, 1, Deprecations) of
-        {_, Message} ->
-          Warning = deprecation_message(Receiver, Name, Arity, Message),
-          elixir_errors:erl_warn(?line(Meta), ?key(E, file), Warning);
-        false ->
-          ok
+      case check_deprecated(Receiver, Name, Arity, get_deprecations(Receiver)) of
+        nil -> ok;
+        Other -> elixir_errors:form_warn(Meta, E, ?MODULE, Other)
       end;
-    _ ->
+
+    false ->
       ok
   end.
 
-deprecation_message(Receiver, '__using__', _Arity, Message) ->
-  Warning = io_lib:format("use ~s is deprecated", [elixir_aliases:inspect(Receiver)]),
-  deprecation_message(Warning, Message);
-
-deprecation_message(Receiver, Name, Arity, Message) ->
-  Warning = io_lib:format("~s.~s/~B is deprecated",
-                          [elixir_aliases:inspect(Receiver), Name, Arity]),
-  deprecation_message(Warning, Message).
-
-deprecation_message(Warning, Message) ->
-  case Message of
-    true -> Warning;
-    Message -> Warning ++ ". " ++ Message
-  end.
+check_deprecated(?kernel, to_char_list, 1, _) ->
+  {deprecated, ?kernel, to_char_list, 1, "Use Kernel.to_charlist/1 instead"};
+check_deprecated(Mod, Fun, Arity, [_ | _] = Deprecated) ->
+  case lists:keyfind({Fun, Arity}, 1, Deprecated) of
+    {_, Message} -> {deprecated, Mod, Fun, Arity, Message};
+    false -> nil
+  end;
+check_deprecated(_, _, _, _) ->
+  nil.

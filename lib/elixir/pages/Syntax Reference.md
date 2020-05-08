@@ -173,7 +173,7 @@ If the sigil letter is in uppercase, no interpolation is allowed in the sigil, o
 ~S/f#{"o"}o/
 ```
 
-Sigils are useful to encode text with their own escaping rules, such as regular expressions, datetimes, etc.
+Sigils are useful to encode text with their own escaping rules, such as regular expressions, datetimes, and others.
 
 ## The Elixir AST
 
@@ -221,7 +221,7 @@ end
 
 You can see that variables are also represented with a tuple, except the third element is an atom expressing the variable context.
 
-Over the next section, we will explore many of Elixir syntax constructs alongside their AST representation.
+Over the course of this section, we will explore many Elixir syntax constructs alongside their AST representations.
 
 ### Operators
 

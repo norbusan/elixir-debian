@@ -1,7 +1,8 @@
 PREFIX ?= /usr/local
+TEST_FILES ?= "*_test.exs"
 SHARE_PREFIX ?= $(PREFIX)/share
 MAN_PREFIX ?= $(SHARE_PREFIX)/man
-CANONICAL := v1.9/ # master/ or vMAJOR.MINOR/
+CANONICAL := v1.10/ # master/ or vMAJOR.MINOR/
 ELIXIRC := bin/elixirc --verbose --ignore-module-conflict $(ELIXIRC_OPTS)
 ERLC := erlc -I lib/elixir/include $(ERLC_OPTS)
 ERL := erl -I lib/elixir/include -noshell -pa lib/elixir/ebin
@@ -19,15 +20,15 @@ GIT_TAG = $(strip $(shell head="$(call GIT_REVISION)"; git tag --points-at $$hea
 SOURCE_DATE_EPOCH_PATH = lib/elixir/tmp/ebin_reproducible
 SOURCE_DATE_EPOCH_FILE = $(SOURCE_DATE_EPOCH_PATH)/SOURCE_DATE_EPOCH
 
-.PHONY: install compile erlang elixir unicode app build_plt clean_plt dialyze test check_reproducible clean clean_residual_files install_man clean_man docs Docs.zip Precompiled.zip zips
+.PHONY: install compile erlang elixir unicode app build_plt clean_plt dialyze test check_reproducible clean clean_residual_files format install_man clean_man docs Docs.zip Precompiled.zip zips
 .NOTPARALLEL: compile
 
 #==> Functions
 
 define CHECK_ERLANG_RELEASE
-	erl -noshell -eval '{V,_} = string:to_integer(erlang:system_info(otp_release)), io:fwrite("~s", [is_integer(V) and (V >= 20)])' -s erlang halt | grep -q '^true'; \
+	erl -noshell -eval '{V,_} = string:to_integer(erlang:system_info(otp_release)), io:fwrite("~s", [is_integer(V) and (V >= 21)])' -s erlang halt | grep -q '^true'; \
 		if [ $$? != 0 ]; then \
-		  echo "At least Erlang/OTP 20.0 is required to build Elixir"; \
+		  echo "At least Erlang/OTP 21.0 is required to build Elixir"; \
 		  exit 1; \
 		fi
 endef
@@ -45,7 +46,7 @@ lib/$(1)/ebin/Elixir.$(2).beam: $(wildcard lib/$(1)/lib/*.ex) $(wildcard lib/$(1
 
 test_$(1): compile $(1)
 	@ echo "==> $(1) (ex_unit)"
-	$(Q) cd lib/$(1) && ../../bin/elixir -r "test/test_helper.exs" -pr "test/**/*_test.exs";
+	$(Q) cd lib/$(1) && ../../bin/elixir -r "test/test_helper.exs" -pr "test/**/$(TEST_FILES)";
 endef
 
 define WRITE_SOURCE_DATE_EPOCH
@@ -89,10 +90,9 @@ $(KERNEL): lib/elixir/lib/*.ex lib/elixir/lib/*/*.ex lib/elixir/lib/*/*/*.ex
 		echo "==> bootstrap (compile)"; \
 		$(ERL) -s elixir_compiler bootstrap -s erlang halt; \
 	fi
-	@ echo "==> elixir (compile)";
-	$(Q) cd lib/elixir && ../../$(ELIXIRC) "lib/kernel.ex" -o ebin;
-	$(Q) cd lib/elixir && ../../$(ELIXIRC) "lib/**/*.ex" -o ebin;
 	$(Q) $(MAKE) unicode
+	@ echo "==> elixir (compile)";
+	$(Q) cd lib/elixir && ../../$(ELIXIRC) "lib/**/*.ex" -o ebin;
 	$(Q) $(MAKE) app
 
 app: $(APP)
@@ -133,11 +133,13 @@ check_reproducible: compile
 	$(call WRITE_SOURCE_DATE_EPOCH)
 	$(Q) mkdir -p lib/elixir/tmp/ebin_reproducible/ \
 	              lib/eex/tmp/ebin_reproducible/ \
+	              lib/ex_unit/tmp/ebin_reproducible/ \
 	              lib/iex/tmp/ebin_reproducible/ \
 	              lib/logger/tmp/ebin_reproducible/ \
 	              lib/mix/tmp/ebin_reproducible/
 	$(Q) mv lib/elixir/ebin/* lib/elixir/tmp/ebin_reproducible/
 	$(Q) mv lib/eex/ebin/* lib/eex/tmp/ebin_reproducible/
+	$(Q) mv lib/ex_unit/ebin/* lib/ex_unit/tmp/ebin_reproducible/
 	$(Q) mv lib/iex/ebin/* lib/iex/tmp/ebin_reproducible/
 	$(Q) mv lib/logger/ebin/* lib/logger/tmp/ebin_reproducible/
 	$(Q) mv lib/mix/ebin/* lib/mix/tmp/ebin_reproducible/
@@ -145,6 +147,7 @@ check_reproducible: compile
 	$(Q) echo "Diffing..."
 	$(Q) diff -r lib/elixir/ebin/ lib/elixir/tmp/ebin_reproducible/
 	$(Q) diff -r lib/eex/ebin/ lib/eex/tmp/ebin_reproducible/
+	$(Q) diff -r lib/ex_unit/ebin/ lib/ex_unit/tmp/ebin_reproducible/
 	$(Q) diff -r lib/iex/ebin/ lib/iex/tmp/ebin_reproducible/
 	$(Q) diff -r lib/logger/ebin/ lib/logger/tmp/ebin_reproducible/
 	$(Q) diff -r lib/mix/ebin/ lib/mix/tmp/ebin_reproducible/
@@ -173,16 +176,16 @@ clean_residual_files:
 #==> Documentation tasks
 
 LOGO_PATH = $(shell test -f ../docs/logo.png && echo "--logo ../docs/logo.png")
-SOURCE_REF = $(shell tag="$(call GIT_TAG)" revision="$(call GIT_REVISION)"; echo "$${tag:-$$revision}\c")
+SOURCE_REF = $(shell tag="$(call GIT_TAG)" revision="$(call GIT_REVISION)"; echo "$${tag:-$$revision}")
 DOCS_FORMAT = html
-COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" -m "$(3)" -u "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) -o doc/$(2) -n https://hexdocs.pm/$(2)/$(CANONICAL) -p https://elixir-lang.org/docs.html -f "$(DOCS_FORMAT)" $(4)
+COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" --main "$(3)" --source-url "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) --output doc/$(2) --canonical "https://hexdocs.pm/$(2)/$(CANONICAL)" --homepage-url "https://elixir-lang.org/docs.html" --formatter "$(DOCS_FORMAT)" $(4)
 
 docs: compile ../ex_doc/bin/ex_doc docs_elixir docs_eex docs_mix docs_iex docs_ex_unit docs_logger
 
 docs_elixir: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (elixir)"
 	$(Q) rm -rf doc/elixir
-	$(call COMPILE_DOCS,Elixir,elixir,Kernel,-c lib/elixir/docs.exs)
+	$(call COMPILE_DOCS,Elixir,elixir,Kernel,--config "lib/elixir/docs.exs")
 
 docs_eex: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (eex)"
@@ -237,6 +240,7 @@ zips: Precompiled.zip Docs.zip
 
 #==> Test tasks
 
+# If you modify this task, please update .cirrus.yml accordingly
 test: test_formatted test_erlang test_elixir
 
 test_windows: test test_taskkill
@@ -249,8 +253,19 @@ TEST_ERL = lib/elixir/test/erlang
 TEST_EBIN = lib/elixir/test/ebin
 TEST_ERLS = $(addprefix $(TEST_EBIN)/, $(addsuffix .beam, $(basename $(notdir $(wildcard $(TEST_ERL)/*.erl)))))
 
+define FORMAT
+	$(Q) if [ "$(OS)" = "Windows_NT" ]; then \
+		cmd //C call ./bin/mix.bat format $(1); \
+	else \
+		bin/elixir bin/mix format $(1); \
+	fi
+endef
+
+format: compile
+	$(call FORMAT)
+
 test_formatted: compile
-	bin/elixir bin/mix format --check-formatted
+	$(call FORMAT,--check-formatted)
 
 test_erlang: compile $(TEST_ERLS)
 	@ echo "==> elixir (eunit)"
@@ -267,9 +282,9 @@ test_stdlib: compile
 	@ echo "==> elixir (ex_unit)"
 	$(Q) exec epmd & exit
 	$(Q) if [ "$(OS)" = "Windows_NT" ]; then \
-		cd lib/elixir && cmd //C call ../../bin/elixir.bat -r "test/elixir/test_helper.exs" -pr "test/elixir/**/*_test.exs"; \
+		cd lib/elixir && cmd //C call ../../bin/elixir.bat -r "test/elixir/test_helper.exs" -pr "test/elixir/**/$(TEST_FILES)"; \
 	else \
-		cd lib/elixir && ../../bin/elixir -r "test/elixir/test_helper.exs" -pr "test/elixir/**/*_test.exs"; \
+		cd lib/elixir && ../../bin/elixir -r "test/elixir/test_helper.exs" -pr "test/elixir/**/$(TEST_FILES)"; \
 	fi
 
 #==> Dialyzer tasks

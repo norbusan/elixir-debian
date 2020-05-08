@@ -2,30 +2,39 @@
 -include("elixir.hrl").
 -export([
   new/0, linify/1, with_vars/2, reset_vars/1,
-  env_to_scope/1, env_to_scope_with_vars/2,
-  check_unused_vars/1, merge_and_check_unused_vars/2,
-  mergea/2, mergev/2, format_error/1
+  env_to_scope/1,
+  reset_unused_vars/1, check_unused_vars/1,
+  merge_and_check_unused_vars/2,
+  trace/2, format_error/1,
+  reset_read/2, prepare_write/1, close_write/2
 ]).
 
 new() ->
-  #{'__struct__' => 'Elixir.Macro.Env',
-    module => nil,                         %% the current module
-    file => <<"nofile">>,                  %% the current filename
-    line => 1,                             %% the current line
-    function => nil,                       %% the current function
-    context => nil,                        %% can be match, guard or nil
-    requires => [],                        %% a set with modules required
-    aliases => [],                         %% a list of aliases by new -> old names
-    functions => [],                       %% a list with functions imported from module
-    macros => [],                          %% a list with macros imported from module
-    macro_aliases => [],                   %% keep aliases defined inside a macro
-    context_modules => [],                 %% modules defined in the current context
-    vars => [],                            %% a set of defined variables
-    unused_vars => #{},                    %% a map with unused variables
-    current_vars => #{},                   %% a map with current variables
-    prematch_vars => warn,                 %% behaviour outside and inside matches
-    lexical_tracker => nil,                %% holds the lexical tracker PID
-    contextual_vars => []}.                %% holds available contextual variables
+  #{
+    '__struct__' => 'Elixir.Macro.Env',
+    module => nil,                                    %% the current module
+    file => <<"nofile">>,                             %% the current filename
+    line => 1,                                        %% the current line
+    function => nil,                                  %% the current function
+    context => nil,                                   %% can be match, guard or nil
+    aliases => [],                                    %% a list of aliases by new -> old names
+    requires => elixir_dispatch:default_requires(),   %% a set with modules required
+    functions => elixir_dispatch:default_functions(), %% a list with functions imported from module
+    macros => elixir_dispatch:default_macros(),       %% a list with macros imported from module
+    macro_aliases => [],                              %% keep aliases defined inside a macro
+    context_modules => [],                            %% modules defined in the current context
+    vars => [],                                       %% a set of defined variables
+    current_vars => {#{}, false},                     %% a tuple with maps of read and optional write current vars
+    unused_vars => {#{}, 0},                          %% a map of unused vars and a version counter for vars
+    prematch_vars => warn,                            %% controls behaviour outside and inside matches
+    lexical_tracker => nil,                           %% lexical tracker PID
+    contextual_vars => [],                            %% available contextual variables
+    tracers => []                                     %% available compilation tracers
+  }.
+
+trace(Event, #{tracers := Tracers} = E) ->
+  [ok = Tracer:trace(Event, E) || Tracer <- Tracers],
+  ok.
 
 linify({Line, Env}) ->
   Env#{line := Line};
@@ -33,66 +42,42 @@ linify(#{} = Env) ->
   Env.
 
 with_vars(Env, Vars) ->
-  CurrentVars = maps:from_list([{Var, 0} || Var <- Vars]),
-  Env#{vars := Vars, current_vars := CurrentVars}.
+  NumVars = length(Vars),
+  VarVersions = lists:zip(Vars, lists:seq(0, NumVars - 1)),
+  Read = maps:from_list(VarVersions),
+  Env#{vars := Vars, current_vars := {Read, false}, unused_vars := {#{}, NumVars}}.
 
-env_to_scope(#{context := Context}) ->
-  #elixir_erl{context=Context}.
+env_to_scope(#{context := Context, current_vars := {Read, _}}) ->
+  {VarsList, _Counter} = lists:mapfoldl(fun to_scope_var/2, 0, maps:values(Read)),
+  VarsMap = maps:from_list(VarsList),
+  Scope = #elixir_erl{
+    context=Context,
+    var_names=VarsMap,
+    counter=#{'_' => map_size(VarsMap)}
+  },
+  {VarsList, Scope}.
 
-env_to_scope_with_vars(Env, Vars) ->
-  Map = maps:from_list(Vars),
-  (env_to_scope(Env))#elixir_erl{
-    vars=Map, counter=#{'_' => map_size(Map)}
-  }.
+to_scope_var(Version, Counter) ->
+  {{Version, list_to_atom("_@" ++ integer_to_list(Counter))}, Counter + 1}.
 
 reset_vars(Env) ->
-  Env#{vars := [], current_vars := #{}, unused_vars := #{}}.
+  Env#{vars := [], current_vars := {#{}, false}, unused_vars := {#{}, 0}}.
 
 %% SCOPE MERGING
 
-%% Receives two scopes and return a new scope based on the second
-%% with their variables merged.
-%% Unrolled for performance reasons.
-mergev(#{unused_vars := U1, current_vars := C1},
-       #{unused_vars := U2, current_vars := C2} = E2) ->
-  if
-    C1 =/= C2 ->
-      if
-        U1 =/= U2 ->
-          C = merge_vars(C1, C2),
-          E2#{vars := maps:keys(C), unused_vars := merge_vars(U1, U2), current_vars := C};
-        true ->
-          C = merge_vars(C1, C2),
-          E2#{vars := maps:keys(C), current_vars := C}
-      end;
+reset_read(#{current_vars := {_, Write}} = E, #{current_vars := {Read, _}}) ->
+  E#{current_vars := {Read, Write}}.
 
-    U1 =/= U2 ->
-      E2#{unused_vars := merge_vars(U1, U2)};
+prepare_write(#{current_vars := {Read, _}} = E) ->
+  E#{current_vars := {Read, Read}}.
 
-    true ->
-      E2
-  end.
+close_write(#{current_vars := {_Read, Write}} = E, #{current_vars := {_, false}}) ->
+  E#{current_vars := {Write, false}};
+close_write(#{current_vars := {_Read, Write}} = E, #{current_vars := {_, UpperWrite}}) ->
+  E#{current_vars := {Write, merge_vars(UpperWrite, Write)}}.
 
-%% Receives two scopes and return the later scope
-%% keeping the variables from the first (imports
-%% and everything else are passed forward).
-%% Unrolled for performance reasons.
-mergea(#{unused_vars := U1, current_vars := C1, vars := V1},
-       #{unused_vars := U2, current_vars := C2} = E2) ->
-  if
-    C1 =/= C2 ->
-      if
-        U1 =/= U2 ->
-          E2#{vars := V1, unused_vars := U1, current_vars := C1};
-        true ->
-          E2#{vars := V1, current_vars := C1}
-      end;
-    U1 =/= U2 ->
-      E2#{unused_vars := U1};
-    true ->
-      E2
-  end.
-
+merge_vars(V, V) ->
+  V;
 merge_vars(V1, V2) ->
   maps:fold(fun(K, M2, Acc) ->
     case Acc of
@@ -101,54 +86,45 @@ merge_vars(V1, V2) ->
     end
   end, V1, V2).
 
-
 %% UNUSED VARS
 
-check_unused_vars(#{unused_vars := Unused} = E) ->
+reset_unused_vars(#{unused_vars := {_Unused, Version}} = E) ->
+  E#{unused_vars := {#{}, Version}}.
+
+check_unused_vars(#{unused_vars := {Unused, _Version}} = E) ->
   [elixir_errors:form_warn([{line, Line}], E, ?MODULE, {unused_var, Name}) ||
-    {{{Name, _}, _}, Line} <- maps:to_list(Unused), Line /= false, not_underscored(Name)],
+    {{Name, _}, Line} <- maps:to_list(Unused), Line /= false, not_underscored(Name)],
   E.
 
-merge_and_check_unused_vars(#{unused_vars := Unused} = E, #{unused_vars := ClauseUnused}) ->
-  E#{unused_vars := merge_and_check_unused_vars(Unused, ClauseUnused, E)}.
+merge_and_check_unused_vars(E, #{unused_vars := {ClauseUnused, Version}}) ->
+  #{current_vars := {Read, _}, unused_vars := {Unused, _Version}} = E,
+  E#{unused_vars := {merge_and_check_unused_vars(Read, Unused, ClauseUnused, E), Version}}.
 
-merge_and_check_unused_vars(Unused, ClauseUnused, E) ->
-  maps:fold(fun(Key, ClauseValue, Acc) ->
-    case ClauseValue of
-      %% The variable was used...
-      false ->
-        case Acc of
-          %% So we propagate if it was not yet used
-          #{Key := Value} when Value /= false ->
-            Acc#{Key := false};
+merge_and_check_unused_vars(Current, Unused, ClauseUnused, E) ->
+  maps:fold(fun({Name, Count} = Key, ClauseValue, Acc) ->
+    Var = {Name, nil},
 
-          %% Otherwise we don't know it or it was already used
-          _ ->
-            Acc
-        end;
+    case Current of
+      %% The parent knows it, so we have to propagate up.
+      #{Var := CurrentCount} when Count =< CurrentCount ->
+        Acc#{Key => ClauseValue};
 
-      %% The variable was not used...
-      _ ->
-        case Acc of
-          %% If we know it, there is nothing to propagate
-          #{Key := _} ->
-            Acc;
+      %% The parent doesn't know it and we didn't use it
+      #{} when ClauseValue /= false ->
+        case not_underscored(Name) of
+          true ->
+            Warn = {unused_var, Name},
+            elixir_errors:form_warn([{line, ClauseValue}], E, ?MODULE, Warn);
 
-          %% Otherwise we must warn
-          _ ->
-            {{Name, _}, _} = Key,
+          false ->
+            ok
+        end,
 
-            case not_underscored(Name) of
-              true ->
-                Warn = {unused_var, Name},
-                elixir_errors:form_warn([{line, ClauseValue}], E, ?MODULE, Warn);
+        Acc;
 
-              false ->
-                ok
-            end,
-
-            Acc
-        end
+      %% The parent doesn't know it and we used it
+      #{} ->
+        Acc
     end
   end, Unused, ClauseUnused).
 

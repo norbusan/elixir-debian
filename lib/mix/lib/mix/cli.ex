@@ -37,7 +37,10 @@ defmodule Mix.CLI do
     file = System.get_env("MIX_EXS") || "mix.exs"
 
     if File.regular?(file) do
+      old_undefined = Code.get_compiler_option(:no_warn_undefined)
+      Code.put_compiler_option(:no_warn_undefined, :all)
       Code.compile_file(file)
+      Code.put_compiler_option(:no_warn_undefined, old_undefined)
     end
   end
 
@@ -81,7 +84,7 @@ defmodule Mix.CLI do
       # We only rescue exceptions in the Mix namespace, all
       # others pass through and will explode on the users face
       exception ->
-        if Map.get(exception, :mix) && not Mix.debug?() do
+        if Map.get(exception, :mix, false) and not Mix.debug?() do
           mod = exception.__struct__ |> Module.split() |> Enum.at(0, "Mix")
           Mix.shell().error("** (#{mod}) #{Exception.message(exception)}")
           exit({:shutdown, 1})

@@ -149,12 +149,11 @@ defmodule Record do
 
   ## Examples
 
-      iex> record = {User, "john", 27}
-      iex> Record.is_record(record)
-      true
-      iex> tuple = {}
-      iex> Record.is_record(tuple)
-      false
+      Record.is_record({User, "john", 27})
+      #=> true
+
+      Record.is_record({})
+      #=> false
 
   """
   defguard is_record(data)
@@ -241,8 +240,8 @@ defmodule Record do
   functions for defaults.
 
       Record.defrecord(:my_rec, Record.extract(...))
-      #=> ** (ArgumentError) invalid value for record field fun_field,
-      #=>   cannot escape #Function<12.90072148/2 in :erl_eval.expr/5>.
+      ** (ArgumentError) invalid value for record field fun_field,
+          cannot escape #Function<12.90072148/2 in :erl_eval.expr/5>.
 
   To work around this error, redefine the field with your own &M.f/a function,
   like so:
@@ -256,19 +255,10 @@ defmodule Record do
   """
   defmacro defrecord(name, tag \\ nil, kv) do
     quote bind_quoted: [name: name, tag: tag, kv: kv] do
-      defined_arity =
-        Enum.find(0..2, fn arity ->
-          Module.defines?(__MODULE__, {name, arity})
-        end)
-
-      if defined_arity do
-        raise ArgumentError,
-              "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
-      end
+      fields = Record.__fields__(:defrecord, kv)
+      Record.__validate__(__MODULE__, name, fields)
 
       tag = tag || name
-
-      fields = Record.__fields__(:defrecord, kv)
 
       defmacro unquote(name)(args \\ []) do
         Record.__access__(unquote(tag), unquote(fields), args, __CALLER__)
@@ -285,19 +275,10 @@ defmodule Record do
   """
   defmacro defrecordp(name, tag \\ nil, kv) do
     quote bind_quoted: [name: name, tag: tag, kv: kv] do
-      defined_arity =
-        Enum.find(0..2, fn arity ->
-          Module.defines?(__MODULE__, {name, arity})
-        end)
-
-      if defined_arity do
-        raise ArgumentError,
-              "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
-      end
+      fields = Record.__fields__(:defrecordp, kv)
+      Record.__validate__(__MODULE__, name, fields)
 
       tag = tag || name
-
-      fields = Record.__fields__(:defrecordp, kv)
 
       defmacrop unquote(name)(args \\ []) do
         Record.__access__(unquote(tag), unquote(fields), args, __CALLER__)
@@ -307,6 +288,38 @@ defmodule Record do
         Record.__access__(unquote(tag), unquote(fields), record, args, __CALLER__)
       end
     end
+  end
+
+  @doc false
+  def __validate__(module, name, fields) do
+    error_on_duplicate_record(module, name)
+    # TODO: Make it raise on v2.0
+    warn_on_duplicate_key(:lists.keysort(1, fields))
+  end
+
+  defp error_on_duplicate_record(module, name) do
+    defined_arity =
+      Enum.find(0..2, fn arity ->
+        Module.defines?(module, {name, arity})
+      end)
+
+    if defined_arity do
+      raise ArgumentError,
+            "cannot define record #{inspect(name)} because a definition #{name}/#{defined_arity} already exists"
+    end
+  end
+
+  defp warn_on_duplicate_key([]) do
+    :ok
+  end
+
+  defp warn_on_duplicate_key([{key, _} | [{key, _} | _] = rest]) do
+    IO.warn("duplicate key #{inspect(key)} found in record")
+    warn_on_duplicate_key(rest)
+  end
+
+  defp warn_on_duplicate_key([_ | rest]) do
+    warn_on_duplicate_key(rest)
   end
 
   # Normalizes of record fields to have default values.

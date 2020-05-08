@@ -163,15 +163,15 @@ defmodule Protocol do
 
       * `:consolidated?` - returns whether the protocol is consolidated
 
-      * `:functions` - returns keyword list of protocol functions and their arities
+      * `:functions` - returns a keyword list of protocol functions and their arities
 
       * `:impls` - if consolidated, returns `{:consolidated, modules}` with the list of modules
-         implementing the protocol, otherwise `:not_consolidated`
+        implementing the protocol, otherwise `:not_consolidated`
 
       * `:module` - the protocol module atom name
 
-    * `impl_for/1` - receives a structure and returns the module that
-      implements the protocol for the structure, `nil` otherwise
+    * `impl_for/1` - returns the module that implements the protocol for the given argument,
+      `nil` otherwise
 
     * `impl_for!/1` - same as above but raises an error if an implementation is
       not found
@@ -187,6 +187,22 @@ defmodule Protocol do
       iex> Enumerable.impl_for(42)
       nil
 
+  In addition, every protocol implementation module contains the `__impl__/1` function. The
+  function takes one of the following atoms:
+
+      * `:for` - returns the module responsible for the data structure of the protocol implementation
+
+      * `:protocol` - returns the protocol module for which this implementation is provided
+
+  For example, the module implementing the `Enumerable` protocol for lists is `Enumerable.List`.
+  Therefore, we can invoke `__impl__/1` on this module:
+
+      iex(1)> Enumerable.List.__impl__(:for)
+      List
+
+      iex(2)> Enumerable.List.__impl__(:protocol)
+      Enumerable
+
   ## Consolidation
 
   In order to cope with code loading in development, protocols in
@@ -195,7 +211,7 @@ defmodule Protocol do
 
   In order to speed up dispatching in production environments, where
   all implementations are known up-front, Elixir provides a feature
-  called protocol consolidation. Consolidation directly links protocols
+  called *protocol consolidation*. Consolidation directly links protocols
   to their implementations in a way that invoking a function from a
   consolidated protocol is equivalent to invoking two remote functions.
 
@@ -230,9 +246,10 @@ defmodule Protocol do
   Although doing so is not recommended as it may affect your test suite
   performance.
 
-  Finally note all protocols are compiled with `debug_info` set to `true`,
-  regardless of the option set by `elixirc` compiler. The debug info is
-  used for consolidation and it may be removed after consolidation.
+  Finally, note all protocols are compiled with `debug_info` set to `true`,
+  regardless of the option set by the `elixirc` compiler. The debug info is
+  used for consolidation and it is removed after consolidation unless
+  globally set.
   """
 
   @doc false
@@ -458,6 +475,7 @@ defmodule Protocol do
 
   defp extract_matching_by_attribute(paths, prefix, callback) do
     for path <- paths,
+        path = to_charlist(path),
         file <- list_dir(path),
         mod = extract_from_file(path, file, prefix, callback),
         do: mod
@@ -469,8 +487,6 @@ defmodule Protocol do
       _ -> []
     end
   end
-
-  defp list_dir(path), do: list_dir(to_charlist(path))
 
   defp extract_from_file(path, file, prefix, callback) do
     if :lists.prefix(prefix, file) and :filename.extension(file) == '.beam' do
@@ -531,13 +547,14 @@ defmodule Protocol do
   end
 
   defp beam_protocol(protocol) do
-    chunk_ids = [:debug_info, 'Docs', 'ExDp']
+    chunk_ids = [:debug_info, 'Docs', 'ExCk']
     opts = [:allow_missing_chunks]
 
     case :beam_lib.chunks(beam_file(protocol), chunk_ids, opts) do
       {:ok, {^protocol, [{:debug_info, debug_info} | chunks]}} ->
         {:debug_info_v1, _backend, {:elixir_v1, info, specs}} = debug_info
         %{attributes: attributes, definitions: definitions} = info
+        chunks = :lists.filter(fn {_name, value} -> value != :missing_chunk end, chunks)
         chunks = :lists.map(fn {name, value} -> {List.to_string(name), value} end, chunks)
 
         case attributes[:protocol] do
@@ -619,14 +636,14 @@ defmodule Protocol do
   end
 
   defp built_in_clause_for(mod, guard, protocol, meta, line) do
-    x = quote(line: line, do: x)
+    x = {:x, [line: line, version: -1], __MODULE__}
     guard = quote(line: line, do: :erlang.unquote(guard)(unquote(x)))
     body = load_impl(protocol, mod)
     {meta, [x], [guard], body}
   end
 
   defp struct_clause_for(meta, line) do
-    x = quote(line: line, do: x)
+    x = {:x, [line: line, version: -1], __MODULE__}
     head = quote(line: line, do: %{__struct__: unquote(x)})
     guard = quote(line: line, do: :erlang.is_atom(unquote(x)))
     body = quote(line: line, do: struct_impl_for(unquote(x)))
@@ -698,7 +715,7 @@ defmodule Protocol do
           nil
         end
 
-      # Disable dialyzer checks - before and after consolidation
+      # Disable Dialyzer checks - before and after consolidation
       # the types could be more strict
       @dialyzer {:nowarn_function, __protocol__: 1, impl_for: 1, impl_for!: 1}
 
@@ -900,7 +917,7 @@ defmodule Protocol do
         "the #{inspect(protocol)} protocol has already been consolidated, an " <>
           "implementation for #{inspect(for)} has no effect. If you want to " <>
           "implement protocols after compilation or during tests, check the " <>
-          "\"Consolidation\" section in the documentation for Kernel.defprotocol/2"
+          "\"Consolidation\" section in the Protocol module documentation"
 
       IO.warn(message, Macro.Env.stacktrace(env))
     end

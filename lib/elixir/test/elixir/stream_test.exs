@@ -254,6 +254,11 @@ defmodule StreamTest do
     assert [1, 2, 3] |> Stream.take(2) |> Stream.cycle() |> Enum.take(4) == [1, 2, 1, 2]
   end
 
+  test "cycle/1 with cycle/1 with cycle/1" do
+    assert [1] |> Stream.cycle() |> Stream.cycle() |> Stream.cycle() |> Enum.take(5) ==
+             [1, 1, 1, 1, 1]
+  end
+
   test "dedup/1 is lazy" do
     assert lazy?(Stream.dedup([1, 2, 3]))
   end
@@ -494,9 +499,15 @@ defmodule StreamTest do
 
   test "interval/1" do
     stream = Stream.interval(10)
-    now = :os.timestamp()
-    assert Enum.take(stream, 5) == [0, 1, 2, 3, 4]
-    assert :timer.now_diff(:os.timestamp(), now) >= 50000
+    {time_us, value} = :timer.tc(fn -> Enum.take(stream, 5) end)
+
+    assert value == [0, 1, 2, 3, 4]
+    assert time_us >= 50000
+  end
+
+  test "interval/1 with infinity" do
+    stream = Stream.interval(:infinity)
+    spawn(Stream, :run, [stream])
   end
 
   test "into/2 and run/1" do
@@ -682,6 +693,48 @@ defmodule StreamTest do
     assert Process.get(:stream_resource)
   end
 
+  test "resource/3 closes with correct accumulator on outer errors with inner single-element list" do
+    stream =
+      Stream.resource(
+        fn -> :start end,
+        fn _ -> {[:error], :end} end,
+        fn acc -> Process.put(:stream_resource, acc) end
+      )
+      |> Stream.map(fn :error -> throw(:error) end)
+
+    Process.put(:stream_resource, nil)
+    assert catch_throw(Enum.to_list(stream)) == :error
+    assert Process.get(:stream_resource) == :end
+  end
+
+  test "resource/3 closes with correct accumulator on outer errors with inner list" do
+    stream =
+      Stream.resource(
+        fn -> :start end,
+        fn _ -> {[:ok, :error], :end} end,
+        fn acc -> Process.put(:stream_resource, acc) end
+      )
+      |> Stream.map(fn acc -> if acc == :error, do: throw(:error), else: acc end)
+
+    Process.put(:stream_resource, nil)
+    assert catch_throw(Enum.to_list(stream)) == :error
+    assert Process.get(:stream_resource) == :end
+  end
+
+  test "resource/3 closes with correct accumulator on outer errors with inner enum" do
+    stream =
+      Stream.resource(
+        fn -> 1 end,
+        fn acc -> {acc..(acc + 2), acc + 1} end,
+        fn acc -> Process.put(:stream_resource, acc) end
+      )
+      |> Stream.map(fn x -> if x > 2, do: throw(:error), else: x end)
+
+    Process.put(:stream_resource, nil)
+    assert catch_throw(Enum.to_list(stream)) == :error
+    assert Process.get(:stream_resource) == 2
+  end
+
   test "resource/3 is zippable" do
     transform_fun = fn
       10 -> {:halt, 10}
@@ -695,6 +748,13 @@ defmodule StreamTest do
     Process.put(:stream_resource, false)
     assert Enum.zip(list, list) == Enum.zip(stream, stream)
     assert Process.get(:stream_resource)
+  end
+
+  test "resource/3 returning inner empty list" do
+    transform_fun = fn acc -> if rem(acc, 2) == 0, do: {[], acc + 1}, else: {[acc], acc + 1} end
+    stream = Stream.resource(fn -> 1 end, transform_fun, fn _ -> :ok end)
+
+    assert Enum.take(stream, 5) == [1, 3, 5, 7, 9]
   end
 
   test "resource/3 halts with inner list" do
@@ -1052,13 +1112,20 @@ defmodule StreamTest do
 
   test "timer/1" do
     stream = Stream.timer(10)
-    now = :os.timestamp()
-    assert Enum.to_list(stream) == [0]
+
+    {time_us, value} = :timer.tc(fn -> Enum.to_list(stream) end)
+
+    assert value == [0]
     # We check for >= 5000 (us) instead of >= 10000 (us)
     # because the resolution on Windows system is not high
     # enough and we would get a difference of 9000 from
     # time to time. So a value halfway is good enough.
-    assert :timer.now_diff(:os.timestamp(), now) >= 5000
+    assert time_us >= 5000
+  end
+
+  test "timer/1 with infinity" do
+    stream = Stream.timer(:infinity)
+    spawn(Stream, :run, [stream])
   end
 
   test "unfold/2" do

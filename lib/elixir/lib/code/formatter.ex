@@ -205,8 +205,13 @@ defmodule Code.Formatter do
       warn_on_unnecessary_quotes: false
     ]
 
+    parser_options = [
+      literal_encoder: &{:ok, {:__block__, &2, [&1]}},
+      token_metadata: true
+    ]
+
     with {:ok, tokens} <- :elixir.string_to_tokens(charlist, line, file, tokenizer_options),
-         {:ok, forms} <- :elixir.tokens_to_quoted(tokens, file, formatter_metadata: true) do
+         {:ok, forms} <- :elixir.tokens_to_quoted(tokens, file, parser_options) do
       state =
         Process.get(:code_formatter_comments)
         |> Enum.reverse()
@@ -348,7 +353,7 @@ defmodule Code.Formatter do
       not interpolated?(entries) ->
         bitstring_to_algebra(meta, entries, state)
 
-      meta[:format] == :bin_heredoc ->
+      meta[:delimiter] == ~s["""] ->
         {doc, state} =
           entries
           |> prepend_heredoc_line()
@@ -370,7 +375,7 @@ defmodule Code.Formatter do
       not list_interpolated?(entries) ->
         remote_to_algebra(quoted, context, state)
 
-      meta[:format] == :list_heredoc ->
+      meta[:delimiter] == ~s['''] ->
         {doc, state} =
           entries
           |> prepend_heredoc_line()
@@ -428,12 +433,12 @@ defmodule Code.Formatter do
   end
 
   defp quoted_to_algebra({:__block__, meta, [list]}, _context, state) when is_list(list) do
-    case meta[:format] do
-      :list_heredoc ->
+    case meta[:delimiter] do
+      ~s['''] ->
         string = list |> List.to_string() |> escape_heredoc()
         {@single_heredoc |> concat(string) |> concat(@single_heredoc) |> force_unfit(), state}
 
-      :charlist ->
+      ~s['] ->
         string = list |> List.to_string() |> escape_string(@single_quote)
         {@single_quote |> concat(string) |> concat(@single_quote), state}
 
@@ -443,7 +448,7 @@ defmodule Code.Formatter do
   end
 
   defp quoted_to_algebra({:__block__, meta, [string]}, _context, state) when is_binary(string) do
-    if meta[:format] == :bin_heredoc do
+    if meta[:delimiter] == ~s["""] do
       string = escape_heredoc(string)
       {@double_heredoc |> concat(string) |> concat(@double_heredoc) |> force_unfit(), state}
     else
@@ -458,11 +463,11 @@ defmodule Code.Formatter do
 
   defp quoted_to_algebra({:__block__, meta, [integer]}, _context, state)
        when is_integer(integer) do
-    {integer_to_algebra(Keyword.fetch!(meta, :original)), state}
+    {integer_to_algebra(Keyword.fetch!(meta, :token)), state}
   end
 
   defp quoted_to_algebra({:__block__, meta, [float]}, _context, state) when is_float(float) do
-    {float_to_algebra(Keyword.fetch!(meta, :original)), state}
+    {float_to_algebra(Keyword.fetch!(meta, :token)), state}
   end
 
   defp quoted_to_algebra(
@@ -479,7 +484,7 @@ defmodule Code.Formatter do
   end
 
   defp quoted_to_algebra({:__block__, meta, _} = block, _context, state) do
-    {block, state} = block_to_algebra(block, line(meta), end_line(meta), state)
+    {block, state} = block_to_algebra(block, line(meta), closing_line(meta), state)
     {surround("(", block, ")"), state}
   end
 
@@ -513,7 +518,7 @@ defmodule Code.Formatter do
   defp quoted_to_algebra({:not, meta, [{:in, _, [left, right]} = arg]}, context, state) do
     %{rename_deprecated_at: since} = state
 
-    # TODO: Remove since check on Elixir v2.0 and the OP arrangement is removed.
+    # TODO: Remove metadata and always rewrite to left not in right in Elixir v2.0.
     if meta[:operator] == :"not in" || (since && Version.match?(since, "~> 1.5")) do
       binary_op_to_algebra(:in, "not in", meta, left, right, context, state)
     else
@@ -522,7 +527,7 @@ defmodule Code.Formatter do
   end
 
   defp quoted_to_algebra({:fn, meta, [_ | _] = clauses}, _context, state) do
-    anon_fun_to_algebra(clauses, line(meta), end_line(meta), state, eol?(meta))
+    anon_fun_to_algebra(clauses, line(meta), closing_line(meta), state, eol?(meta))
   end
 
   defp quoted_to_algebra({fun, meta, args}, context, state) when is_atom(fun) and is_list(args) do
@@ -606,14 +611,14 @@ defmodule Code.Formatter do
   end
 
   defp block_args_to_algebra(args, min_line, max_line, state) do
-    quoted_to_algebra = fn {kind, meta, _} = arg, _args, doc_newlines, state ->
-      doc_newlines = Keyword.get(meta, :newlines, doc_newlines)
+    quoted_to_algebra = fn {kind, meta, _} = arg, _args, state ->
+      newlines = meta[:end_of_expression][:newlines] || 1
       {doc, state} = quoted_to_algebra(arg, :block, state)
-      {doc, block_next_line(kind), doc_newlines, state}
+      {{doc, block_next_line(kind), newlines}, state}
     end
 
     {args_docs, _comments?, state} =
-      quoted_to_algebra_with_comments(args, [], min_line, max_line, 2, state, quoted_to_algebra)
+      quoted_to_algebra_with_comments(args, [], min_line, max_line, state, quoted_to_algebra)
 
     case args_docs do
       [] -> {@empty, state}
@@ -668,11 +673,11 @@ defmodule Code.Formatter do
 
   # There are five kinds of operators.
   #
-  #   1. no space binary operators, e.g. 1..2
-  #   2. no newline binary operators, e.g. left in right
-  #   3. strict newlines before a left precedent operator, e.g. foo |> bar |> baz
-  #   4. strict newlines before a right precedent operator, e.g. foo when bar when baz
-  #   5. flex newlines after the operator, e.g. foo ++ bar ++ baz
+  #   1. no space binary operators, for example,  1..2
+  #   2. no newline binary operators, for example, left in right
+  #   3. strict newlines before a left precedent operator, for example, foo |> bar |> baz
+  #   4. strict newlines before a right precedent operator, for example, foo when bar when baz
+  #   5. flex newlines after the operator, for example, foo ++ bar ++ baz
   #
   # Cases 1, 2 and 5 are handled fairly easily by relying on the
   # operator precedence and making sure nesting is applied only once.
@@ -701,14 +706,14 @@ defmodule Code.Formatter do
       unwrap_right(right_arg, op, meta, right_context, [{{:root, left_context}, left_arg}])
 
     operand_to_algebra = fn
-      {{:root, context}, arg}, _args, newlines, state ->
+      {{:root, context}, arg}, _args, state ->
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, :left, 2)
-        {doc, @empty, newlines, state}
+        {{doc, @empty, 1}, state}
 
-      {{kind, context}, arg}, _args, newlines, state ->
+      {{kind, context}, arg}, _args, state ->
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, kind, 0)
         doc = doc |> nest_by_length(op_string) |> force_keyword(arg)
-        {concat(op_string, doc), @empty, newlines, state}
+        {{concat(op_string, doc), @empty, 1}, state}
     end
 
     {doc, state} =
@@ -739,15 +744,15 @@ defmodule Code.Formatter do
       unwrap_pipes(left_arg, meta, left_context, [{{op, right_context}, right_arg}])
 
     operand_to_algebra = fn
-      {{:root, context}, arg}, _args, newlines, state ->
+      {{:root, context}, arg}, _args, state ->
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, :left, 2)
-        {doc, @empty, newlines, state}
+        {{doc, @empty, 1}, state}
 
-      {{op, context}, arg}, _args, newlines, state ->
+      {{op, context}, arg}, _args, state ->
         op_info = Code.Identifier.binary_op(op)
         op_string = Atom.to_string(op) <> " "
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, :right, 0)
-        {concat(op_string, doc), @empty, newlines, state}
+        {{concat(op_string, doc), @empty, 1}, state}
     end
 
     operand_to_algebra_with_comments(pipes, meta, min_line, max_line, state, operand_to_algebra)
@@ -880,7 +885,7 @@ defmodule Code.Formatter do
 
   defp operand_to_algebra_with_comments(operands, meta, min_line, max_line, state, fun) do
     {docs, comments?, state} =
-      quoted_to_algebra_with_comments(operands, [], min_line, max_line, 1, state, fun)
+      quoted_to_algebra_with_comments(operands, [], min_line, max_line, state, fun)
 
     if comments? or eol?(meta) do
       {docs |> Enum.reduce(&line(&2, &1)) |> force_unfit(), state}
@@ -900,11 +905,11 @@ defmodule Code.Formatter do
 
   # @foo bar
   # @foo(bar)
-  defp module_attribute_to_algebra(meta, {name, _, [_] = args} = expr, context, state)
+  defp module_attribute_to_algebra(meta, {name, call_meta, [_] = args} = expr, context, state)
        when is_atom(name) and name not in [:__block__, :__aliases__] do
     if Code.Identifier.classify(name) == :callable_local do
       {{call_doc, state}, wrap_in_parens?} =
-        call_args_to_algebra(args, meta, context, :skip_unless_many_args, false, state)
+        call_args_to_algebra(args, call_meta, context, :skip_unless_many_args, false, state)
 
       doc =
         "@#{name}"
@@ -995,8 +1000,7 @@ defmodule Code.Formatter do
     fun = remote_fun_to_algebra(target, fun, length(args), state)
     remote_doc = target_doc |> concat(".") |> concat(string(fun))
 
-    if args == [] and not remote_target_is_a_module?(target) and
-         Keyword.get(meta, :no_parens, false) do
+    if args == [] and not remote_target_is_a_module?(target) and not meta?(meta, :closing) do
       {remote_doc, state}
     else
       {{call_doc, state}, wrap_in_parens?} =
@@ -1075,7 +1079,7 @@ defmodule Code.Formatter do
   defp local_to_algebra(fun, meta, args, context, state) when is_atom(fun) do
     skip_parens =
       cond do
-        not Keyword.get(meta, :no_parens, false) -> :skip_if_only_do_end
+        meta?(meta, :closing) -> :skip_if_only_do_end
         local_without_parens?(fun, args, state) -> :skip_unless_many_args
         true -> :skip_if_do_end
       end
@@ -1110,7 +1114,7 @@ defmodule Code.Formatter do
   defp call_args_to_algebra(args, meta, context, parens, list_to_keyword?, state) do
     {rest, last} = split_last(args)
 
-    if blocks = do_end_blocks(last, state) do
+    if blocks = do_end_blocks(meta, last, state) do
       {call_doc, state} =
         case rest do
           [] when parens == :required ->
@@ -1141,7 +1145,7 @@ defmodule Code.Formatter do
 
   defp call_args_to_algebra_no_blocks(meta, args, skip_parens?, list_to_keyword?, extra, state) do
     {left, right} = split_last(args)
-    {keyword?, right} = last_arg_to_keyword(right, list_to_keyword?)
+    {keyword?, right} = last_arg_to_keyword(right, list_to_keyword?, skip_parens?, state.comments)
 
     context =
       if left == [] and not keyword? do
@@ -1269,15 +1273,15 @@ defmodule Code.Formatter do
     not Enum.any?(args, &match?({:<-, _, [_, _]}, &1))
   end
 
-  defp do_end_blocks([{{:__block__, meta, [:do]}, _} | rest] = blocks, state) do
-    if meta[:format] == :block or can_force_do_end_blocks?(rest, state) do
+  defp do_end_blocks(meta, [{{:__block__, _, [:do]}, _} | rest] = blocks, state) do
+    if meta?(meta, :do) or can_force_do_end_blocks?(rest, state) do
       blocks
       |> Enum.map(fn {{:__block__, meta, [key]}, value} -> {key, line(meta), value} end)
       |> do_end_blocks_with_range(end_line(meta))
     end
   end
 
-  defp do_end_blocks(_, _), do: nil
+  defp do_end_blocks(_, _, _), do: nil
 
   defp can_force_do_end_blocks?(rest, state) do
     state.force_do_end_blocks and
@@ -1342,7 +1346,7 @@ defmodule Code.Formatter do
 
   defp list_interpolation_to_algebra([entry | entries], escape, state, acc, last) do
     {{:., _, [Kernel, :to_string]}, meta, [quoted]} = entry
-    {doc, state} = block_to_algebra(quoted, line(meta), end_line(meta), state)
+    {doc, state} = block_to_algebra(quoted, line(meta), closing_line(meta), state)
     doc = surround("\#{", doc, "}")
     list_interpolation_to_algebra(entries, escape, state, concat(acc, doc), last)
   end
@@ -1359,7 +1363,7 @@ defmodule Code.Formatter do
 
   defp interpolation_to_algebra([entry | entries], escape, state, acc, last) do
     {:"::", _, [{{:., _, [Kernel, :to_string]}, meta, [quoted]}, {:binary, _, _}]} = entry
-    {doc, state} = block_to_algebra(quoted, line(meta), end_line(meta), state)
+    {doc, state} = block_to_algebra(quoted, line(meta), closing_line(meta), state)
     doc = surround("\#{", doc, "}")
     interpolation_to_algebra(entries, escape, state, concat(acc, doc), last)
   end
@@ -1373,22 +1377,22 @@ defmodule Code.Formatter do
   defp maybe_sigil_to_algebra(fun, meta, args, state) do
     with <<"sigil_", name>> <- Atom.to_string(fun),
          [{:<<>>, _, entries}, modifiers] when is_list(modifiers) <- args,
-         opening_terminator when not is_nil(opening_terminator) <- Keyword.get(meta, :terminator) do
-      doc = <<?~, name, opening_terminator::binary>>
+         opening_delimiter when not is_nil(opening_delimiter) <- meta[:delimiter] do
+      doc = <<?~, name, opening_delimiter::binary>>
 
-      if opening_terminator in [@double_heredoc, @single_heredoc] do
-        closing_terminator = concat(opening_terminator, List.to_string(modifiers))
+      if opening_delimiter in [@double_heredoc, @single_heredoc] do
+        closing_delimiter = concat(opening_delimiter, List.to_string(modifiers))
 
         {doc, state} =
           entries
           |> prepend_heredoc_line()
-          |> interpolation_to_algebra(:heredoc, state, doc, closing_terminator)
+          |> interpolation_to_algebra(:heredoc, state, doc, closing_delimiter)
 
         {force_unfit(doc), state}
       else
-        escape = closing_sigil_terminator(opening_terminator)
-        closing_terminator = concat(escape, List.to_string(modifiers))
-        interpolation_to_algebra(entries, escape, state, doc, closing_terminator)
+        escape = closing_sigil_delimiter(opening_delimiter)
+        closing_delimiter = concat(escape, List.to_string(modifiers))
+        interpolation_to_algebra(entries, escape, state, doc, closing_delimiter)
       end
     else
       _ ->
@@ -1396,11 +1400,11 @@ defmodule Code.Formatter do
     end
   end
 
-  defp closing_sigil_terminator("("), do: ")"
-  defp closing_sigil_terminator("["), do: "]"
-  defp closing_sigil_terminator("{"), do: "}"
-  defp closing_sigil_terminator("<"), do: ">"
-  defp closing_sigil_terminator(other) when other in ["\"", "'", "|", "/"], do: other
+  defp closing_sigil_delimiter("("), do: ")"
+  defp closing_sigil_delimiter("["), do: "]"
+  defp closing_sigil_delimiter("{"), do: "}"
+  defp closing_sigil_delimiter("<"), do: ">"
+  defp closing_sigil_delimiter(other) when other in ["\"", "'", "|", "/"], do: other
 
   ## Bitstrings
 
@@ -1546,43 +1550,40 @@ defmodule Code.Formatter do
 
   defp integer_to_algebra(text) do
     case text do
-      [?0, ?x | rest] ->
-        "0x" <> String.upcase(List.to_string(rest))
+      <<?0, ?x, rest::binary>> ->
+        "0x" <> String.upcase(rest)
 
-      [?0, base | _rest] = digits when base in [?b, ?o] ->
-        List.to_string(digits)
+      <<?0, base, _::binary>> = digits when base in [?b, ?o] ->
+        digits
 
-      [?? | _rest] = char ->
-        List.to_string(char)
+      <<??, _::binary>> = char ->
+        char
 
       decimal ->
-        List.to_string(insert_underscores(decimal))
+        insert_underscores(decimal)
     end
   end
 
   defp float_to_algebra(text) do
-    {int_part, [?. | decimal_part]} = Enum.split_while(text, &(&1 != ?.))
-
-    decimal_part =
-      decimal_part
-      |> List.to_string()
-      |> String.downcase()
-
-    List.to_string(insert_underscores(int_part)) <> "." <> decimal_part
+    [int_part, decimal_part] = :binary.split(text, ".")
+    decimal_part = String.downcase(decimal_part)
+    insert_underscores(int_part) <> "." <> decimal_part
   end
 
   defp insert_underscores(digits) do
     cond do
-      ?_ in digits ->
+      digits =~ "_" ->
         digits
 
-      length(digits) >= 6 ->
+      byte_size(digits) >= 6 ->
         digits
+        |> String.to_charlist()
         |> Enum.reverse()
         |> Enum.chunk_every(3)
         |> Enum.intersperse('_')
         |> List.flatten()
         |> Enum.reverse()
+        |> List.to_string()
 
       true ->
         digits
@@ -1628,9 +1629,9 @@ defmodule Code.Formatter do
 
   defp args_to_algebra_with_comments(args, meta, skip_parens?, last_arg_mode, join, state, fun) do
     min_line = line(meta)
-    max_line = end_line(meta)
+    max_line = closing_line(meta)
 
-    arg_to_algebra = fn arg, args, newlines, state ->
+    arg_to_algebra = fn arg, args, state ->
       {doc, state} = fun.(arg, state)
 
       doc =
@@ -1641,7 +1642,7 @@ defmodule Code.Formatter do
           [] when last_arg_mode == :none -> doc
         end
 
-      {doc, @empty, newlines, state}
+      {{doc, @empty, 1}, state}
     end
 
     # If skipping parens, we cannot extract the comments of the first
@@ -1649,15 +1650,15 @@ defmodule Code.Formatter do
     {args, acc, state} =
       case args do
         [head | tail] when skip_parens? ->
-          {head, next_line, newlines, state} = arg_to_algebra.(head, tail, 1, state)
-          {tail, [{head, next_line, newlines}], state}
+          {doc_triplet, state} = arg_to_algebra.(head, tail, state)
+          {tail, [doc_triplet], state}
 
         _ ->
           {args, [], state}
       end
 
     {args_docs, comments?, state} =
-      quoted_to_algebra_with_comments(args, acc, min_line, max_line, 1, state, arg_to_algebra)
+      quoted_to_algebra_with_comments(args, acc, min_line, max_line, state, arg_to_algebra)
 
     cond do
       args_docs == [] ->
@@ -1829,7 +1830,7 @@ defmodule Code.Formatter do
   end
 
   defp clause_to_algebra({:->, meta, [[], body]}, _min_line, state) do
-    {body_doc, state} = block_to_algebra(body, line(meta), end_line(meta), state)
+    {body_doc, state} = block_to_algebra(body, line(meta), closing_line(meta), state)
     {"() ->" |> glue(body_doc) |> nest(2), state}
   end
 
@@ -1840,7 +1841,7 @@ defmodule Code.Formatter do
     {args_doc, state} = clause_args_to_algebra(args, min_line, state)
 
     state = %{state | operand_nesting: nesting}
-    {body_doc, state} = block_to_algebra(body, min_line, end_line(meta), state)
+    {body_doc, state} = block_to_algebra(body, min_line, closing_line(meta), state)
 
     doc =
       args_doc
@@ -1861,13 +1862,13 @@ defmodule Code.Formatter do
   end
 
   defp clause_args_to_algebra(args, min_line, state) do
-    arg_to_algebra = fn arg, _args, newlines, state ->
+    arg_to_algebra = fn arg, _args, state ->
       {doc, state} = clause_args_to_algebra(arg, state)
-      {doc, @empty, newlines, state}
+      {{doc, @empty, 1}, state}
     end
 
     {args_docs, comments?, state} =
-      quoted_to_algebra_with_comments([args], [], min_line, @min_line, 1, state, arg_to_algebra)
+      quoted_to_algebra_with_comments([args], [], min_line, @min_line, state, arg_to_algebra)
 
     if comments? do
       {Enum.reduce(args_docs, &line(&2, &1)), state}
@@ -1895,64 +1896,74 @@ defmodule Code.Formatter do
 
   ## Quoted helpers for comments
 
-  defp quoted_to_algebra_with_comments(args, acc, min_line, max_line, newlines, state, fun) do
+  defp quoted_to_algebra_with_comments(args, acc, min_line, max_line, state, fun) do
     {pre_comments, state} =
       get_and_update_in(state.comments, fn comments ->
         Enum.split_while(comments, fn {line, _, _} -> line <= min_line end)
       end)
 
     {docs, comments?, state} =
-      each_quoted_to_algebra_with_comments(args, acc, max_line, newlines, state, false, fun)
+      each_quoted_to_algebra_with_comments(args, acc, max_line, state, false, fun)
 
     {docs, comments?, update_in(state.comments, &(pre_comments ++ &1))}
   end
 
-  defp each_quoted_to_algebra_with_comments([], acc, max_line, _newlines, state, comments?, _fun) do
-    %{comments: comments} = state
-    {current, comments} = Enum.split_with(comments, fn {line, _, _} -> line < max_line end)
-
-    extra = for {_, {previous, _}, doc} <- current, do: {doc, @empty, previous}
-    args_docs = merge_algebra_with_comments(Enum.reverse(acc, extra), @empty)
-    {args_docs, comments? or extra != [], %{state | comments: comments}}
+  defp each_quoted_to_algebra_with_comments([], acc, max_line, state, comments?, _fun) do
+    {acc, comments, comments?} = extract_comments_before(max_line, acc, state.comments, comments?)
+    args_docs = merge_algebra_with_comments(Enum.reverse(acc), @empty)
+    {args_docs, comments?, %{state | comments: comments}}
   end
 
-  defp each_quoted_to_algebra_with_comments(args, acc, max_line, newlines, state, comments?, fun) do
-    [arg | args] = args
+  defp each_quoted_to_algebra_with_comments([arg | args], acc, max_line, state, comments?, fun) do
     {doc_start, doc_end} = traverse_line(arg, {@max_line, @min_line})
 
-    {doc_newlines, acc, comments, comments?} =
-      extract_comments_before(doc_start, newlines, acc, state.comments, comments?)
+    {acc, comments, comments?} =
+      extract_comments_before(doc_start, acc, state.comments, comments?)
 
-    {doc, next_line, doc_newlines, state} =
-      fun.(arg, args, doc_newlines, %{state | comments: comments})
+    {doc_triplet, state} = fun.(arg, args, %{state | comments: comments})
 
-    {doc_newlines, acc, comments, comments?} =
-      extract_comments_trailing(doc_start, doc_end, doc_newlines, acc, state.comments, comments?)
+    {acc, comments, comments?} =
+      extract_comments_trailing(doc_start, doc_end, acc, state.comments, comments?)
 
-    acc = [{doc, next_line, doc_newlines} | acc]
+    acc = [adjust_trailing_newlines(doc_triplet, doc_end, comments) | acc]
     state = %{state | comments: comments}
-    each_quoted_to_algebra_with_comments(args, acc, max_line, newlines, state, comments?, fun)
+    each_quoted_to_algebra_with_comments(args, acc, max_line, state, comments?, fun)
   end
 
-  defp extract_comments_before(max, _, acc, [{line, _, _} = comment | rest], _) when line < max do
+  defp extract_comments_before(max, acc, [{line, _, _} = comment | rest], _) when line < max do
     {_, {previous, next}, doc} = comment
-    acc = [{doc, @empty, previous} | acc]
-    extract_comments_before(max, next, acc, rest, true)
+    acc = [{doc, @empty, next} | add_previous_to_acc(acc, previous)]
+    extract_comments_before(max, acc, rest, true)
   end
 
-  defp extract_comments_before(_max, newlines, acc, rest, comments?) do
-    {newlines, acc, rest, comments?}
+  defp extract_comments_before(_max, acc, rest, comments?) do
+    {acc, rest, comments?}
   end
 
-  defp extract_comments_trailing(min, max, newlines, acc, [{line, _, doc_comment} | rest], _)
+  defp add_previous_to_acc([{doc, next_line, newlines} | acc], previous) when newlines < previous,
+    do: [{doc, next_line, previous} | acc]
+
+  defp add_previous_to_acc(acc, _previous),
+    do: acc
+
+  defp extract_comments_trailing(min, max, acc, [{line, _, doc_comment} | rest], _)
        when line >= min and line <= max do
-    acc = [{doc_comment, @empty, newlines} | acc]
-    extract_comments_trailing(min, max, 1, acc, rest, true)
+    acc = [{doc_comment, @empty, 1} | acc]
+    extract_comments_trailing(min, max, acc, rest, true)
   end
 
-  defp extract_comments_trailing(_min, _max, newlines, acc, rest, comments?) do
-    {newlines, acc, rest, comments?}
+  defp extract_comments_trailing(_min, _max, acc, rest, comments?) do
+    {acc, rest, comments?}
   end
+
+  # If the document is immediately followed by comment which is followed by newlines,
+  # its newlines wouldn't have considerd the comment, so we need to adjust it.
+  defp adjust_trailing_newlines({doc, next_line, newlines}, doc_end, [{line, _, _} | _])
+       when newlines > 1 and line == doc_end + 1 do
+    {doc, next_line, 1}
+  end
+
+  defp adjust_trailing_newlines(doc_triplet, _, _), do: doc_triplet
 
   defp traverse_line({expr, meta, args}, {min, max}) do
     acc =
@@ -1983,8 +1994,8 @@ defmodule Code.Formatter do
   #      (except for module attributes)
   #   3. empty lines are collapsed as to not exceed more than one
   #
-  defp merge_algebra_with_comments([{doc, next_line, _newlines} | docs], left) do
-    right = next_line_separator(docs, next_line)
+  defp merge_algebra_with_comments([{doc, next_line, newlines} | docs], left) do
+    right = if newlines >= @newlines, do: line(), else: next_line
 
     doc =
       if left != @empty do
@@ -2065,14 +2076,6 @@ defmodule Code.Formatter do
     end)
   end
 
-  defp next_line_separator([{_doc, _next_line, newlines} | _], next_line) do
-    if newlines >= @newlines, do: line(), else: next_line
-  end
-
-  defp next_line_separator([], _) do
-    line()
-  end
-
   defp module_attribute_read?({:@, _, [{var, _, var_context}]})
        when is_atom(var) and is_atom(var_context) do
     Code.Identifier.classify(var) == :callable_local
@@ -2127,12 +2130,12 @@ defmodule Code.Formatter do
   end
 
   defp next_break_fits?({:<<>>, meta, [_ | _] = entries}, state) do
-    meta[:format] == :bin_heredoc or
+    meta[:delimiter] == ~s["""] or
       (not interpolated?(entries) and eol_or_comments?(meta, state))
   end
 
   defp next_break_fits?({{:., _, [List, :to_charlist]}, meta, [[_ | _]]}, _state) do
-    meta[:format] == :list_heredoc
+    meta[:delimiter] == ~s[''']
   end
 
   defp next_break_fits?({{:., _, [_left, :{}]}, _, _}, _state) do
@@ -2140,11 +2143,11 @@ defmodule Code.Formatter do
   end
 
   defp next_break_fits?({:__block__, meta, [string]}, _state) when is_binary(string) do
-    meta[:format] == :bin_heredoc
+    meta[:delimiter] == ~s["""]
   end
 
   defp next_break_fits?({:__block__, meta, [list]}, _state) when is_list(list) do
-    meta[:format] != :charlist
+    meta[:delimeter] != ~s[']
   end
 
   defp next_break_fits?({form, _, [_ | _]}, _state) when form in [:fn, :%{}, :%] do
@@ -2152,7 +2155,7 @@ defmodule Code.Formatter do
   end
 
   defp next_break_fits?({fun, meta, args}, _state) when is_atom(fun) and is_list(args) do
-    meta[:terminator] in [@double_heredoc, @single_heredoc] and
+    meta[:delimiter] in [@double_heredoc, @single_heredoc] and
       fun |> Atom.to_string() |> String.starts_with?("sigil_")
   end
 
@@ -2168,23 +2171,47 @@ defmodule Code.Formatter do
     eol?(meta) or
       (
         min_line = line(meta)
-        max_line = end_line(meta)
+        max_line = closing_line(meta)
         Enum.any?(comments, fn {line, _, _} -> line > min_line and line < max_line end)
       )
   end
 
   # A literal list is a keyword or (... -> ...)
-  defp last_arg_to_keyword([_ | _] = arg, _list_to_keyword?) do
+  defp last_arg_to_keyword([_ | _] = arg, _list_to_keyword?, _skip_parens?, _comments) do
     {keyword?(arg), arg}
   end
 
   # This is a list of tuples, it can be converted to keywords.
-  defp last_arg_to_keyword({:__block__, _, [[_ | _] = arg]} = block, true) do
-    if keyword?(arg), do: {true, arg}, else: {false, block}
+  defp last_arg_to_keyword(
+         {:__block__, meta, [[_ | _] = arg]} = block,
+         true,
+         skip_parens?,
+         comments
+       ) do
+    cond do
+      not keyword?(arg) ->
+        {false, block}
+
+      skip_parens? ->
+        block_line = line(meta)
+        {{_, arg_meta, _}, _} = hd(arg)
+        first_line = line(arg_meta)
+
+        case Enum.drop_while(comments, fn {line, _, _} -> line <= block_line end) do
+          [{line, _, _} | _] when line <= first_line ->
+            {false, block}
+
+          _ ->
+            {true, arg}
+        end
+
+      true ->
+        {true, arg}
+    end
   end
 
   # Otherwise we don't have a keyword.
-  defp last_arg_to_keyword(arg, _list_to_keyword?) do
+  defp last_arg_to_keyword(arg, _list_to_keyword?, _skip_parens?, _comments) do
     {false, arg}
   end
 
@@ -2216,28 +2243,24 @@ defmodule Code.Formatter do
     if force_args?(arg), do: force_unfit(doc), else: doc
   end
 
-  defp keyword?([{key, _} | list]) do
-    keyword_key?(key) and keyword?(list)
-  end
+  defp keyword?([{_, _} | list]), do: keyword?(list)
+  defp keyword?(rest), do: rest == []
 
-  defp keyword?(rest) do
-    rest == []
-  end
+  defp keyword_key?({:__block__, meta, [atom]}) when is_atom(atom),
+    do: meta[:format] == :keyword
 
-  defp keyword_key?({:__block__, meta, [_]}) do
-    meta[:format] == :keyword
-  end
+  defp keyword_key?({{:., _, [:erlang, :binary_to_atom]}, meta, [{:<<>>, _, _}, :utf8]}),
+    do: meta[:format] == :keyword
 
-  defp keyword_key?({{:., _, [:erlang, :binary_to_atom]}, _, [{:<<>>, meta, _}, :utf8]}) do
-    meta[:format] == :keyword
-  end
-
-  defp keyword_key?(_) do
-    false
-  end
+  defp keyword_key?(_),
+    do: false
 
   defp eol?(meta) do
-    Keyword.get(meta, :eol, false)
+    Keyword.get(meta, :newlines, 0) > 0
+  end
+
+  defp meta?(meta, key) do
+    is_list(meta[key])
   end
 
   defp line(meta) do
@@ -2245,6 +2268,10 @@ defmodule Code.Formatter do
   end
 
   defp end_line(meta) do
+    meta[:end][:line] || @min_line
+  end
+
+  defp closing_line(meta) do
     meta[:closing][:line] || @min_line
   end
 

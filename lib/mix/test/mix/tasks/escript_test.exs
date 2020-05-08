@@ -18,7 +18,7 @@ defmodule Mix.Tasks.EscriptTest do
       [
         app: :escript_test_with_debug_info,
         version: "0.0.1",
-        escript: [main_module: EscriptTest, strip_beam: false]
+        escript: [main_module: EscriptTest, strip_beams: false]
       ]
     end
   end
@@ -62,6 +62,16 @@ defmodule Mix.Tasks.EscriptTest do
 
     def application do
       [applications: [], extra_applications: [:crypto]]
+    end
+  end
+
+  defmodule EscriptErlangMainModule do
+    def project do
+      [
+        app: :escript_test_erlang_main_module,
+        version: "0.0.1",
+        escript: [main_module: :escript_test]
+      ]
     end
   end
 
@@ -206,7 +216,24 @@ defmodule Mix.Tasks.EscriptTest do
       message = "Generated escript escript_test_erlang_with_deps with MIX_ENV=dev"
       assert_received {:mix_shell, :info, [^message]}
 
-      assert System.cmd("escript", ["escript_test_erlang_with_deps"]) == {"Erlang value", 0}
+      assert System.cmd("escript", ["escript_test_erlang_with_deps", "arg1", "arg2"]) ==
+               {~s(["arg1","arg2"]), 0}
+    end)
+  after
+    purge([Ok.MixProject])
+  end
+
+  test "generate escript with Erlang main module" do
+    Mix.Project.push(EscriptErlangMainModule)
+
+    in_fixture("escript_test", fn ->
+      Mix.Tasks.Escript.Build.run([])
+
+      message = "Generated escript escript_test_erlang_main_module with MIX_ENV=dev"
+      assert_received {:mix_shell, :info, [^message]}
+
+      assert System.cmd("escript", ["escript_test_erlang_main_module", "arg1", "arg2"]) ==
+               {~s([<<"arg1">>,<<"arg2">>]), 0}
     end)
   after
     purge([Ok.MixProject])
@@ -335,19 +362,5 @@ defmodule Mix.Tasks.EscriptTest do
     end)
   after
     purge([GitRepo, GitRepo.MixProject])
-  end
-
-  test "escript install timeout" do
-    message = ~r[request timed out after 0ms]
-
-    send(self(), {:mix_shell_input, :yes?, true})
-
-    assert_raise Mix.Error, message, fn ->
-      Mix.Tasks.Escript.Install.run([
-        "http://10.0.0.0/unlikely-to-exist-0.1.0.ez",
-        "--timeout",
-        "0"
-      ])
-    end
   end
 end

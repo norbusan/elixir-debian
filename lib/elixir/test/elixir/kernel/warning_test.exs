@@ -661,34 +661,36 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
-  test "previous clause always matches" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule Sample do
-               def binary_cond do
-                 v = "bc"
-                 cond do
-                   is_binary(v) -> :bin
-                   true -> :ok
-                 end
-               end
-             end
-             """)
-           end) =~ "this clause cannot match because a previous clause at line 5 always matches"
-  after
-    purge(Sample)
-  end
-
-  test "empty clause" do
+  test "late function heads" do
     assert capture_err(fn ->
              Code.eval_string("""
              defmodule Sample1 do
-               def hello
+               defmacro __using__(_) do
+                 quote do
+                   def add(a, b), do: a + b
+                 end
+               end
+             end
+
+             defmodule Sample2 do
+               use Sample1
+               @doc "hello"
+               def add(a, b)
              end
              """)
-           end) =~ "implementation not provided for predefined def hello/0"
+           end) == ""
+
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample3 do
+               def add(a, b), do: a + b
+               @doc "hello"
+               def add(a, b)
+             end
+             """)
+           end) =~ "function head for def add/2 must come at the top of its direct implementation"
   after
-    purge(Sample1)
+    purge([Sample1, Sample2, Sample3])
   end
 
   test "used import via alias" do
@@ -720,7 +722,8 @@ defmodule Kernel.WarningTest do
                def hello, do: nil
              end
              """)
-           end) =~ "this clause cannot match because a previous clause at line 2 always matches"
+           end) =~
+             ~r"this clause( for hello/0)? cannot match because a previous clause at line 2 always matches"
   after
     purge(Sample)
   end
@@ -740,7 +743,8 @@ defmodule Kernel.WarningTest do
                use Sample
              end
              """)
-           end) =~ "this clause cannot match because a previous clause at line 10 always matches"
+           end) =~
+             ~r"this clause( for hello/0)? cannot match because a previous clause at line 10 always matches"
   after
     purge(Sample)
     purge(UseSample)
@@ -781,23 +785,14 @@ defmodule Kernel.WarningTest do
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
-             defmodule Sample1 do
+             defmodule Sample do
                def hello(arg \\ 0), do: arg
                def hello(arg), do: arg
              end
              """)
            end) =~ message
-
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-               defmodule Sample2 do
-                 def hello(arg \\ 0), do: arg
-                 def hello(_arg)
-               end
-             """)
-           end) == ""
   after
-    purge([Sample1, Sample2])
+    purge(Sample)
   end
 
   test "unused with local with overridable" do
@@ -909,7 +904,7 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
-  test "badarg warning" do
+  test "eval failure warning" do
     assert capture_err(fn ->
              assert_raise ArgumentError, fn ->
                Code.eval_string("""
@@ -918,7 +913,15 @@ defmodule Kernel.WarningTest do
                end
                """)
              end
-           end) =~ "this expression will fail with ArgumentError"
+           end) =~ ~r"this expression will fail with ArgumentError\n.*nofile:2"
+
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample do
+               def foo, do: 1 + nil
+             end
+             """)
+           end) =~ ~r"this expression will fail with ArithmeticError\n.*nofile:2"
   after
     purge([Sample])
   end
@@ -1413,6 +1416,23 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
+  test "registered attribute with no use" do
+    content =
+      capture_err(fn ->
+        Code.eval_string("""
+        defmodule Sample do
+          Module.register_attribute(__MODULE__, :at, [])
+          @at "Something"
+        end
+        """)
+      end)
+
+    assert content =~ "module attribute @at was set but never used"
+    assert content =~ "nofile:3"
+  after
+    purge(Sample)
+  end
+
   test "typedoc with no type" do
     assert capture_err(fn ->
              Code.eval_string("""
@@ -1592,7 +1612,8 @@ defmodule Kernel.WarningTest do
                defguard foo(baz) when baz == :baz
              end
              """)
-           end) =~ "this clause cannot match because a previous clause at line 2 always matches"
+           end) =~
+             ~r"this clause( for foo/1)? cannot match because a previous clause at line 2 always matches"
   after
     purge(Sample)
   end
@@ -1605,19 +1626,8 @@ defmodule Kernel.WarningTest do
                defmacro foo(bar), do: bar == :bar
              end
              """)
-           end) =~ "this clause cannot match because a previous clause at line 2 always matches"
-  after
-    purge(Sample)
-  end
-
-  test "defguard needs an implementation" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule Sample do
-               defguard foo(bar)
-             end
-             """)
-           end) =~ "implementation not provided for predefined defmacro foo/1"
+           end) =~
+             ~r"this clause( for foo/1)? cannot match because a previous clause at line 2 always matches"
   after
     purge(Sample)
   end
@@ -1716,19 +1726,32 @@ defmodule Kernel.WarningTest do
     assert message =~ "\"else\" shouldn't be used as the only clause in \"try\""
   end
 
-  test "warns on bad record update input" do
-    assert capture_err(fn ->
-             defmodule Sample do
-               require Record
-               Record.defrecord(:user, __MODULE__, name: "john", age: 25)
+  test "sigil w/W warns on trailing comma at macro expansion time" do
+    for sigil <- ~w(w W),
+        modifier <- ~w(a s c) do
+      output =
+        capture_err(fn ->
+          {:ok, ast} =
+            "~#{sigil}(foo, bar baz)#{modifier}"
+            |> Code.string_to_quoted()
 
-               def fun do
-                 user(user(), _: :_, name: "meg")
-               end
+          Macro.expand(ast, __ENV__)
+        end)
+
+      assert output =~ "the sigils ~w/~W do not allow trailing commas"
+    end
+  end
+
+  test "defstruct warns with duplicate keys" do
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule TestMod do
+               defstruct [:foo, :bar, foo: 1]
              end
-           end) =~ "updating a record with a default (:_) is equivalent to creating a new record"
+             """)
+           end) =~ "duplicate key :foo found in struct"
   after
-    purge([Sample])
+    purge(TestMod)
   end
 
   defp purge(list) when is_list(list) do
