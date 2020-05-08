@@ -30,7 +30,7 @@ elixir-lang (1.9.1.dfsg-1.1) unstable; urgency=medium
   * Move to ${erlang:Depends} substitution variable to calculate the
     dependencies automatically.
 
- -- Sergei Golovan <sgolovan@debian.org>  Fri, 11 Oct 2019 12:06:29 +0300
+ -- Sergei Golovan <sgolovan@debian.org>  Sun, 13 Oct 2019 09:39:24 +0300
 
 elixir-lang (1.9.1.dfsg-1) unstable; urgency=medium
 
