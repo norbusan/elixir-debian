@@ -6,9 +6,11 @@ Bug-Debian: https://bugs.debian.org/912207
 Forwarded: no
 Last-Update: 2018-10-30
 
---- elixir-lang-1.7.4.orig/lib/elixir/src/elixir.erl
-+++ elixir-lang-1.7.4/lib/elixir/src/elixir.erl
-@@ -140,11 +140,6 @@ check_endianness() ->
+Index: elixir-lang/lib/elixir/src/elixir.erl
+===================================================================
+--- elixir-lang.orig/lib/elixir/src/elixir.erl
++++ elixir-lang/lib/elixir/src/elixir.erl
+@@ -137,11 +137,6 @@ check_endianness() ->
  
  check_file_encoding(Encoding) ->
    case Encoding of
