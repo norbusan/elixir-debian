@@ -4,9 +4,11 @@ Description: remove rebar3 related tests
 Author: Evgeny Golyshev <eugulixes@gmail.com>
 Last-Update: 2019-07-19
 
---- elixir-lang-1.9.1.dfsg.orig/lib/mix/test/mix/rebar_test.exs
-+++ elixir-lang-1.9.1.dfsg/lib/mix/test/mix/rebar_test.exs
-@@ -33,39 +33,6 @@ defmodule Mix.RebarTest do
+Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
+===================================================================
+--- elixir-lang.orig/lib/mix/test/mix/rebar_test.exs
++++ elixir-lang/lib/mix/test/mix/rebar_test.exs
+@@ -36,39 +36,6 @@ defmodule Mix.RebarTest do
      end
    end
  
@@ -46,7 +48,7 @@ Last-Update: 2019-07-19
    describe "load_config/1" do
      test "loads rebar.config" do
        path = MixTest.Case.fixture_path("rebar_dep")
-@@ -181,12 +148,6 @@ defmodule Mix.RebarTest do
+@@ -184,12 +151,6 @@ defmodule Mix.RebarTest do
    end
  
    describe "integration with Mix" do
@@ -59,7 +61,7 @@ Last-Update: 2019-07-19
      test "parses Rebar dependencies from rebar.config" do
        Mix.Project.push(RebarAsDep)
  
-@@ -202,19 +163,6 @@ defmodule Mix.RebarTest do
+@@ -205,19 +166,6 @@ defmodule Mix.RebarTest do
               end)
      end
  
@@ -79,7 +81,7 @@ Last-Update: 2019-07-19
      test "gets and compiles dependencies for Rebar" do
        Mix.Project.push(RebarAsDep)
  
-@@ -263,54 +211,6 @@ defmodule Mix.RebarTest do
+@@ -266,54 +214,6 @@ defmodule Mix.RebarTest do
        end)
      end
  
@@ -134,8 +136,10 @@ Last-Update: 2019-07-19
      test "gets and compiles dependencies for Rebar with Mix" do
        Mix.Project.push(RebarAsDep)
  
---- elixir-lang-1.9.1.dfsg.orig/lib/mix/test/test_helper.exs
-+++ elixir-lang-1.9.1.dfsg/lib/mix/test/test_helper.exs
+Index: elixir-lang/lib/mix/test/test_helper.exs
+===================================================================
+--- elixir-lang.orig/lib/mix/test/test_helper.exs
++++ elixir-lang/lib/mix/test/test_helper.exs
 @@ -186,8 +186,6 @@ System.delete_env("XDG_CONFIG_HOME")
  
  rebar = System.get_env("REBAR") || Path.expand("fixtures/rebar", __DIR__)
