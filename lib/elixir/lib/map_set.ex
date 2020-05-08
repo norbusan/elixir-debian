@@ -2,14 +2,26 @@ defmodule MapSet do
   @moduledoc """
   Functions that work on sets.
 
-  `MapSet` is the "go to" set data structure in Elixir. A set can be constructed
-  using `MapSet.new/0`:
+  A set is a data structure that can contain unique elements of any kind,
+  without any particular order. `MapSet` is the "go to" set data structure in Elixir.
+
+  A set can be constructed using `MapSet.new/0`:
 
       iex> MapSet.new()
       #MapSet<[]>
 
-  A set can contain any kind of elements, and elements in a set don't have to be
-  of the same type. By definition, sets can't contain duplicate elements: when
+  Elements in a set don't have to be of the same type and they can be
+  populated from an [enumerable](`t:Enumerable.t/0`) using `MapSet.new/1`:
+
+      iex> MapSet.new([1, :two, {"three"}])
+      #MapSet<[1, :two, {"three"}]>
+
+  Elements can be inserted using `MapSet.put/2`:
+
+      iex> MapSet.new([2]) |> MapSet.put(4) |> MapSet.put(0)
+      #MapSet<[0, 2, 4]>
+
+  By definition, sets can't contain duplicate elements: when
   inserting an element in a set where it's already present, the insertion is
   simply a no-op.
 
@@ -105,7 +117,7 @@ defmodule MapSet do
   end
 
   defp new_from_list([], acc) do
-    :maps.from_list(acc)
+    Map.new(acc)
   end
 
   defp new_from_list([element | rest], acc) do
@@ -113,7 +125,7 @@ defmodule MapSet do
   end
 
   defp new_from_list_transform([], _fun, acc) do
-    :maps.from_list(acc)
+    Map.new(acc)
   end
 
   defp new_from_list_transform([element | rest], fun, acc) do
@@ -151,14 +163,14 @@ defmodule MapSet do
   @spec difference(t(val1), t(val2)) :: t(val1) when val1: value, val2: value
   def difference(map_set1, map_set2)
 
-  # If the first set is less than twice the size of the second map,
-  # it is fastest to re-accumulate elements in the first set that are not
-  # present in the second set.
+  # If the first set is less than twice the size of the second map, it is fastest
+  # to re-accumulate elements in the first set that are not present in the second set.
   def difference(%MapSet{map: map1}, %MapSet{map: map2})
       when map_size(map1) < map_size(map2) * 2 do
     map =
       map1
-      |> Map.keys()
+      |> :maps.iterator()
+      |> :maps.next()
       |> filter_not_in(map2, [])
 
     %MapSet{map: map}
@@ -171,12 +183,13 @@ defmodule MapSet do
     %{map_set | map: Map.drop(map1, Map.keys(map2))}
   end
 
-  defp filter_not_in([], _map2, acc), do: :maps.from_list(acc)
+  defp filter_not_in(:none, _map2, acc), do: Map.new(acc)
 
-  defp filter_not_in([key | rest], map2, acc) do
-    case map2 do
-      %{^key => _} -> filter_not_in(rest, map2, acc)
-      _ -> filter_not_in(rest, map2, [{key, @dummy_value} | acc])
+  defp filter_not_in({key, _val, iter}, map2, acc) do
+    if :erlang.is_map_key(key, map2) do
+      filter_not_in(:maps.next(iter), map2, acc)
+    else
+      filter_not_in(:maps.next(iter), map2, [{key, @dummy_value} | acc])
     end
   end
 
@@ -196,19 +209,15 @@ defmodule MapSet do
     {map1, map2} = order_by_size(map1, map2)
 
     map1
-    |> Map.keys()
+    |> :maps.iterator()
+    |> :maps.next()
     |> none_in?(map2)
   end
 
-  defp none_in?([], _) do
-    true
-  end
+  defp none_in?(:none, _), do: true
 
-  defp none_in?([key | rest], map2) do
-    case map2 do
-      %{^key => _} -> false
-      _ -> none_in?(rest, map2)
-    end
+  defp none_in?({key, _val, iter}, map2) do
+    not :erlang.is_map_key(key, map2) and none_in?(:maps.next(iter), map2)
   end
 
   @doc """
@@ -232,7 +241,7 @@ defmodule MapSet do
   # Elixir v1.5 change the map representation, so on
   # version mismatch we need to compare the keys directly.
   def equal?(%MapSet{map: map1}, %MapSet{map: map2}) do
-    map_size(map1) == map_size(map2) and map_subset?(Map.keys(map1), map2)
+    map_size(map1) == map_size(map2) and all_in?(map1, map2)
   end
 
   @doc """
@@ -266,7 +275,7 @@ defmodule MapSet do
   """
   @spec member?(t, value) :: boolean
   def member?(%MapSet{map: map}, value) do
-    match?(%{^value => _}, map)
+    :erlang.is_map_key(value, map)
   end
 
   @doc """
@@ -314,19 +323,20 @@ defmodule MapSet do
   """
   @spec subset?(t, t) :: boolean
   def subset?(%MapSet{map: map1}, %MapSet{map: map2}) do
-    if map_size(map1) <= map_size(map2) do
-      map1
-      |> Map.keys()
-      |> map_subset?(map2)
-    else
-      false
-    end
+    map_size(map1) <= map_size(map2) and all_in?(map1, map2)
   end
 
-  defp map_subset?([], _), do: true
+  defp all_in?(:none, _), do: true
 
-  defp map_subset?([key | rest], map2) do
-    match?(%{^key => _}, map2) and map_subset?(rest, map2)
+  defp all_in?({key, _val, iter}, map2) do
+    :erlang.is_map_key(key, map2) and all_in?(:maps.next(iter), map2)
+  end
+
+  defp all_in?(map1, map2) when is_map(map1) and is_map(map2) do
+    map1
+    |> :maps.iterator()
+    |> :maps.next()
+    |> all_in?(map2)
   end
 
   @doc """
@@ -378,7 +388,8 @@ defmodule MapSet do
     end
 
     def slice(map_set) do
-      {:ok, MapSet.size(map_set), &Enumerable.List.slice(MapSet.to_list(map_set), &1, &2)}
+      size = MapSet.size(map_set)
+      {:ok, size, &Enumerable.List.slice(MapSet.to_list(map_set), &1, &2, size)}
     end
 
     def reduce(map_set, acc, fun) do

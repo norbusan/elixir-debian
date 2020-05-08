@@ -198,16 +198,24 @@ defmodule Registry do
   @type match_pattern :: atom | term
 
   @typedoc "A guard to be evaluated when matching on objects in a registry"
-  @type guard :: {atom | term}
+  @type guard :: atom | tuple
 
   @typedoc "A list of guards to be evaluated when matching on objects in a registry"
-  @type guards :: [guard] | []
+  @type guards :: [guard]
 
   @typedoc "A pattern used to representing the output format part of a match spec"
   @type body :: [atom | tuple]
 
   @typedoc "A full match spec used when selecting objects in the registry"
   @type spec :: [{match_pattern, guards, body}]
+
+  @typedoc "Options used for `child_spec/1` and `start_link/1`"
+  @type start_option ::
+          {:keys, keys}
+          | {:name, registry}
+          | {:partitions, pos_integer}
+          | {:listeners, [atom]}
+          | {:meta, [{meta_key, meta_value}]}
 
   ## Via callbacks
 
@@ -292,7 +300,7 @@ defmodule Registry do
 
   The registry requires the following keys:
 
-    * `:keys` - choose if keys are `:unique` or `:duplicate`
+    * `:keys` - chooses if keys are `:unique` or `:duplicate`
     * `:name` - the name of the registry and its tables
 
   The following keys are optional:
@@ -306,14 +314,7 @@ defmodule Registry do
 
   """
   @doc since: "1.5.0"
-  @spec start_link(
-          keys: keys,
-          name: registry,
-          partitions: pos_integer,
-          listeners: [atom],
-          meta: meta
-        ) :: {:ok, pid} | {:error, term}
-        when meta: [{meta_key, meta_value}]
+  @spec start_link([start_option]) :: {:ok, pid} | {:error, term}
   def start_link(options) do
     keys = Keyword.get(options, :keys)
 
@@ -375,10 +376,11 @@ defmodule Registry do
   See `Supervisor`.
   """
   @doc since: "1.5.0"
-  def child_spec(opts) do
+  @spec child_spec([start_option]) :: Supervisor.child_spec()
+  def child_spec(options) do
     %{
-      id: Keyword.get(opts, :name, Registry),
-      start: {Registry, :start_link, [opts]},
+      id: Keyword.get(options, :name, Registry),
+      start: {Registry, :start_link, [options]},
       type: :supervisor
     }
   end
@@ -598,7 +600,8 @@ defmodule Registry do
   Optionally, it is possible to pass a list of guard conditions for more precise matching.
   Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
   For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
-  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+  Please note that guard conditions will work only for assigned
+  variables like `:"$1"`, `:"$2"`, and so forth.
   Avoid usage of special match variables `:"$_"` and `:"$$"`, because it might not work as expected.
 
   An empty list will be returned if there is no match.
@@ -927,13 +930,13 @@ defmodule Registry do
     counter = System.unique_integer()
     true = :ets.insert(pid_ets, {self, key, key_ets, counter})
 
-    case register_key(kind, pid_server, key_ets, key, {key, {self, value}}) do
-      {:ok, _} = ok ->
+    case register_key(kind, key_ets, key, {key, {self, value}}) do
+      :ok ->
         for listener <- listeners do
           Kernel.send(listener, {:register, registry, key, self, value})
         end
 
-        ok
+        {:ok, pid_server}
 
       {:error, {:already_registered, ^self}} = error ->
         true = :ets.delete_object(pid_ets, {self, key, key_ets, counter})
@@ -946,14 +949,14 @@ defmodule Registry do
     end
   end
 
-  defp register_key(:duplicate, pid_server, key_ets, _key, entry) do
+  defp register_key(:duplicate, key_ets, _key, entry) do
     true = :ets.insert(key_ets, entry)
-    {:ok, pid_server}
+    :ok
   end
 
-  defp register_key(:unique, pid_server, key_ets, key, entry) do
+  defp register_key(:unique, key_ets, key, entry) do
     if :ets.insert_new(key_ets, entry) do
-      {:ok, pid_server}
+      :ok
     else
       # Notice we have to call register_key recursively
       # because we are always at odds of a race condition.
@@ -963,11 +966,11 @@ defmodule Registry do
             {:error, {:already_registered, pid}}
           else
             :ets.delete_object(key_ets, current)
-            register_key(:unique, pid_server, key_ets, key, entry)
+            register_key(:unique, key_ets, key, entry)
           end
 
         [] ->
-          register_key(:unique, pid_server, key_ets, key, entry)
+          register_key(:unique, key_ets, key, entry)
       end
     end
   end
@@ -1091,7 +1094,8 @@ defmodule Registry do
   Optionally, it is possible to pass a list of guard conditions for more precise matching.
   Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
   For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
-  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+  Please note that guard conditions will work only for assigned
+  variables like `:"$1"`, `:"$2"`, and so forth.
   Avoid usage of special match variables `:"$_"` and `:"$$"`, because it might not work as expected.
 
   Zero will be returned if there is no match.
@@ -1158,7 +1162,8 @@ defmodule Registry do
   The second part, the guards, is a list of conditions that allow filtering the results.
   Each guard is a tuple, which describes checks that should be passed by assigned part of pattern.
   For example the `$1 > 1` guard condition would be expressed as the `{:>, :"$1", 1}` tuple.
-  Please note that guard conditions will work only for assigned variables like `:"$1"`, `:"$2"`, etc.
+  Please note that guard conditions will work only for assigned
+  variables like `:"$1"`, `:"$2"`, and so forth.
 
   The third part, the body, is a list of shapes of the returned entries. Like guards, you have access to
   assigned variables like `:"$1"`, which you can combine with hardcoded values to freely shape entries
@@ -1320,10 +1325,14 @@ defmodule Registry.Supervisor do
         key_partition = Registry.Partition.key_name(registry, i)
         pid_partition = Registry.Partition.pid_name(registry, i)
         arg = {kind, registry, i, partitions, key_partition, pid_partition, listeners}
-        worker(Registry.Partition, [pid_partition, arg], id: pid_partition)
+
+        %{
+          id: pid_partition,
+          start: {Registry.Partition, :start_link, [pid_partition, arg]}
+        }
       end
 
-    supervise(children, strategy: strategy_for_kind(kind))
+    Supervisor.init(children, strategy: strategy_for_kind(kind))
   end
 
   # Unique registries have their key partition hashed by key.

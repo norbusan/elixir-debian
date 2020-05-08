@@ -143,13 +143,12 @@ defmodule IEx.Evaluator do
   defp loop_state(server, history, opts) do
     env = opts[:env] || :elixir.env_for_eval(file: "iex")
     env = %{env | prematch_vars: :apply}
-    {_, _, env, scope} = :elixir.eval('import IEx.Helpers', [], env)
+    {_, _, env} = :elixir.eval_quoted(quote(do: import(IEx.Helpers)), [], env)
     stacktrace = opts[:stacktrace]
     binding = opts[:binding] || []
 
     state = %{
       binding: binding,
-      scope: scope,
       env: env,
       server: server,
       history: history,
@@ -182,17 +181,20 @@ defmodule IEx.Evaluator do
   defp eval_dot_iex(state, path) do
     try do
       code = File.read!(path)
-      env = :elixir.env_for_eval(state.env, file: path, line: 1)
+      quoted = :elixir.string_to_quoted!(String.to_charlist(code), 1, path, [])
 
       # Evaluate the contents in the same environment server_loop will run in
-      {_result, binding, env, _scope} = :elixir.eval(String.to_charlist(code), state.binding, env)
-
+      env = :elixir.env_for_eval(state.env, file: path, line: 1)
+      Process.put(:iex_imported_paths, MapSet.new([path]))
+      {_result, binding, env} = :elixir.eval_forms(quoted, state.binding, env)
       %{state | binding: binding, env: :elixir.env_for_eval(env, file: "iex", line: 1)}
     catch
       kind, error ->
         io_result("Error while evaluating: #{path}")
         print_error(kind, error, __STACKTRACE__)
         state
+    after
+      Process.delete(:iex_imported_paths)
     end
   end
 
@@ -253,15 +255,14 @@ defmodule IEx.Evaluator do
   end
 
   defp handle_eval({:ok, forms}, code, line, iex_state, state) do
-    {result, binding, env, scope} =
-      :elixir.eval_forms(forms, state.binding, state.env, state.scope)
+    {result, binding, env} = :elixir.eval_forms(forms, state.binding, state.env)
 
     unless result == IEx.dont_display_result() do
       io_inspect(result)
     end
 
     iex_state = %{iex_state | cache: '', counter: iex_state.counter + 1}
-    state = %{state | env: env, scope: scope, binding: binding}
+    state = %{state | env: env, binding: binding}
     {iex_state, update_history(state, line, code, result)}
   end
 

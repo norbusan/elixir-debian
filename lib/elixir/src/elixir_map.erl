@@ -20,15 +20,15 @@ expand_struct(Meta, Left, {'%{}', MapMeta, MapArgs}, #{context := Context} = E) 
 
   case validate_struct(ELeft, Context) of
     true when is_atom(ELeft) ->
-      %% We always record structs when they are expanded
-      %% as they expect the reference at compile time.
-      elixir_lexical:record_struct(ELeft, ?line(Meta), ?key(E, lexical_tracker)),
-
       case extract_struct_assocs(Meta, ERight, E) of
         {expand, MapMeta, Assocs} when Context /= match -> %% Expand
           Struct = load_struct(Meta, ELeft, [Assocs], EE),
           assert_struct_keys(Meta, ELeft, Struct, Assocs, EE),
-          Keys = ['__struct__'] ++ [K || {K, _} <- Assocs],
+
+          AssocKeys = [K || {K, _} <- Assocs],
+          elixir_env:trace({struct_expansion, Meta, ELeft, AssocKeys}, E),
+
+          Keys = ['__struct__'] ++ AssocKeys,
           WithoutKeys = maps:to_list(maps:without(Keys, Struct)),
           StructAssocs = elixir_quote:escape(WithoutKeys, default, false),
           {{'%', Meta, [ELeft, {'%{}', MapMeta, StructAssocs ++ Assocs}]}, EE};
@@ -36,6 +36,8 @@ expand_struct(Meta, Left, {'%{}', MapMeta, MapArgs}, #{context := Context} = E) 
         {_, _, Assocs} -> %% Update or match
           Struct = load_struct(Meta, ELeft, [], EE),
           assert_struct_keys(Meta, ELeft, Struct, Assocs, EE),
+          AssocKeys = [K || {K, _} <- Assocs],
+          elixir_env:trace({struct_expansion, Meta, ELeft, AssocKeys}, E),
           {{'%', Meta, [ELeft, ERight]}, EE}
       end;
 
@@ -85,8 +87,13 @@ validate_match_key(_, _, _) ->
 validate_not_repeated(Meta, Key, Used, E) ->
   case is_literal(Key) andalso Used of
     #{Key := true} ->
-      form_warn(Meta, ?key(E, file), ?MODULE, {repeated_key, Key}),
-      Used;
+      case E of
+        #{context := match} ->
+          form_error(Meta, ?key(E, file), ?MODULE, {repeated_key, Key});
+        _ ->
+          form_warn(Meta, ?key(E, file), ?MODULE, {repeated_key, Key}),
+          Used
+      end;
 
     #{} ->
       Used#{Key => true};
@@ -207,7 +214,7 @@ format_error({invalid_pin_in_map_key_match, Name}) ->
 format_error({invalid_variable_in_map_key_match, Name}) ->
   Message =
     "cannot use variable ~ts as map key inside a pattern. Map keys in patterns can only be literals "
-    "(such as atoms, strings, tuples, etc.) or an existing variable matched with the pin operator "
+    "(such as atoms, strings, tuples, and the like) or an existing variable matched with the pin operator "
     "(such as ^some_var)",
   io_lib:format(Message, [Name]);
 format_error({repeated_key, Key}) ->
@@ -234,7 +241,11 @@ format_error({inaccessible_struct, Module}) ->
   io_lib:format(Message, [elixir_aliases:inspect(Module)]);
 format_error({undefined_struct, Module, Arity}) ->
   Name = elixir_aliases:inspect(Module),
-  io_lib:format("~ts.__struct__/~p is undefined, cannot expand struct ~ts", [Name, Arity, Name]);
+  io_lib:format(
+    "~ts.__struct__/~p is undefined, cannot expand struct ~ts. "
+    "Make sure the struct name is correct. If the struct name exists and is correct "
+    "but it still cannot be found, you likely have cyclic module usage in your code",
+    [Name, Arity, Name]);
 format_error({unknown_key_for_struct, Module, Key}) ->
   io_lib:format("unknown key ~ts for struct ~ts",
                 ['Elixir.Macro':to_string(Key), elixir_aliases:inspect(Module)]);

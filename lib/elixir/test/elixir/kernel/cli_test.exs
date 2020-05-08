@@ -27,7 +27,10 @@ defmodule Kernel.CLITest do
 
   test "properly parses paths" do
     root = fixture_path("../../..") |> to_charlist
-    args = '-pa "#{root}/*" -pz "#{root}/lib/*" -e "IO.inspect(:code.get_path, limit: :infinity)"'
+
+    args =
+      '-pa "#{root}/*" -pz "#{root}/lib/*" -e "IO.inspect(:code.get_path(), limit: :infinity)"'
+
     list = elixir(args)
     {path, _} = Code.eval_string(list, [])
 
@@ -58,7 +61,7 @@ defmodule Kernel.CLITest do
     assert error =~ "The following arguments were given to Access.fetch/2"
     assert error =~ ":foo"
     assert error =~ "def fetch(-%module{} = container-, +key+)"
-    assert error =~ ~r"\(elixir\) lib/access\.ex:\d+: Access\.fetch/2"
+    assert error =~ ~r"\(elixir #{System.version()}\) lib/access\.ex:\d+: Access\.fetch/2"
   end
 end
 
@@ -147,7 +150,7 @@ defmodule Kernel.CLI.CompileTest do
       output = elixirc(compilation_args)
 
       expected =
-        "(File.Error) could not write to #{inspect(context[:beam_file_path])}: permission denied"
+        "(File.Error) could not write to file #{inspect(context[:beam_file_path])}: permission denied"
 
       assert String.contains?(output, expected)
     end

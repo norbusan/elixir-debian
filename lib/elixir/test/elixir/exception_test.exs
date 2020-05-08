@@ -140,13 +140,10 @@ defmodule ExceptionTest do
 
   test "format_stacktrace_entry/1 with application" do
     assert Exception.format_stacktrace_entry({Exception, :bar, [], [file: 'file.ex']}) ==
-             "(elixir) file.ex: Exception.bar()"
+             "(elixir #{System.version()}) file.ex: Exception.bar()"
 
     assert Exception.format_stacktrace_entry({Exception, :bar, [], [file: 'file.ex', line: 10]}) ==
-             "(elixir) file.ex:10: Exception.bar()"
-
-    assert Exception.format_stacktrace_entry({:lists, :bar, [1, 2, 3], []}) ==
-             "(stdlib) :lists.bar(1, 2, 3)"
+             "(elixir #{System.version()}) file.ex:10: Exception.bar()"
   end
 
   test "format_stacktrace_entry/1 with fun" do
@@ -179,7 +176,7 @@ defmodule ExceptionTest do
     assert Exception.format_mfa(Foo, :..., 1) == "Foo.\"...\"/1"
   end
 
-  test "format_mfa/3 with unicode" do
+  test "format_mfa/3 with Unicode" do
     assert Exception.format_mfa(Foo, :olá, [1, 2]) == "Foo.olá(1, 2)"
     assert Exception.format_mfa(Foo, :Olá, [1, 2]) == "Foo.\"Olá\"(1, 2)"
     assert Exception.format_mfa(Foo, :Ólá, [1, 2]) == "Foo.\"Ólá\"(1, 2)"
@@ -451,8 +448,8 @@ defmodule ExceptionTest do
                    * map/2
                    * max/1
                    * max/2
+                   * max/3
                    * min/1
-                   * min/2
              """
 
       assert blame_message(:erlang, & &1.gt_cookie()) == """
@@ -771,6 +768,40 @@ defmodule ExceptionTest do
              Attempted function clauses (showing 5 out of 5):
 
                  def fetch(-%module{} = container-, key)
+             """
+    end
+
+    test "FunctionClauseError with blame and more than 10 clauses" do
+      {exception, _} =
+        Exception.blame(:error, :function_clause, [
+          {Macro, :to_string, [:invalid, :invalid], []}
+        ])
+
+      assert message(exception) =~ """
+             no function clause matching in Macro.to_string/2
+
+             The following arguments were given to Macro.to_string/2:
+
+                 # 1
+                 :invalid
+
+                 # 2
+                 :invalid
+
+             Attempted function clauses (showing 10 out of 25):
+
+                 def to_string(-{var, _, context} = ast-, fun) when -is_atom(var)- and -is_atom(context)-
+                 def to_string(-{:__aliases__, _, refs} = ast-, fun)
+                 def to_string(-{:__block__, _, [expr]} = ast-, fun)
+                 def to_string(-{:__block__, _, _} = ast-, fun)
+                 def to_string(-{:<<>>, _, parts} = ast-, fun)
+                 def to_string(-{:{}, _, args} = ast-, fun)
+                 def to_string(-{:%{}, _, args} = ast-, fun)
+                 def to_string(-{:%, _, [struct_name, map]} = ast-, fun)
+                 def to_string(-{:fn, _, [{:->, _, [_, tuple]}] = arrow} = ast-, fun) when -not(is_tuple(tuple))- or -elem(tuple, 0) != :__block__-
+                 def to_string(-{:fn, _, [{:->, _, _}] = block} = ast-, fun)
+                 ...
+                 (15 clauses not shown)
              """
     end
 

@@ -18,7 +18,7 @@ defmodule IEx.Autocomplete do
   The expansion logic.
 
   Some of the expansion has to be use the current shell
-  environemnt, which is found via the broker.
+  environment, which is found via the broker.
   """
   def expand(expr, server \\ IEx.Broker)
 
@@ -128,7 +128,7 @@ defmodule IEx.Autocomplete do
   defp expand_custom([?. | expr], server, fun) do
     case Code.string_to_quoted(reduce(expr)) do
       {:ok, atom} when is_atom(atom) ->
-        no()
+        expand_elixir_module_custom(atom, "", fun)
 
       {:ok, {:__aliases__, _, [h | _] = list}} when is_atom(h) ->
         case expand_alias(list, server) do
@@ -165,6 +165,9 @@ defmodule IEx.Autocomplete do
           :error ->
             no()
         end
+
+      {:ok, {{:., _, [module, type]}, _, []}} when is_atom(type) ->
+        expand_elixir_module_custom(module, Atom.to_string(type), fun)
 
       _ ->
         no()
@@ -440,28 +443,37 @@ defmodule IEx.Autocomplete do
   end
 
   defp get_module_types(mod) do
-    cond do
-      not ensure_loaded?(mod) ->
-        []
+    if ensure_loaded?(mod) do
+      case Code.Typespec.fetch_types(mod) do
+        {:ok, types} ->
+          for {kind, {name, _, args}} <- types,
+              kind in [:type, :opaque] do
+            {name, length(args)}
+          end
 
-      docs = get_docs(mod, [:type]) ->
-        Enum.map(docs, &extract_name_and_arity/1)
-
-      true ->
-        exports(mod)
+        :error ->
+          []
+      end
+    else
+      []
     end
   end
 
   defp get_module_callbacks(mod) do
-    cond do
-      not ensure_loaded?(mod) ->
-        []
+    if ensure_loaded?(mod) do
+      case Code.Typespec.fetch_callbacks(mod) do
+        {:ok, callbacks} ->
+          for {name_arity, _} <- callbacks do
+            {_kind, name, arity} = IEx.Introspection.translate_callback_name_arity(name_arity)
 
-      docs = get_docs(mod, [:callback, :macrocallback]) ->
-        Enum.map(docs, &extract_name_and_arity/1)
+            {name, arity}
+          end
 
-      true ->
-        exports(mod)
+        :error ->
+          []
+      end
+    else
+      []
     end
   end
 
@@ -474,8 +486,6 @@ defmodule IEx.Autocomplete do
         nil
     end
   end
-
-  defp extract_name_and_arity({{_, name, arity}, _, _, _, _}), do: {name, arity}
 
   defp default_arg_functions_with_doc_false(docs) do
     for {{_, fun_name, arity}, _, _, :hidden, %{defaults: count}} <- docs,

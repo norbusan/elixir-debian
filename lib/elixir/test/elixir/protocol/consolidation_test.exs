@@ -3,30 +3,12 @@ Code.require_file("../test_helper.exs", __DIR__)
 path = Path.expand("../../ebin", __DIR__)
 File.mkdir_p!(path)
 
-compile = fn {:module, module, binary, _} ->
-  File.write!("#{path}/#{module}.beam", binary)
-end
+files = Path.wildcard(PathHelpers.fixture_path("consolidation/*"))
+Kernel.ParallelCompiler.compile_to_path(files, path)
 
 defmodule Protocol.ConsolidationTest do
-  use ExUnit.Case, async: true
-
-  compile.(
-    defprotocol Sample do
-      @type t :: any
-      @doc "Ok"
-      @deprecated "Reason"
-      @spec ok(t) :: boolean
-      def ok(term)
-    end
-  )
-
-  compile.(
-    defprotocol WithAny do
-      @fallback_to_any true
-      @doc "Ok"
-      def ok(term)
-    end
-  )
+  use ExUnit.Case, asnyc: true
+  alias Protocol.ConsolidationTest.{Sample, WithAny}
 
   defimpl WithAny, for: Map do
     def ok(map) do
@@ -49,6 +31,8 @@ defmodule Protocol.ConsolidationTest do
     defstruct a: 0, b: 0
 
     defimpl Sample do
+      @compile {:no_warn_undefined, Unknown}
+
       def ok(struct) do
         Unknown.undefined(struct)
       end
@@ -86,8 +70,8 @@ defmodule Protocol.ConsolidationTest do
 
     assert output =~ ~r"the .+WithAny protocol has already been consolidated"
   after
-    :code.purge(WithAny.Atom)
-    :code.delete(WithAny.Atom)
+    :code.purge(WithAny.Integer)
+    :code.delete(WithAny.Integer)
   end
 
   test "consolidated implementations without any" do
@@ -127,12 +111,14 @@ defmodule Protocol.ConsolidationTest do
     assert {{:function, :ok, 1}, _, ["ok(term)"], %{"en" => "Ok"}, _} = ok_doc
   end
 
-  test "consolidation keeps deprecated" do
+  test "consolidation keeps chunks" do
     deprecated = [{{:ok, 1}, "Reason"}]
     assert deprecated == Sample.__info__(:deprecated)
 
-    {:ok, {Sample, [{'ExDp', deprecated_bin}]}} = :beam_lib.chunks(@sample_binary, ['ExDp'])
-    assert {:elixir_deprecated_v1, deprecated} == :erlang.binary_to_term(deprecated_bin)
+    {:ok, {Sample, [{'ExCk', check_bin}]}} = :beam_lib.chunks(@sample_binary, ['ExCk'])
+    assert {:elixir_checker_v1, contents} = :erlang.binary_to_term(check_bin)
+    export_info = %{deprecated_reason: "Reason", kind: :def}
+    assert {{:ok, 1}, export_info} in contents.exports
   end
 
   test "consolidation keeps source" do
@@ -163,8 +149,14 @@ defmodule Protocol.ConsolidationTest do
     assert Inspect in protos
   end
 
-  test "consolidation extracts implementations" do
+  test "consolidation extracts implementations with charlist path" do
     protos = Protocol.extract_impls(Enumerable, [:code.lib_dir(:elixir, :ebin)])
+    assert List in protos
+    assert Function in protos
+  end
+
+  test "consolidation extracts implementations with binary path" do
+    protos = Protocol.extract_impls(Enumerable, [Application.app_dir(:elixir, "ebin")])
     assert List in protos
     assert Function in protos
   end

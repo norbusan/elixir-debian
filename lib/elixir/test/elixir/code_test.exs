@@ -8,7 +8,7 @@ defmodule CodeTest do
 
   def genmodule(name) do
     defmodule name do
-      Kernel.LexicalTracker.remote_references(__ENV__.lexical_tracker)
+      Kernel.LexicalTracker.references(__ENV__.lexical_tracker)
     end
   end
 
@@ -21,7 +21,7 @@ defmodule CodeTest do
 
   Code.eval_quoted(contents, [], file: "sample.ex", line: 13)
 
-  describe "eval_string/1-3" do
+  describe "eval_string/1,2,3" do
     test "correctly evaluates a string of code" do
       assert Code.eval_string("1 + 2") == {3, []}
       assert Code.eval_string("two = 1 + 1") == {2, [two: 2]}
@@ -64,6 +64,20 @@ defmodule CodeTest do
           assert Enum.any?(__STACKTRACE__, &(elem(&1, 0) == __MODULE__))
       end
     end
+
+    test "raises streamlined argument errors" do
+      assert_raise ArgumentError,
+                   ~r"argument error while evaluating at line 1",
+                   fn -> Code.eval_string("a <> b", a: :a, b: :b) end
+
+      assert_raise ArgumentError,
+                   ~r"argument error while evaluating example.ex at line 1",
+                   fn -> Code.eval_string("a <> b", [a: :a, b: :b], file: "example.ex") end
+
+      assert_raise ArgumentError,
+                   ~r"argument error while evaluating example.ex between lines 1 and 2",
+                   fn -> Code.eval_string("a <>\nb", [a: :a, b: :b], file: "example.ex") end
+    end
   end
 
   test "eval_quoted/1" do
@@ -89,6 +103,21 @@ defmodule CodeTest do
   test "compile_file/1" do
     assert Code.compile_file(fixture_path("code_sample.exs")) == []
     refute fixture_path("code_sample.exs") in Code.required_files()
+
+    assert [{CompileSample, binary}] = Code.compile_file(fixture_path("compile_sample.ex"))
+    assert is_binary(binary)
+  after
+    :code.purge(CompileSample)
+    :code.delete(CompileSample)
+  end
+
+  test "compile_file/1 also emits checker warnings" do
+    output =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        Code.compile_file(fixture_path("checker_warning.exs"))
+      end)
+
+    assert output =~ "incompatible types"
   end
 
   test "require_file/1" do
@@ -99,8 +128,13 @@ defmodule CodeTest do
     Code.unrequire_files([fixture_path("code_sample.exs")])
     refute fixture_path("code_sample.exs") in Code.required_files()
     assert Code.require_file(fixture_path("code_sample.exs")) != nil
+
+    assert [{CompileSample, binary}] = Code.require_file(fixture_path("compile_sample.ex"))
+    assert is_binary(binary)
   after
-    Code.unrequire_files([fixture_path("code_sample.exs")])
+    Code.unrequire_files([fixture_path("code_sample.exs"), fixture_path("compile_sample.ex")])
+    :code.purge(CompileSample)
+    :code.delete(CompileSample)
   end
 
   describe "string_to_quoted/2" do
@@ -213,69 +247,31 @@ defmodule CodeTest do
         Code.string_to_quoted!("1 +")
       end
     end
-  end
 
-  describe "string_to_quoted/2 with :formatter_metadata (private)" do
-    test "adds terminator information to sigils" do
-      string_to_quoted = &Code.string_to_quoted!(&1, formatter_metadata: true)
+    test "delimiter information for sigils is included" do
+      string_to_quoted = &Code.string_to_quoted!(&1, token_metadata: false)
 
       assert string_to_quoted.("~r/foo/") ==
-               {:sigil_r, [terminator: "/", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
+               {:sigil_r, [delimiter: "/", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
 
       assert string_to_quoted.("~r[foo]") ==
-               {:sigil_r, [terminator: "[", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
+               {:sigil_r, [delimiter: "[", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
 
       assert string_to_quoted.("~r\"foo\"") ==
-               {:sigil_r, [terminator: "\"", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
+               {:sigil_r, [delimiter: "\"", line: 1], [{:<<>>, [line: 1], ["foo"]}, []]}
 
-      meta = [terminator: "\"\"\"", line: 1]
+      meta = [delimiter: "\"\"\"", line: 1]
       args = {:sigil_S, meta, [{:<<>>, [line: 1], ["sigil heredoc\n"]}, []]}
       assert string_to_quoted.("~S\"\"\"\nsigil heredoc\n\"\"\"") == args
 
-      meta = [terminator: "'''", line: 1]
+      meta = [delimiter: "'''", line: 1]
       args = {:sigil_S, meta, [{:<<>>, [line: 1], ["sigil heredoc\n"]}, []]}
       assert string_to_quoted.("~S'''\nsigil heredoc\n'''") == args
     end
+  end
 
-    test "wraps literals in blocks when :formatter_metadata (private) is given" do
-      string_to_quoted = &Code.string_to_quoted!(&1, formatter_metadata: true)
-
-      assert string_to_quoted.(~s("one")) == {:__block__, [format: :string, line: 1], ["one"]}
-      assert string_to_quoted.("'one'") == {:__block__, [format: :charlist, line: 1], ['one']}
-      assert string_to_quoted.("?é") == {:__block__, [original: '?é', line: 1], [233]}
-      assert string_to_quoted.("0b10") == {:__block__, [original: '0b10', line: 1], [2]}
-      assert string_to_quoted.("12") == {:__block__, [original: '12', line: 1], [12]}
-      assert string_to_quoted.("0o123") == {:__block__, [original: '0o123', line: 1], [83]}
-      assert string_to_quoted.("0xEF") == {:__block__, [original: '0xEF', line: 1], [239]}
-      assert string_to_quoted.("12.3") == {:__block__, [original: '12.3', line: 1], [12.3]}
-      assert string_to_quoted.("nil") == {:__block__, [line: 1], [nil]}
-      assert string_to_quoted.(":one") == {:__block__, [line: 1], [:one]}
-
-      args = [[{:__block__, [original: '1', line: 1], [1]}]]
-
-      assert string_to_quoted.("[1]") ==
-               {:__block__, [eol: false, closing: [line: 1], line: 1], args}
-
-      args = [{{:__block__, [line: 1], [:ok]}, {:__block__, [line: 1], [:test]}}]
-
-      assert string_to_quoted.("{:ok, :test}") ==
-               {:__block__, [eol: false, closing: [line: 1], line: 1], args}
-
-      assert string_to_quoted.(~s("""\nhello\n""")) ==
-               {:__block__, [format: :bin_heredoc, line: 1], ["hello\n"]}
-
-      assert string_to_quoted.("'''\nhello\n'''") ==
-               {:__block__, [format: :list_heredoc, line: 1], ['hello\n']}
-
-      left = {:__block__, [original: '1', line: 1, closing: [line: 1], line: 1], [1]}
-      right = {:__block__, [format: :string, line: 1], ["hello"]}
-      args = [{:->, [line: 1], [[left], right]}]
-
-      assert string_to_quoted.(~s[fn (1) -> "hello" end]) ==
-               {:fn, [closing: [line: 1], line: 1], args}
-    end
-
-    test "adds newlines information to blocks when :formatter_metadata (private) is given" do
+  describe "string_to_quoted/2 with :token_metadata" do
+    test "adds end_of_expression information to blocks" do
       file = """
       one();two()
       three()
@@ -287,14 +283,110 @@ defmodule CodeTest do
       """
 
       args = [
-        {:one, [eol: false, closing: [line: 1], line: 1], []},
-        {:two, [newlines: 0, eol: false, closing: [line: 1], line: 1], []},
-        {:three, [newlines: 1, eol: false, closing: [line: 2], line: 2], []},
-        {:four, [newlines: 2, eol: false, closing: [line: 4], line: 4], []},
-        {:five, [newlines: 3, eol: false, closing: [line: 7], line: 7], []}
+        {:one,
+         [
+           end_of_expression: [newlines: 0, line: 1, column: 6],
+           closing: [line: 1, column: 5],
+           line: 1,
+           column: 1
+         ], []},
+        {:two,
+         [
+           end_of_expression: [newlines: 1, line: 1, column: 12],
+           closing: [line: 1, column: 11],
+           line: 1,
+           column: 7
+         ], []},
+        {:three,
+         [
+           end_of_expression: [newlines: 2, line: 2, column: 8],
+           closing: [line: 2, column: 7],
+           line: 2,
+           column: 1
+         ], []},
+        {:four,
+         [
+           end_of_expression: [newlines: 3, line: 4, column: 7],
+           closing: [line: 4, column: 6],
+           line: 4,
+           column: 1
+         ], []},
+        {:five, [closing: [line: 7, column: 6], line: 7, column: 1], []}
       ]
 
-      assert Code.string_to_quoted!(file, formatter_metadata: true) == {:__block__, [], args}
+      assert Code.string_to_quoted!(file, token_metadata: true, columns: true) ==
+               {:__block__, [], args}
+    end
+
+    test "adds pairing information" do
+      string_to_quoted = &Code.string_to_quoted!(&1, token_metadata: true)
+
+      assert string_to_quoted.("foo") == {:foo, [line: 1], nil}
+      assert string_to_quoted.("foo()") == {:foo, [closing: [line: 1], line: 1], []}
+
+      assert string_to_quoted.("foo(\n)") ==
+               {:foo, [newlines: 1, closing: [line: 2], line: 1], []}
+
+      assert string_to_quoted.("%{\n}") == {:%{}, [newlines: 1, closing: [line: 2], line: 1], []}
+
+      assert string_to_quoted.("foo(\n) do\nend") ==
+               {:foo, [do: [line: 2], end: [line: 3], newlines: 1, closing: [line: 2], line: 1],
+                [[do: {:__block__, [], []}]]}
+    end
+  end
+
+  describe "string_to_quoted/2 with :literal_encoder" do
+    test "wraps literals in blocks" do
+      opts = [literal_encoder: &{:ok, {:__block__, &2, [&1]}}, token_metadata: true]
+      string_to_quoted = &Code.string_to_quoted!(&1, opts)
+
+      assert string_to_quoted.(~s("one")) == {:__block__, [delimiter: "\"", line: 1], ["one"]}
+      assert string_to_quoted.("'one'") == {:__block__, [delimiter: "'", line: 1], ['one']}
+      assert string_to_quoted.("?é") == {:__block__, [token: "?é", line: 1], [233]}
+      assert string_to_quoted.("0b10") == {:__block__, [token: "0b10", line: 1], [2]}
+      assert string_to_quoted.("12") == {:__block__, [token: "12", line: 1], [12]}
+      assert string_to_quoted.("0o123") == {:__block__, [token: "0o123", line: 1], [83]}
+      assert string_to_quoted.("0xEF") == {:__block__, [token: "0xEF", line: 1], [239]}
+      assert string_to_quoted.("12.3") == {:__block__, [token: "12.3", line: 1], [12.3]}
+      assert string_to_quoted.("nil") == {:__block__, [line: 1], [nil]}
+      assert string_to_quoted.(":one") == {:__block__, [line: 1], [:one]}
+
+      assert string_to_quoted.("[one: :two]") == {
+               :__block__,
+               [{:closing, [line: 1]}, {:line, 1}],
+               [
+                 [
+                   {{:__block__, [format: :keyword, line: 1], [:one]},
+                    {:__block__, [line: 1], [:two]}}
+                 ]
+               ]
+             }
+
+      assert string_to_quoted.("[1]") ==
+               {:__block__, [closing: [line: 1], line: 1],
+                [[{:__block__, [token: "1", line: 1], [1]}]]}
+
+      assert string_to_quoted.(~s("""\nhello\n""")) ==
+               {:__block__, [delimiter: ~s["""], line: 1], ["hello\n"]}
+
+      assert string_to_quoted.("'''\nhello\n'''") ==
+               {:__block__, [delimiter: ~s['''], line: 1], ['hello\n']}
+
+      assert string_to_quoted.(~s[fn (1) -> "hello" end]) ==
+               {:fn, [closing: [line: 1], line: 1],
+                [
+                  {:->, [line: 1],
+                   [
+                     [{:__block__, [token: "1", line: 1, closing: [line: 1], line: 1], [1]}],
+                     {:__block__, [delimiter: "\"", line: 1], ["hello"]}
+                   ]}
+                ]}
+    end
+
+    test "raises on bad literal" do
+      assert_raise SyntaxError, "nofile:1: oops: literal", fn ->
+        Code.string_to_quoted!(":one", literal_encoder: fn _, _ -> {:error, "oops"} end)
+      end
     end
   end
 
@@ -330,22 +422,22 @@ defmodule CodeTest do
     refute Code.ensure_loaded?(Code.NoFile)
   end
 
-  test "ensure_compiled?/1" do
-    assert Code.ensure_compiled?(__MODULE__)
-    refute Code.ensure_compiled?(Code.NoFile)
+  test "ensure_compiled/1" do
+    assert Code.ensure_compiled(__MODULE__) == {:module, __MODULE__}
+    assert Code.ensure_compiled(Code.NoFile) == {:error, :nofile}
   end
 
-  test "compiler_options/1 validates options" do
+  test "put_compiler_option/2 validates options" do
     message = "unknown compiler option: :not_a_valid_option"
 
     assert_raise RuntimeError, message, fn ->
-      Code.compiler_options(not_a_valid_option: :foo)
+      Code.put_compiler_option(:not_a_valid_option, :foo)
     end
 
     message = "compiler option :debug_info should be a boolean, got: :not_a_boolean"
 
     assert_raise RuntimeError, message, fn ->
-      Code.compiler_options(debug_info: :not_a_boolean)
+      Code.put_compiler_option(:debug_info, :not_a_boolean)
     end
   end
 end

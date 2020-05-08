@@ -3,10 +3,84 @@ Code.require_file("../test_helper.exs", __DIR__)
 defmodule Kernel.ExpansionTarget do
   defmacro seventeen, do: 17
   defmacro bar, do: "bar"
+
+  defmacro message_hello(arg) do
+    send(self(), :hello)
+    arg
+  end
 end
 
 defmodule Kernel.ExpansionTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+
+  defmacrop var_ver(var, version) do
+    quote do
+      {unquote(var), [version: unquote(version)], __MODULE__}
+    end
+  end
+
+  test "tracks variable version" do
+    assert {:__block__, _, [{:=, _, [var_ver(:x, 0), 0]}, {:=, _, [_, var_ver(:x, 0)]}]} =
+             expand_with_version(
+               quote do
+                 x = 0
+                 _ = x
+               end
+             )
+
+    assert {:__block__, _,
+            [
+              {:=, _, [var_ver(:x, 0), 0]},
+              {:=, _, [_, var_ver(:x, 0)]},
+              {:=, _, [var_ver(:x, 1), 1]},
+              {:=, _, [_, var_ver(:x, 1)]}
+            ]} =
+             expand_with_version(
+               quote do
+                 x = 0
+                 _ = x
+                 x = 1
+                 _ = x
+               end
+             )
+
+    assert {:__block__, _,
+            [
+              {:=, _, [var_ver(:x, 0), 0]},
+              {:fn, _, [{:->, _, [[var_ver(:x, 1)], {:=, _, [var_ver(:x, 2), 2]}]}]},
+              {:=, _, [_, var_ver(:x, 0)]},
+              {:=, _, [var_ver(:x, 3), 3]}
+            ]} =
+             expand_with_version(
+               quote do
+                 x = 0
+                 fn x -> x = 2 end
+                 _ = x
+                 x = 3
+               end
+             )
+
+    assert {:__block__, _,
+            [
+              {:=, _, [var_ver(:x, 0), 0]},
+              {:case, _, [:foo, [do: [{:->, _, [[var_ver(:x, 1)], var_ver(:x, 1)]}]]]},
+              {:=, _, [_, var_ver(:x, 0)]},
+              {:=, _, [var_ver(:x, 2), 2]}
+            ]} =
+             expand_with_version(
+               quote do
+                 x = 0
+                 case(:foo, do: (x -> x))
+                 _ = x
+                 x = 2
+               end
+             )
+  end
+
+  defp expand_with_version(expr) do
+    env = :elixir_env.reset_vars(__ENV__)
+    elem(:elixir_expand.expand(expr, env), 0)
+  end
 
   describe "__block__" do
     test "expands to nil when empty" do
@@ -474,13 +548,13 @@ defmodule Kernel.ExpansionTest do
       assert expand(quote(do: quote(do: hello))) == {:{}, [], [:hello, [], __MODULE__]}
     end
 
-    test "raises if the :context option is nil or not a compile-time module" do
-      assert_raise CompileError, ~r"invalid :context for quote, .*, got: :erlang\.self\(\)", fn ->
-        expand(quote(do: quote(context: self(), do: :ok)))
+    test "raises if the :bind_quoted option is invalid" do
+      assert_raise CompileError, ~r"invalid :bind_quoted for quote", fn ->
+        expand(quote(do: quote(bind_quoted: self(), do: :ok)))
       end
 
-      assert_raise CompileError, ~r"invalid :context for quote, .*, got: nil", fn ->
-        expand(quote(do: quote(context: nil, do: :ok)))
+      assert_raise CompileError, ~r"invalid :bind_quoted for quote", fn ->
+        expand(quote(do: quote(bind_quoted: [{1, 2}], do: :ok)))
       end
     end
 
@@ -815,6 +889,10 @@ defmodule Kernel.ExpansionTest do
       assert_raise CompileError, ~r"expected -> clauses for :else in \"with\"", fn ->
         expand(quote(do: with(_ <- true, do: :ok, else: :error)))
       end
+
+      assert_raise CompileError, ~r"expected -> clauses for :else in \"with\"", fn ->
+        expand(quote(do: with(_ <- true, do: :ok, else: [])))
+      end
     end
 
     test "fails for invalid options" do
@@ -838,10 +916,10 @@ defmodule Kernel.ExpansionTest do
 
     test "expands remotes" do
       assert expand(quote(do: &List.flatten/2)) ==
-               quote(do: &:"Elixir.List".flatten/2) |> clean_meta([:import, :context])
+               quote(do: &:"Elixir.List".flatten/2) |> clean_meta([:import, :context, :no_parens])
 
       assert expand(quote(do: &Kernel.is_atom/1)) ==
-               quote(do: &:erlang.is_atom/1) |> clean_meta([:import, :context])
+               quote(do: &:erlang.is_atom/1) |> clean_meta([:import, :context, :no_parens])
     end
 
     test "expands macros" do
@@ -1118,16 +1196,18 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "expects one argument in clauses" do
-      assert_raise CompileError, ~r"expected one arg for :do clauses \(->\) in \"cond\"", fn ->
-        code =
-          quote do
-            cond do
-              _, _ -> :ok
-            end
-          end
+      assert_raise CompileError,
+                   ~r"expected one argument for :do clauses \(->\) in \"cond\"",
+                   fn ->
+                     code =
+                       quote do
+                         cond do
+                           _, _ -> :ok
+                         end
+                       end
 
-        expand(code)
-      end
+                     expand(code)
+                   end
     end
 
     test "raises for invalid arguments" do
@@ -1301,16 +1381,18 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "expects exactly one argument in clauses" do
-      assert_raise CompileError, ~r"expected one arg for :do clauses \(->\) in \"case\"", fn ->
-        code =
-          quote do
-            case e do
-              _, _ -> :ok
-            end
-          end
+      assert_raise CompileError,
+                   ~r"expected one argument for :do clauses \(->\) in \"case\"",
+                   fn ->
+                     code =
+                       quote do
+                         case e do
+                           _, _ -> :ok
+                         end
+                       end
 
-        expand(code)
-      end
+                     expand(code)
+                   end
     end
 
     test "fails with invalid arguments" do
@@ -1513,18 +1595,20 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "expects on argument for do/after clauses" do
-      assert_raise CompileError, ~r"expected one arg for :do clauses \(->\) in \"receive\"", fn ->
-        code =
-          quote do
-            receive do
-              _, _ -> :ok
-            end
-          end
+      assert_raise CompileError,
+                   ~r"expected one argument for :do clauses \(->\) in \"receive\"",
+                   fn ->
+                     code =
+                       quote do
+                         receive do
+                           _, _ -> :ok
+                         end
+                       end
 
-        expand(code)
-      end
+                     expand(code)
+                   end
 
-      message = ~r"expected one arg for :after clauses \(->\) in \"receive\""
+      message = ~r"expected one argument for :after clauses \(->\) in \"receive\""
 
       assert_raise CompileError, message, fn ->
         code =
@@ -1780,18 +1864,20 @@ defmodule Kernel.ExpansionTest do
     end
 
     test "expects exactly one argument in rescue clauses" do
-      assert_raise CompileError, ~r"expected one arg for :rescue clauses \(->\) in \"try\"", fn ->
-        code =
-          quote do
-            try do
-              x
-            rescue
-              _, _ -> :ok
-            end
-          end
+      assert_raise CompileError,
+                   ~r"expected one argument for :rescue clauses \(->\) in \"try\"",
+                   fn ->
+                     code =
+                       quote do
+                         try do
+                           x
+                         rescue
+                           _, _ -> :ok
+                         end
+                       end
 
-        expand(code)
-      end
+                     expand(code)
+                   end
     end
 
     test "expects an alias, a variable, or \"var in [alias]\" as the argument of rescue clauses" do
@@ -1853,6 +1939,19 @@ defmodule Kernel.ExpansionTest do
         expand(code)
       end
 
+      assert_raise CompileError, ~r"expected -> clauses for :rescue in \"try\"", fn ->
+        code =
+          quote do
+            try do
+              e
+            rescue
+              []
+            end
+          end
+
+        expand(code)
+      end
+
       assert_raise CompileError, ~r"expected -> clauses for :catch in \"try\"", fn ->
         code =
           quote do
@@ -1873,6 +1972,19 @@ defmodule Kernel.ExpansionTest do
               e
             catch
               [:not, :clauses]
+            end
+          end
+
+        expand(code)
+      end
+
+      assert_raise CompileError, ~r"expected -> clauses for :catch in \"try\"", fn ->
+        code =
+          quote do
+            try do
+              e
+            catch
+              []
             end
           end
 
@@ -1903,6 +2015,21 @@ defmodule Kernel.ExpansionTest do
               _ -> :ok
             else
               [:not, :clauses]
+            end
+          end
+
+        expand(code)
+      end
+
+      assert_raise CompileError, ~r"expected -> clauses for :else in \"try\"", fn ->
+        code =
+          quote do
+            try do
+              e
+            catch
+              _ -> :ok
+            else
+              []
             end
           end
 
@@ -2017,6 +2144,14 @@ defmodule Kernel.ExpansionTest do
     test "inlines binaries inside interpolation" do
       import Kernel.ExpansionTarget
 
+      # Check expansion happens only once
+      assert expand(quote(do: "foo#{message_hello("bar")}")) |> clean_meta([:alignment]) ==
+               quote(do: <<"foo"::binary(), "bar"::binary()>>)
+
+      assert_received :hello
+      refute_received :hello
+
+      # And it also works in match
       assert expand(quote(do: "foo#{bar()}" = "foobar")) |> clean_meta([:alignment]) ==
                quote(do: <<"foo"::binary(), "bar"::binary()>> = "foobar")
     end
@@ -2375,7 +2510,7 @@ defmodule Kernel.ExpansionTest do
       expand(quote(do: unquote({1, 2, 3})))
     end
 
-    assert_raise CompileError, ~r"invalid quoted expression: #Function<", fn ->
+    assert_raise CompileError, ~r"invalid quoted expression: #Function\<", fn ->
       expand(quote(do: unquote({:sample, fn -> nil end})))
     end
 
@@ -2409,11 +2544,11 @@ defmodule Kernel.ExpansionTest do
       expand(quote(do: foo(1)(2)))
     end
 
-    assert_raise CompileError, ~r"invalid call 1\.foo\(\)", fn ->
+    assert_raise CompileError, ~r"invalid call 1\.foo", fn ->
       expand(quote(do: 1.foo))
     end
 
-    assert_raise CompileError, ~r"invalid call 0\.foo\(\)", fn ->
+    assert_raise CompileError, ~r"invalid call 0\.foo", fn ->
       expand(quote(do: __ENV__.line.foo))
     end
 

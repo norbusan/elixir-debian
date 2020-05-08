@@ -3,51 +3,47 @@
 -import(elixir_errors, [form_error/4]).
 -include("elixir.hrl").
 
+expand_match(Expr, {E, OriginalE}) ->
+  {EExpr, EE} = elixir_expand:expand(Expr, E),
+  {EExpr, {EE, OriginalE}}.
+
 expand(Meta, Args, E, RequireSize) ->
   case ?key(E, context) of
     match ->
-      {EArgs, Alignment, EE} =
-        expand(Meta, fun elixir_expand:expand/2, Args, [], E, E, 0, RequireSize),
+      {EArgs, Alignment, {EA, _}} =
+        expand(Meta, fun expand_match/2, Args, [], {E, E}, 0, RequireSize),
 
       case find_match(EArgs) of
         false ->
-          {{'<<>>', [{alignment, Alignment} | Meta], EArgs}, EE};
+          {{'<<>>', [{alignment, Alignment} | Meta], EArgs}, EA};
         Match ->
-          form_error(Meta, EE, ?MODULE, {nested_match, Match})
+          form_error(Meta, EA, ?MODULE, {nested_match, Match})
       end;
     _ ->
-      {EArgs, Alignment, {_EC, EV}} =
-        expand(Meta, fun elixir_expand:expand_arg/2, Args, [], {E, E}, E, 0, RequireSize),
-      {{'<<>>', [{alignment, Alignment} | Meta], EArgs}, EV}
+      PairE = {elixir_env:prepare_write(E), E},
+
+      {EArgs, Alignment, {EA, _}} =
+        expand(Meta, fun elixir_expand:expand_arg/2, Args, [], PairE, 0, RequireSize),
+
+      {{'<<>>', [{alignment, Alignment} | Meta], EArgs}, elixir_env:close_write(EA, E)}
   end.
 
-expand(_BitstrMeta, _Fun, [], Acc, E, _OriginalE, Alignment, _RequireSize) ->
+expand(_BitstrMeta, _Fun, [], Acc, E, Alignment, _RequireSize) ->
   {lists:reverse(Acc), Alignment, E};
-expand(BitstrMeta, Fun, [{'::', Meta, [Left, Right]} | T], Acc, E, OriginalE, Alignment, RequireSize) ->
-  {ELeft, EL} = expand_expr(Meta, Left, Fun, E),
+expand(BitstrMeta, Fun, [{'::', Meta, [Left, Right]} | T], Acc, E, Alignment, RequireSize) ->
+  {ELeft, {EL, OriginalE}} = expand_expr(Meta, Left, Fun, E),
 
   %% Variables defined outside the binary can be accounted
   %% on subparts, however we can't assign new variables.
-  {EM, MatchSize} =
+  MatchSize =
     case EL of
-      %% expand_arg, no assigns
-      {EC1, _} -> {EC1, false};
-
-      %% expand, revert assigns
-      _ -> {EL#{context := nil, prematch_vars := raise}, T /= []}
+      #{context := match} -> T /= [];
+      _ -> false
     end,
 
   EType = expr_type(ELeft),
-  {ERight, EAlignment, ES} = expand_specs(EType, Meta, Right, EM, OriginalE, RequireSize or MatchSize),
-
-  EE =
-    case EL of
-      %% no assigns, vars are kept separately
-      {EC2, EV2} -> {EC2, elixir_env:mergev(EV2, ES)};
-
-      %% copy only vars on top
-      _ -> elixir_env:mergea(ES, EL)
-    end,
+  {ERight, EAlignment, ES} = expand_specs(EType, Meta, Right, EL, OriginalE, RequireSize or MatchSize),
+  EE = {ES, OriginalE},
 
   EAcc =
     %% If the Etype is a bitstring (which implies a literal <<>>)
@@ -57,23 +53,23 @@ expand(BitstrMeta, Fun, [{'::', Meta, [Left, Right]} | T], Acc, E, OriginalE, Al
       {binary, _, []} when EType == bitstring  ->
         case byte_parts(ELeft) of
           {ok, Parts} -> lists:reverse(Parts, Acc);
-          error -> prepend_unless_bitstring_in_match(EType, Meta, ELeft, ERight, Acc, E)
+          error -> prepend_unless_bitstring_in_match(EType, Meta, ELeft, ERight, Acc, OriginalE)
         end;
       {bitstring, _, []} when EType == bitstring ->
         lists:reverse(element(3, ELeft), Acc);
       _ ->
-        prepend_unless_bitstring_in_match(EType, Meta, ELeft, ERight, Acc, E)
+        prepend_unless_bitstring_in_match(EType, Meta, ELeft, ERight, Acc, OriginalE)
     end,
 
-  expand(BitstrMeta, Fun, T, EAcc, EE, OriginalE, alignment(Alignment, EAlignment), RequireSize);
-expand(BitstrMeta, Fun, [{_, Meta, _} = H | T], Acc, E, OriginalE, Alignment, RequireSize) ->
+  expand(BitstrMeta, Fun, T, EAcc, EE, alignment(Alignment, EAlignment), RequireSize);
+expand(BitstrMeta, Fun, [{_, Meta, _} = H | T], Acc, E, Alignment, RequireSize) ->
   {Expr, ES} = expand_expr(Meta, H, Fun, E),
   {EAcc, EAlignment} = wrap_expr(Expr, Acc),
-  expand(BitstrMeta, Fun, T, EAcc, ES, OriginalE, alignment(Alignment, EAlignment), RequireSize);
-expand(Meta, Fun, [H | T], Acc, E, OriginalE, Alignment, RequireSize) ->
+  expand(BitstrMeta, Fun, T, EAcc, ES, alignment(Alignment, EAlignment), RequireSize);
+expand(Meta, Fun, [H | T], Acc, E, Alignment, RequireSize) ->
   {Expr, ES} = expand_expr(Meta, H, Fun, E),
   {EAcc, EAlignment} = wrap_expr(Expr, Acc),
-  expand(Meta, Fun, T, EAcc, ES, OriginalE, alignment(Alignment, EAlignment), RequireSize).
+  expand(Meta, Fun, T, EAcc, ES, alignment(Alignment, EAlignment), RequireSize).
 
 prepend_unless_bitstring_in_match(Type, Meta, Left, Right, Acc, E) ->
   Expr = {'::', Meta, [Left, Right]},
@@ -81,7 +77,7 @@ prepend_unless_bitstring_in_match(Type, Meta, Left, Right, Acc, E) ->
   case E of
     #{context := match} when Type == bitstring ->
       form_error(Meta, E, ?MODULE, {unaligned_bitstring_in_match, Expr});
-    _ ->
+    #{} ->
       [Expr | Acc]
   end.
 
@@ -136,27 +132,22 @@ compute_alignment(_, _, _) -> unknown.
 
 %% Expands the expression of a bitstring, that is, the LHS of :: or
 %% an argument of the bitstring (such as "foo" in "<<foo>>").
+%% If we are inside a match/guard, we inline interpolations explicitly,
+%% otherwise they are inlined by elixir_rewrite.erl.
 
-expand_expr(Meta, {{'.', M1, [Mod, to_string]}, M2, [Arg]}, Fun, E)
-    when Mod == 'Elixir.Kernel'; Mod == 'Elixir.String.Chars' ->
+expand_expr(_Meta, {{'.', _, [Mod, to_string]}, _, [Arg]} = AST, Fun, {#{context := Context}, _} = E)
+    when Context /= nil, (Mod == 'Elixir.Kernel') orelse (Mod == 'Elixir.String.Chars') ->
   case Fun(Arg, E) of
     {EBin, EE} when is_binary(EBin) -> {EBin, EE};
-    _ -> do_expand_expr(Meta, {{'.', M1, ['Elixir.String.Chars', to_string]}, M2, [Arg]}, Fun, E)
+    _ -> Fun(AST, E) % Let it raise
   end;
 expand_expr(Meta, Component, Fun, E) ->
-  do_expand_expr(Meta, Component, Fun, E).
-
-do_expand_expr(Meta, Component, Fun, E) ->
   case Fun(Component, E) of
-    {EComponent, _} when is_list(EComponent); is_atom(EComponent) ->
-      ErrorE = env_for_error(E),
+    {EComponent, {ErrorE, _}} when is_list(EComponent); is_atom(EComponent) ->
       form_error(Meta, ErrorE, ?MODULE, {invalid_literal, EComponent});
     {_, _} = Expanded ->
       Expanded
   end.
-
-env_for_error({E, _}) -> E;
-env_for_error(E) -> E.
 
 %% Expands and normalizes types of a bitstring.
 
@@ -196,7 +187,7 @@ type(Meta, Other, Value, E) ->
 expand_each_spec(Meta, [{Expr, _, Args} = H | T], Map, E, OriginalE) when is_atom(Expr) ->
   case validate_spec(Expr, Args) of
     {Key, Arg} ->
-      {Value, EE} = expand_spec_arg(Arg, E),
+      {Value, EE} = expand_spec_arg(Arg, E, OriginalE),
       validate_spec_arg(Meta, Key, Value, EE, OriginalE),
 
       case maps:get(Key, Map) of
@@ -251,8 +242,13 @@ validate_spec(signed, [])    -> {sign, signed};
 validate_spec(unsigned, [])  -> {sign, unsigned};
 validate_spec(_, _)          -> none.
 
-expand_spec_arg(Expr, E) when is_atom(Expr); is_integer(Expr) -> {Expr, E};
-expand_spec_arg(Expr, E) -> elixir_expand:expand(Expr, E).
+expand_spec_arg(Expr, E, _OriginalE) when is_atom(Expr); is_integer(Expr) ->
+  {Expr, E};
+expand_spec_arg(Expr, #{context := match} = E, _OriginalE) ->
+  {EExpr, EE} = elixir_expand:expand(Expr, E#{context := nil, prematch_vars := raise}),
+  {EExpr, EE#{context := match, prematch_vars := ?key(E, prematch_vars)}};
+expand_spec_arg(Expr, E, OriginalE) ->
+  elixir_expand:expand(Expr, elixir_env:reset_read(E, OriginalE)).
 
 validate_spec_arg(Meta, size, Value, E, OriginalE) ->
   case Value of
@@ -276,14 +272,15 @@ validate_spec_arg(_Meta, _Key, _Value, _E, _OriginalE) ->
   ok.
 
 is_valid_spec_arg_var(Var, E, #{context := match} = OriginalE) ->
-  case ?key(OriginalE, prematch_vars) of
-    #{Var := _} ->
-      true;
-    _ ->
-      maps:is_key(Var, ?key(E, current_vars)) andalso
-        not maps:is_key(Var, ?key(OriginalE, current_vars))
+  case OriginalE of
+    #{prematch_vars := {#{Var := _}, _}} -> true;
+    _ -> is_var(Var, E) andalso not is_var(Var, OriginalE)
   end;
-is_valid_spec_arg_var(_Var, _E, _OriginalE) -> true.
+is_valid_spec_arg_var(_Var, _E, _OriginalE) ->
+  true.
+
+is_var(Var, #{current_vars := {Read, _}}) ->
+  maps:is_key(Var, Read).
 
 validate_size_required(Meta, true, default, Type, default, E) when Type == binary; Type == bitstring ->
   form_error(Meta, E, ?MODULE, unsized_binary);

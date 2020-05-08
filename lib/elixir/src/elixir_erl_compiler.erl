@@ -12,7 +12,7 @@ spawn(Fun, Args) ->
       try apply(Fun, Args) of
         Result -> exit({ok, Result})
       catch
-        ?WITH_STACKTRACE(Kind, Reason, Stack)
+        Kind:Reason:Stack ->
           exit({Kind, Reason, Stack})
       end
     end),
@@ -48,8 +48,10 @@ compile(Forms, File, Opts) when is_list(Forms), is_list(Opts), is_binary(File) -
   case erl_to_core(Forms, Opts) of
     {ok, CoreForms, CoreWarnings} ->
       format_warnings(Opts, CoreWarnings),
+      CompileOpts = [?NO_SPAWN_COMPILER_PROCESS, from_core, no_core_prepare,
+                     no_auto_import, return, {source, Source} | Opts],
 
-      case compile:noenv_forms(CoreForms, [?NO_SPAWN_COMPILER_PROCESS, from_core, no_auto_import, return, {source, Source} | Opts]) of
+      case compile:noenv_forms(CoreForms, CompileOpts) of
         {ok, Module, Binary, Warnings} when is_binary(Binary) ->
           format_warnings(Opts, Warnings),
           {Module, Binary};
@@ -125,7 +127,7 @@ custom_format(sys_core_fold, {no_effect, {erlang, F, A}}) ->
   end,
   io_lib:format(Fmt, Args);
 
-%% Rewrite nomatch_guard to be more generic it can happen inside if, unless, etc.
+%% Rewrite nomatch_guard to be more generic it can happen inside if, unless, and the like
 custom_format(sys_core_fold, nomatch_guard) ->
   "this check/guard will always yield the same result";
 
@@ -133,6 +135,14 @@ custom_format(sys_core_fold, nomatch_guard) ->
 custom_format(sys_core_fold, {eval_failure, Error}) ->
   #{'__struct__' := Struct} = 'Elixir.Exception':normalize(error, Error),
   ["this expression will fail with ", elixir_aliases:inspect(Struct)];
+
+custom_format(sys_core_fold, {nomatch_shadow,Line,{ErlName,ErlArity}}) ->
+  {Name, Arity} = elixir_utils:erl_fa_to_elixir_fa(ErlName, ErlArity),
+
+  io_lib:format(
+    "this clause for ~ts/~B cannot match because a previous clause at line ~B always matches",
+    [Name, Arity, Line]
+  );
 
 custom_format([], Desc) ->
   io_lib:format("~p", [Desc]);

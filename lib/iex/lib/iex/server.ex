@@ -36,17 +36,6 @@ defmodule IEx.Server do
     run_without_registration(opts)
   end
 
-  defp run_without_registration(opts) do
-    Process.flag(:trap_exit, true)
-
-    IO.puts(
-      "Interactive Elixir (#{System.version()}) - press Ctrl+C to exit (type h() ENTER for help)"
-    )
-
-    evaluator = start_evaluator(opts)
-    loop(iex_state(opts), evaluator, Process.monitor(evaluator))
-  end
-
   ## Private APIs
 
   # Starts IEx to run directly from the Erlang shell.
@@ -59,6 +48,7 @@ defmodule IEx.Server do
   @doc false
   @spec run_from_shell(keyword, {module, atom, [any]}) :: :ok
   def run_from_shell(opts, {m, f, a}) do
+    opts[:register] && IEx.Broker.register(self())
     Process.flag(:trap_exit, true)
     {pid, ref} = spawn_monitor(m, f, a)
     shell_loop(opts, pid, ref)
@@ -81,7 +71,22 @@ defmodule IEx.Server do
     end
   end
 
+  # Since we want to register only once, this function is the
+  # reentrant point for starting a new shell (instead of run/run_from_shell).
+  defp run_without_registration(opts) do
+    Process.flag(:trap_exit, true)
+    Process.link(Process.group_leader())
+
+    IO.puts(
+      "Interactive Elixir (#{System.version()}) - press Ctrl+C to exit (type h() ENTER for help)"
+    )
+
+    evaluator = start_evaluator(opts)
+    loop(iex_state(opts), evaluator, Process.monitor(evaluator))
+  end
+
   # Starts an evaluator using the provided options.
+  # Made public but undocumented for testing.
   @doc false
   @spec start_evaluator(keyword) :: pid
   def start_evaluator(opts) do
@@ -112,9 +117,15 @@ defmodule IEx.Server do
   defp loop(state, evaluator, evaluator_ref) do
     self_pid = self()
     counter = state.counter
-    prefix = if state.cache != [], do: "...", else: state.prefix
 
-    input = spawn(fn -> io_get(self_pid, prefix, counter) end)
+    {prompt_type, prefix} =
+      if state.cache != [] do
+        {:continuation_prompt, "..."}
+      else
+        {:prompt, state.prefix}
+      end
+
+    input = spawn(fn -> io_get(self_pid, prompt_type, prefix, counter) end)
     wait_input(state, evaluator, evaluator_ref, input)
   end
 
@@ -124,16 +135,18 @@ defmodule IEx.Server do
         send(evaluator, {:eval, self(), code, state})
         wait_eval(state, evaluator, evaluator_ref)
 
-      {:input, ^input, {:error, :interrupted}} ->
-        io_error("** (EXIT) interrupted")
-        loop(%{state | cache: ''}, evaluator, evaluator_ref)
-
       {:input, ^input, :eof} ->
         case state.on_eof do
           :halt -> System.halt(0)
           :stop_evaluator -> stop_evaluator(evaluator, evaluator_ref)
         end
 
+      # Triggered by pressing "i" as the job control switch
+      {:input, ^input, {:error, :interrupted}} ->
+        io_error("** (EXIT) interrupted")
+        loop(%{state | cache: ''}, evaluator, evaluator_ref)
+
+      # Triggered when IO dies while waiting for input
       {:input, ^input, {:error, :terminated}} ->
         stop_evaluator(evaluator, evaluator_ref)
 
@@ -210,6 +223,21 @@ defmodule IEx.Server do
     Process.demonitor(evaluator_ref, [:flush])
     evaluator = start_evaluator([])
     loop(%{state | cache: ''}, evaluator, Process.monitor(evaluator))
+  end
+
+  defp handle_take_over(
+         {:EXIT, pid, reason},
+         state,
+         _evaluator,
+         _evaluator_ref,
+         _input,
+         callback
+       ) do
+    if pid == Process.group_leader() do
+      exit(reason)
+    else
+      callback.(state)
+    end
   end
 
   defp handle_take_over({:respawn, evaluator}, _state, evaluator, evaluator_ref, input, _callback) do
@@ -294,17 +322,17 @@ defmodule IEx.Server do
 
   ## IO
 
-  defp io_get(pid, prefix, counter) do
-    prompt = prompt(prefix, counter)
+  defp io_get(pid, prompt_type, prefix, counter) do
+    prompt = prompt(prompt_type, prefix, counter)
     send(pid, {:input, self(), IO.gets(:stdio, prompt)})
   end
 
-  defp prompt(prefix, counter) do
+  defp prompt(prompt_type, prefix, counter) do
     {mode, prefix} =
       if Node.alive?() do
-        {:alive_prompt, prefix || remote_prefix()}
+        {prompt_mode(prompt_type, :alive), prefix || remote_prefix()}
       else
-        {:default_prompt, prefix || "iex"}
+        {prompt_mode(prompt_type, :default), prefix || "iex"}
       end
 
     prompt =
@@ -315,6 +343,11 @@ defmodule IEx.Server do
 
     prompt <> " "
   end
+
+  defp prompt_mode(:prompt, :default), do: :default_prompt
+  defp prompt_mode(:prompt, :alive), do: :alive_prompt
+  defp prompt_mode(:continuation_prompt, :default), do: :continuation_prompt
+  defp prompt_mode(:continuation_prompt, :alive), do: :alive_continuation_prompt
 
   defp io_error(result) do
     IO.puts(:stdio, IEx.color(:eval_error, result))

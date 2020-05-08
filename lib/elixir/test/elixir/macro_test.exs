@@ -178,17 +178,9 @@ defmodule MacroTest do
       assert Macro.expand_once(quote(do: __ENV__.unknown), env) == quote(do: __ENV__.unknown)
     end
 
-    defmacro local_macro() do
-      :local_macro
-    end
+    defmacro local_macro(), do: raise("ignored")
 
-    test "local macro" do
-      assert Macro.expand_once(quote(do: local_macro), __ENV__) == :local_macro
-    end
-
-    test "checks vars" do
-      local_macro = 1
-      assert local_macro == 1
+    test "vars" do
       expr = {:local_macro, [], nil}
       assert Macro.expand_once(expr, __ENV__) == expr
     end
@@ -296,19 +288,24 @@ defmodule MacroTest do
       assert Macro.to_string(quoted) == "(foo do\n  :ok\nend).bar([1, 2, 3])"
     end
 
+    test "nullary remote call" do
+      assert Macro.to_string(quote do: foo.bar) == "foo.bar"
+      assert Macro.to_string(quote do: foo.bar()) == "foo.bar()"
+    end
+
     test "atom remote call" do
       assert Macro.to_string(quote(do: :foo.bar(1, 2, 3))) == ":foo.bar(1, 2, 3)"
     end
 
     test "remote and fun call" do
-      assert Macro.to_string(quote(do: foo.bar.(1, 2, 3))) == "foo.bar().(1, 2, 3)"
-      assert Macro.to_string(quote(do: foo.bar.([1, 2, 3]))) == "foo.bar().([1, 2, 3])"
+      assert Macro.to_string(quote(do: foo.bar().(1, 2, 3))) == "foo.bar().(1, 2, 3)"
+      assert Macro.to_string(quote(do: foo.bar().([1, 2, 3]))) == "foo.bar().([1, 2, 3])"
     end
 
     test "unusual remote atom fun call" do
       assert Macro.to_string(quote(do: Foo."42"())) == ~s/Foo."42"()/
       assert Macro.to_string(quote(do: Foo."Bar"())) == ~s/Foo."Bar"()/
-      assert Macro.to_string(quote(do: Foo."bar baz"()."")) == ~s/Foo."bar baz"().""()/
+      assert Macro.to_string(quote(do: Foo."bar baz"().""())) == ~s/Foo."bar baz"().""()/
       assert Macro.to_string(quote(do: Foo."%{}"())) == ~s/Foo."%{}"()/
       assert Macro.to_string(quote(do: Foo."..."())) == ~s/Foo."..."()/
     end
@@ -330,17 +327,56 @@ defmodule MacroTest do
 
     test "sigil call" do
       assert Macro.to_string(quote(do: ~r"123")) == ~S/~r"123"/
-      assert Macro.to_string(quote(do: ~r"123"u)) == ~S/~r"123"u/
       assert Macro.to_string(quote(do: ~r"\n123")) == ~S/~r"\\n123"/
+      assert Macro.to_string(quote(do: ~r"12\"3")) == ~S/~r"12\\"3"/
+      assert Macro.to_string(quote(do: ~r/12\/3/u)) == ~S"~r/12\/3/u"
+      assert Macro.to_string(quote(do: ~r{\n123})) == ~S/~r{\\n123}/
+      assert Macro.to_string(quote(do: ~r((1\)(2\)3))) == ~S/~r((1\)(2\)3)/
+      assert Macro.to_string(quote(do: ~r{\n1{1\}23})) == ~S/~r{\\n1{1\}23}/
+      assert Macro.to_string(quote(do: ~r|12\|3|)) == ~S"~r|12\|3|"
 
-      assert Macro.to_string(quote(do: ~r"1#{two}3")) == ~S/~r"1#{two}3"/
-      assert Macro.to_string(quote(do: ~r"1#{two}3"u)) == ~S/~r"1#{two}3"u/
+      assert Macro.to_string(quote(do: ~r[1#{two}3])) == ~S/~r[1#{two}3]/
+      assert Macro.to_string(quote(do: ~r[1[#{two}\]3])) == ~S/~r[1[#{two}\]3]/
+      assert Macro.to_string(quote(do: ~r'1#{two}3'u)) == ~S/~r'1#{two}3'u/
 
       assert Macro.to_string(quote(do: ~R"123")) == ~S/~R"123"/
       assert Macro.to_string(quote(do: ~R"123"u)) == ~S/~R"123"u/
       assert Macro.to_string(quote(do: ~R"\n123")) == ~S/~R"\n123"/
 
       assert Macro.to_string(quote(do: ~S["'(123)'"])) == ~S/~S["'(123)'"]/
+      assert Macro.to_string(quote(do: ~s"#{"foo"}")) == ~S/~s"#{"foo"}"/
+
+      assert Macro.to_string(
+               quote do
+                 ~s"""
+                 "\""foo"\""
+                 """
+               end
+             ) == ~s[~s"""\n"\\""foo"\\""\n"""]
+
+      assert Macro.to_string(
+               quote do
+                 ~s'''
+                 '\''foo'\''
+                 '''
+               end
+             ) == ~s[~s'''\n'\\''foo'\\''\n''']
+
+      assert Macro.to_string(
+               quote do
+                 ~s"""
+                 "\"foo\""
+                 """
+               end
+             ) == ~s[~s"""\n"\\"foo\\""\n"""]
+
+      assert Macro.to_string(
+               quote do
+                 ~s'''
+                 '\"foo\"'
+                 '''
+               end
+             ) == ~s[~s'''\n'\\"foo\\"'\n''']
 
       assert Macro.to_string(
                quote do
@@ -669,6 +705,12 @@ defmodule MacroTest do
       assert Macro.to_string(quote(do: 'abc')) == "'abc'"
     end
 
+    test "string" do
+      assert Macro.to_string(quote(do: "")) == ~S/""/
+      assert Macro.to_string(quote(do: "abc")) == ~S/"abc"/
+      assert Macro.to_string(quote(do: "#{"abc"}")) == ~S/"#{"abc"}"/
+    end
+
     test "last arg keyword list" do
       assert Macro.to_string(quote(do: foo([]))) == "foo([])"
       assert Macro.to_string(quote(do: foo(x: y))) == "foo(x: y)"
@@ -776,7 +818,7 @@ defmodule MacroTest do
       Macro.pipe(1, {:ok}, 0)
     end
 
-    assert_raise ArgumentError, ~r"cannot pipe 1 into 1 \+ 1", fn ->
+    assert_raise ArgumentError, ~r"cannot pipe 1 into 1 \+ 1, the :\+ operator can", fn ->
       Macro.pipe(1, quote(do: 1 + 1), 0) == quote(do: foo(1))
     end
 
@@ -788,13 +830,16 @@ defmodule MacroTest do
       Macro.pipe(1, quote(do: unquote()), 0)
     end
 
-    # TODO: Restore this test when we drop unary operator support in pipes
-    # assert_raise ArgumentError, ~r"cannot pipe 1 into \+1", fn ->
-    #   Macro.pipe(1, quote(do: + 1), 0)
-    # end
+    assert_raise ArgumentError, ~r"piping into a unary operator is not supported", fn ->
+      Macro.pipe(1, quote(do: +1), 0)
+    end
 
     assert_raise ArgumentError, ~r"cannot pipe Macro into Env", fn ->
       Macro.pipe(Macro, quote(do: Env), 0)
+    end
+
+    assert_raise ArgumentError, ~r"cannot pipe 1 into 2 && 3", fn ->
+      Macro.pipe(1, quote(do: 2 && 3), 0)
     end
 
     message = ~r"cannot pipe :foo into an anonymous function without calling"
@@ -944,6 +989,8 @@ defmodule MacroTest do
   test "quoted_literal?/1" do
     assert Macro.quoted_literal?(quote(do: "foo"))
     assert Macro.quoted_literal?(quote(do: {"foo", 1}))
+    assert Macro.quoted_literal?(quote(do: %{foo: "bar"}))
+    assert Macro.quoted_literal?(quote(do: %URI{path: "/"}))
     refute Macro.quoted_literal?(quote(do: {"foo", var}))
   end
 

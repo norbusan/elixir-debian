@@ -102,6 +102,108 @@ defmodule Code.Formatter.CommentsTest do
     end
   end
 
+  describe "modules attributes" do
+    test "with comments around" do
+      assert_same """
+      defmodule Sample do
+        # Comment 0
+        @moduledoc false
+        # Comment 1
+
+        # Comment 2
+        @attr1 1
+        # Comment 3
+
+        # Comment 4
+        @doc "Doc"
+        # Comment 5
+        @attr2 2
+        # Comment 6
+        def sample, do: :sample
+      end
+      """
+    end
+
+    test "with comments only after" do
+      assert_same """
+      @moduledoc false
+      # Comment 1
+
+      @attr 1
+      """
+    end
+
+    test "with too many new lines" do
+      bad = """
+      defmodule Sample do
+
+        # Comment 0
+
+
+        @moduledoc false
+
+
+        # Comment 1
+
+
+        # Comment 2
+
+
+        @attr1 1
+
+
+        # Comment 3
+
+
+        # Comment 4
+
+
+        @doc "Doc"
+
+
+        # Comment 5
+
+
+        @attr2 2
+
+
+        # Comment 6
+
+
+        def sample, do: :sample
+      end
+      """
+
+      assert_format bad, """
+      defmodule Sample do
+        # Comment 0
+
+        @moduledoc false
+
+        # Comment 1
+
+        # Comment 2
+
+        @attr1 1
+
+        # Comment 3
+
+        # Comment 4
+
+        @doc "Doc"
+
+        # Comment 5
+
+        @attr2 2
+
+        # Comment 6
+
+        def sample, do: :sample
+      end
+      """
+    end
+  end
+
   describe "interpolation" do
     test "with comment outside before, during and after" do
       assert_same ~S"""
@@ -885,7 +987,11 @@ defmodule Code.Formatter.CommentsTest do
 
       assert_format ambiguous, ~S"""
       # comment
-      [one, two, three]
+      [
+        one,
+        two,
+        three
+      ]
       """
     end
 
@@ -1256,6 +1362,131 @@ defmodule Code.Formatter.CommentsTest do
       """
 
       assert_format bad, good
+    end
+  end
+
+  describe "defstruct" do
+    test "with first field comments" do
+      bad = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct [ # foo
+          # 1. one
+          one: 1, # 2. one
+          # 1. two
+          # 2. two
+          two: 2
+        ]
+      end
+      """
+
+      good = ~S"""
+      defmodule Foo do
+        # defstruct
+        # foo
+        defstruct [
+          # 1. one
+          # 2. one
+          one: 1,
+          # 1. two
+          # 2. two
+          two: 2
+        ]
+      end
+      """
+
+      assert_format bad, good
+    end
+
+    test "with first field comments and defstruct has the parens" do
+      bad = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct([ # foo
+          # 1. one
+          one: 1, # 2. one
+          # 1. two
+          # 2. two
+          two: 2
+        ])
+      end
+      """
+
+      good = ~S"""
+      defmodule Foo do
+        # defstruct
+        # foo
+        defstruct(
+          # 1. one
+          # 2. one
+          one: 1,
+          # 1. two
+          # 2. two
+          two: 2
+        )
+      end
+      """
+
+      assert_format bad, good
+    end
+
+    test "without first field comments" do
+      bad = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct [
+          one: 1,
+          # 1. two
+          two: 2 # 2. two
+        ]
+      end
+      """
+
+      good = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct one: 1,
+                  # 1. two
+                  # 2. two
+                  two: 2
+      end
+      """
+
+      assert_format bad, good
+    end
+
+    test "without field comments" do
+      bad = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct [
+          one: 1,
+          two: 2
+        ]
+      end
+      """
+
+      good = ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct one: 1,
+                  two: 2
+      end
+      """
+
+      assert_format bad, good
+    end
+
+    test "without square brackets" do
+      assert_same ~S"""
+      defmodule Foo do
+        # defstruct
+        defstruct one: 1,
+                  # 1. two
+                  # 2. two
+                  two: 2
+      end
+      """
     end
   end
 end

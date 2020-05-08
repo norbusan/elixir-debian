@@ -37,8 +37,11 @@ defmodule Mix.Tasks.App.Start do
     * `--no-deps-check` - does not check dependencies
     * `--no-elixir-version-check` - does not check Elixir version
     * `--no-start` - does not start applications after compilation
+    * `--no-validate-compile-env` - does not validate the application compile environment
 
   """
+
+  @compile {:no_warn_undefined, Logger.App}
 
   @switches [
     permanent: :boolean,
@@ -84,7 +87,8 @@ defmodule Mix.Tasks.App.Start do
         :ok = Logger.App.start()
       end
     else
-      start(Mix.Project.config(), opts)
+      config = Mix.Project.config()
+      start(apps(config), type(config, opts), "--no-validate-compile-env" not in args)
 
       # If there is a build path, we will let the application
       # that owns the build path do the actual check
@@ -98,26 +102,26 @@ defmodule Mix.Tasks.App.Start do
   end
 
   @doc false
-  def start(config, opts) do
-    apps =
-      cond do
-        Mix.Project.umbrella?(config) ->
-          for %Mix.Dep{app: app} <- Mix.Dep.Umbrella.cached(), do: app
-
-        app = config[:app] ->
-          [app]
-
-        true ->
-          []
-      end
-
-    type = type(config, opts)
-    Enum.each(apps, &ensure_all_started(&1, type))
+  def start(apps, type, validate_compile_env? \\ true) do
+    Enum.each(apps, &ensure_all_started(&1, type, validate_compile_env?))
     :ok
   end
 
-  defp ensure_all_started(app, type) do
-    case Application.start(app, type) do
+  defp apps(config) do
+    cond do
+      Mix.Project.umbrella?(config) ->
+        for %Mix.Dep{app: app} <- Mix.Dep.Umbrella.cached(), do: app
+
+      app = config[:app] ->
+        [app]
+
+      true ->
+        []
+    end
+  end
+
+  defp ensure_all_started(app, type, validate_compile_env?) do
+    case load_check_and_start(app, type, validate_compile_env?) do
       :ok ->
         :ok
 
@@ -125,8 +129,8 @@ defmodule Mix.Tasks.App.Start do
         :ok
 
       {:error, {:not_started, dep}} ->
-        :ok = ensure_all_started(dep, type)
-        ensure_all_started(app, type)
+        :ok = ensure_all_started(dep, type, validate_compile_env?)
+        ensure_all_started(app, type, validate_compile_env?)
 
       {:error, reason} when type == :permanent ->
         # We need to stop immediately because application_controller is
@@ -143,6 +147,39 @@ defmodule Mix.Tasks.App.Start do
 
   defp could_not_start(app, reason) do
     "Could not start application #{app}: " <> Application.format_error(reason)
+  end
+
+  defp load_check_and_start(app, type, validate_compile_env?) do
+    case :application.get_key(app, :vsn) do
+      {:ok, _} ->
+        :application.start(app, type)
+
+      :undefined ->
+        name = Atom.to_charlist(app) ++ '.app'
+
+        case :code.where_is_file(name) do
+          :non_existing ->
+            {:error, {:file.format_error(:enoent), name}}
+
+          path ->
+            case :file.consult(path) do
+              {:ok, [{:application, _, properties} = application_data]} ->
+                with :ok <- :application.load(application_data) do
+                  if compile_env = validate_compile_env? && properties[:compile_env] do
+                    # Unfortunately we can only check the current app here,
+                    # otherwise we would accidentally load upcoming apps
+                    compile_env = for {^app, path, return} <- compile_env, do: {app, path, return}
+                    Config.Provider.validate_compile_env(compile_env)
+                  end
+
+                  :application.start(app, type)
+                end
+
+              {:error, reason} ->
+                {:error, {:file.format_error(reason), name}}
+            end
+        end
+    end
   end
 
   @doc false

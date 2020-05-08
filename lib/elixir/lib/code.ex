@@ -1,5 +1,5 @@
 defmodule Code do
-  @moduledoc """
+  @moduledoc ~S"""
   Utilities for managing code compilation, code evaluation, and code loading.
 
   This module complements Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html)
@@ -19,7 +19,8 @@ defmodule Code do
 
     * `eval_file/2` - evaluates the file contents without tracking its name. It
       returns the result of the last expression in the file, instead of the modules
-      defined in it.
+      defined in it. Evaluated files do not trigger the compilation tracers described
+      in the next section.
 
   In a nutshell, the first must be used when you want to keep track of the files
   handled by the system, to avoid the same file from being compiled multiple
@@ -28,15 +29,110 @@ defmodule Code do
   `compile_file/2` must be used when you are interested in the modules defined in a
   file, without tracking. `eval_file/2` should be used when you are interested in
   the result of evaluating the file rather than the modules it defines.
+
+  ## Compilation tracers
+
+  Elixir supports compilation tracers, which allows modules to observe constructs
+  handled by the Elixir compiler when compiling files. A tracer is a module
+  that implements the `trace/2` function. The function receives the event name
+  as first argument and `Macro.Env` as second and it must return `:ok`. It is
+  very important for a tracer to do as little work as possible synchronously
+  and dispatch the bulk of the work to a separate process. **Slow tracers will
+  slow down compilation**.
+
+  You can configure your list of tracers via `put_compiler_option/2`. The
+  following events are available to tracers:
+
+    * `:start` - (since v1.11.0) invoked whenever the compiler starts to trace
+      a new lexical context, such as a new file. Keep in mind the compiler runs
+      in parallel, so multiple files may invoke `:start` and run at the same
+      time. The value of the `lexical_tracker` of the macro environment, albeit
+      opaque, can be used to uniquely identify the environment.
+
+    * `:stop` - (since v1.11.0) invoked whenever the compiler stops tracing a
+      new lexical context, such as a new file.
+
+    * `{:import, meta, module, opts}` - traced whenever `module` is imported.
+      `meta` is the import AST metadata and `opts` are the import options.
+
+    * `{:imported_function, meta, module, name, arity}` and
+      `{:imported_macro, meta, module, name, arity}` - traced whenever an
+      imported function or macro is invoked. `meta` is the call AST metadata,
+      `module` is the module the import is from, followed by the `name` and `arity`
+      of the imported function/macro.
+
+    * `{:alias, meta, alias, as, opts}` - traced whenever `alias` is aliased
+      to `as`. `meta` is the alias AST metadata and `opts` are the alias options.
+
+    * `{:alias_expansion, meta, as, alias}` traced whenever there is an alias
+      expansion for a previously defined `alias`, i.e. when the user writes `as`
+      which is expanded to `alias`. `meta` is the alias expansion AST metadata.
+
+    * `{:alias_reference, meta, module}` - traced whenever there is an alias
+      in the code, i.e. whenever the user writes `MyModule.Foo.Bar` in the code,
+      regardless if it was expanded or not.
+
+    * `{:require, meta, module, opts}` - traced whenever `module` is required.
+      `meta` is the require AST metadata and `opts` are the require options.
+
+    * `{:struct_expansion, meta, module, keys}` - traced whenever `module`'s struct
+      is expanded. `meta` is the struct AST metadata and `keys` are the keys being
+      used by expansion
+
+    * `{:remote_function, meta, module, name, arity}` and
+      `{:remote_macro, meta, module, name, arity}` - traced whenever a remote
+      function or macro is referenced. `meta` is the call AST metadata, `module`
+      is the invoked module, followed by the `name` and `arity`.
+
+    * `{:local_function, meta, name, arity}` and
+      `{:local_macro, meta, name, arity}` - traced whenever a local
+      function or macro is referenced. `meta` is the call AST metadata, `module`
+      is the invoked module, followed by the `name` and `arity`.
+
+    * `{:compile_env, app, path, return}` - traced whenever `Application.compile_env/3`
+      or `Application.compile_env!/2` are called. `app` is an atom, `path` is a list
+      of keys to traverse in the application environemnt and `return` is either
+      `{:ok, value}` or `:error`.
+
+  The `:tracers` compiler option can be combined with the `:parser_options`
+  compiler option to enrich the metadata of the traced events above.
+
+  New events may be added at any time in the future, therefore it is advised
+  for the `trace/2` function to have a "catch-all" clause.
+
+  Below is an example tracer that prints all remote function invocations:
+
+      defmodule MyTracer do
+        def trace({:remote_function, _meta, module, name, arity}, env) do
+          IO.puts "#{env.file}:#{env.line} #{inspect(module)}.#{name}/#{arity}"
+          :ok
+        end
+
+        def trace(_event, _env) do
+          :ok
+        end
+      end
   """
 
-  @available_compiler_options [
+  @typedoc """
+  A list with all variable bindings.
+
+  The binding keys are usually atoms, but they may be a tuple for variables
+  defined in a different context.
+  """
+  @type binding :: [{atom() | tuple(), any}]
+
+  @boolean_compiler_options [
     :docs,
     :debug_info,
     :ignore_module_conflict,
     :relative_paths,
     :warnings_as_errors
   ]
+
+  @list_compiler_options [:no_warn_undefined, :tracers, :parser_options]
+
+  @available_compiler_options @boolean_compiler_options ++ @list_compiler_options
 
   @doc """
   Lists all required files.
@@ -54,7 +150,7 @@ defmodule Code do
     :elixir_code_server.call(:required)
   end
 
-  # TODO: Deprecate on v1.9
+  @deprecated "Use Code.required_files/0 instead"
   @doc false
   def loaded_files do
     required_files()
@@ -86,7 +182,7 @@ defmodule Code do
     :elixir_code_server.cast({:unrequire_files, files})
   end
 
-  # TODO: Deprecate on v1.9
+  @deprecated "Use Code.unrequire_files/1 instead"
   @doc false
   def unload_files(files) do
     unrequire_files(files)
@@ -163,7 +259,7 @@ defmodule Code do
   @doc """
   Evaluates the contents given by `string`.
 
-  The `binding` argument is a keyword list of variable bindings.
+  The `binding` argument is a list of variable bindings.
   The `opts` argument is a keyword list of environment options.
 
   **Warning**: `string` can be any Elixir code and will be executed with
@@ -204,8 +300,8 @@ defmodule Code do
   where `value` is the value returned from evaluating `string`.
   If an error occurs while evaluating `string` an exception will be raised.
 
-  `binding` is a keyword list with the value of all variable bindings
-  after evaluating `string`. The binding key is usually an atom, but it
+  `binding` is a list with all variable bindings
+  after evaluating `string`. The binding keys are usually atoms, but they
   may be a tuple for variables defined in a different context.
 
   ## Examples
@@ -227,17 +323,22 @@ defmodule Code do
       {3, [a: 1, b: 2]}
 
   """
-  @spec eval_string(List.Chars.t(), list, Macro.Env.t() | keyword) :: {term, binding :: list}
+  @spec eval_string(List.Chars.t(), binding, Macro.Env.t() | keyword) :: {term, binding}
   def eval_string(string, binding \\ [], opts \\ [])
 
   def eval_string(string, binding, %Macro.Env{} = env) do
-    {value, binding, _env, _scope} = :elixir.eval(to_charlist(string), binding, Map.to_list(env))
-    {value, binding}
+    eval_string_with_error_handling(string, binding, Map.to_list(env))
   end
 
   def eval_string(string, binding, opts) when is_list(opts) do
     validate_eval_opts(opts)
-    {value, binding, _env, _scope} = :elixir.eval(to_charlist(string), binding, opts)
+    eval_string_with_error_handling(string, binding, opts)
+  end
+
+  defp eval_string_with_error_handling(string, binding, opts) do
+    %{line: line, file: file} = env = :elixir.env_for_eval(opts)
+    forms = :elixir.string_to_quoted!(to_charlist(string), line, file, [])
+    {value, binding, _env} = :elixir.eval_forms(forms, binding, env)
     {value, binding}
   end
 
@@ -294,7 +395,7 @@ defmodule Code do
   a whole.
 
   The formatter does not hard code names. The formatter will not behave
-  specially because a function is named `defmodule`, `def`, etc. This
+  specially because a function is named `defmodule`, `def`, or the like. This
   principle mirrors Elixir's goal of being an extensible language where
   developers can extend the language with new constructs as if they were
   part of the language. When it is absolutely necessary to change behaviour
@@ -431,7 +532,7 @@ defmodule Code do
   rules in the future. The goal of documenting them is to provide better
   understanding on what to expect from the formatter.
 
-  ### Multi-line lists, maps, tuples, etc.
+  ### Multi-line lists, maps, tuples, and the like
 
   You can force lists, tuples, bitstrings, maps, structs and function
   calls to have one entry per line by adding a newline after the opening
@@ -576,7 +677,7 @@ defmodule Code do
   Macro arguments are typically transformed by unquoting them into the
   returned quoted expressions (instead of evaluated).
 
-  See `eval_string/3` for a description of bindings and options.
+  See `eval_string/3` for a description of `binding` and options.
 
   ## Examples
 
@@ -592,17 +693,17 @@ defmodule Code do
       {3, [a: 1, b: 2]}
 
   """
-  @spec eval_quoted(Macro.t(), list, Macro.Env.t() | keyword) :: {term, binding :: list}
+  @spec eval_quoted(Macro.t(), binding, Macro.Env.t() | keyword) :: {term, binding}
   def eval_quoted(quoted, binding \\ [], opts \\ [])
 
   def eval_quoted(quoted, binding, %Macro.Env{} = env) do
-    {value, binding, _env, _scope} = :elixir.eval_quoted(quoted, binding, Map.to_list(env))
+    {value, binding, _env} = :elixir.eval_quoted(quoted, binding, Map.to_list(env))
     {value, binding}
   end
 
   def eval_quoted(quoted, binding, opts) when is_list(opts) do
     validate_eval_opts(opts)
-    {value, binding, _env, _scope} = :elixir.eval_quoted(quoted, binding, opts)
+    {value, binding, _env} = :elixir.eval_quoted(quoted, binding, opts)
     {value, binding}
   end
 
@@ -644,7 +745,7 @@ defmodule Code do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Converts the given string to its quoted form.
 
   Returns `{:ok, quoted_form}` if it succeeds,
@@ -665,11 +766,23 @@ defmodule Code do
       when non-existing atoms are found by the tokenizer.
       Defaults to `false`.
 
-    * `:static_atom_encoder` - The static atom encoder function, see
-      "The `:static_atom_encoder` function" section below. This option
-      overrides the `:existing_atoms_only` behaviour for static atoms
-      but `:existing_atoms_only` is still used for dynamic atoms, such
-      as atoms with interpolations.
+    * `:token_metadata` (since v1.10.0) - when `true`, includes token-related
+      metadata in the expression AST, such as metadata for `do` and `end`
+      tokens, for closing tokens, end of expressions, as well as delimiters
+      for sigils. See `t:Macro.metadata/0`. Defaults to `false`.
+
+    * `:literal_encoder` (since v1.10.0) - how to encode literals in the AST.
+      It must be a function that receives two arguments, the literal and its
+      metadata, and it must return `{:ok, ast :: Macro.t}` or
+      `{:error, reason :: binary}`. If you return anything than the literal
+      itself as the `term`, then the AST is no longer valid. This option
+      may still useful for textual analysis of the source code.
+
+    * `:static_atoms_encoder` - the static atom encoder function, see
+      "The `:static_atoms_encoder` function" section below. Note this
+      option overrides the `:existing_atoms_only` behaviour for static
+      atoms but `:existing_atoms_only` is still used for dynamic atoms,
+      such as atoms with interpolations.
 
     * `:warn_on_unnecessary_quotes` - when `false`, does not warn
       when atoms, keywords or calls have unnecessary quotes on
@@ -681,9 +794,9 @@ defmodule Code do
   `Macro.to_string/2`, which converts a quoted form to a string/binary
   representation.
 
-  ## The `:static_atom_encoder` function
+  ## The `:static_atoms_encoder` function
 
-  When `static_atom_encoder: &my_encoder/2` is passed as an argument,
+  When `static_atoms_encoder: &my_encoder/2` is passed as an argument,
   `my_encoder/2` is called every time the tokenizer needs to create a
   "static" atom. Static atoms are atoms in the AST that function as
   aliases, remote calls, local calls, variable names, regular atoms
@@ -694,8 +807,8 @@ defmodule Code do
   `{:ok, token :: term} | {:error, reason :: binary}`.
 
   The encoder function is supposed to create an atom from the given
-  string. It is required to return either `{:ok, term}`, where term is
-  an atom. It is possible to return something else than an atom,
+  string. To produce a valid AST, it is required to return `{:ok, term}`,
+  where `term` is an atom. It is possible to return something other than an atom,
   however, in that case the AST is no longer "valid" in that it cannot
   be used to compile or evaluate Elixir code. A use case for this is
   if you want to use the Elixir parser in a user-facing situation, but
@@ -708,7 +821,7 @@ defmodule Code do
 
     * syntax keywords (`fn`, `do`, `else`, and so on)
 
-    * atoms containing interpolation (`:"\#{1 + 1} is two"`), as these
+    * atoms containing interpolation (`:"#{1 + 1} is two"`), as these
       atoms are constructed at runtime.
 
   """
@@ -751,22 +864,22 @@ defmodule Code do
 
   While `require_file/2` and `compile_file/2` return the loaded modules and their
   bytecode, `eval_file/2` simply evaluates the file contents and returns the
-  evaluation result and its bindings (exactly the same return value as `eval_string/3`).
+  evaluation result and its binding (exactly the same return value as `eval_string/3`).
   """
-  @spec eval_file(binary, nil | binary) :: {term, binding :: list}
+  @spec eval_file(binary, nil | binary) :: {term, binding}
   def eval_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
     eval_string(File.read!(file), [], file: file, line: 1)
   end
 
-  # TODO: Deprecate on v1.9
+  @deprecated "Use Code.require_file/2 or Code.compile_file/2 instead"
   @doc false
   def load_file(file, relative_to \\ nil) when is_binary(file) do
     file = find_file(file, relative_to)
     :elixir_code_server.call({:acquire, file})
     loaded = :elixir_compiler.file(file, fn _, _ -> :ok end)
     :elixir_code_server.cast({:required, file})
-    loaded
+    verify_loaded(loaded)
   end
 
   @doc """
@@ -812,14 +925,15 @@ defmodule Code do
       :proceed ->
         loaded = :elixir_compiler.file(file, fn _, _ -> :ok end)
         :elixir_code_server.cast({:required, file})
-        loaded
+        verify_loaded(loaded)
     end
   end
 
   @doc """
-  Gets the compilation options from the code server.
+  Gets all compilation options from the code server.
 
-  Check `compiler_options/1` for more information.
+  To get invidual options, see `get_compiler_option/1`.
+  For a description of all options, see `put_compiler_option/2`.
 
   ## Examples
 
@@ -827,15 +941,54 @@ defmodule Code do
       #=> %{debug_info: true, docs: true, ...}
 
   """
-  @spec compiler_options() :: %{optional(atom) => boolean}
+  @spec compiler_options :: map
   def compiler_options do
-    :elixir_config.get(:compiler_options)
+    for key <- @available_compiler_options, into: %{} do
+      {key, :elixir_config.get(key)}
+    end
   end
 
   @doc """
-  Returns a list with the available compiler options.
+  Stores all given compilation options.
 
-  See `compiler_options/1` for more information.
+  To store invidual options, see `put_compiler_option/2`.
+  For a description of all options, see `put_compiler_option/2`.
+
+  ## Examples
+
+      Code.compiler_options()
+      #=> %{debug_info: true, docs: true, ...}
+
+  """
+  @spec compiler_options(Enumerable.t()) :: %{optional(atom) => boolean}
+  def compiler_options(opts) do
+    for {key, value} <- opts, into: %{} do
+      put_compiler_option(key, value)
+      {key, value}
+    end
+  end
+
+  @doc """
+  Returns the value of a given compiler option.
+
+  For a description of all options, see `put_compiler_option/2`.
+
+  ## Examples
+
+      Code.get_compiler_option(:debug_info)
+      #=> true
+
+  """
+  @doc since: "1.10.0"
+  @spec get_compiler_option(atom) :: term
+  def get_compiler_option(key) when key in @available_compiler_options do
+    :elixir_config.get(key)
+  end
+
+  @doc """
+  Returns a list with all available compiler options.
+
+  For a description of all options, see `put_compiler_option/2`.
 
   ## Examples
 
@@ -849,10 +1002,100 @@ defmodule Code do
   end
 
   @doc """
+  Stores a compilation option.
+
+  These options are global since they are stored by Elixir's code server.
+
+  Available options are:
+
+    * `:docs` - when `true`, retain documentation in the compiled module.
+      Defaults to `true`.
+
+    * `:debug_info` - when `true`, retain debug information in the compiled
+      module. This allows a developer to reconstruct the original source
+      code. Defaults to `true`.
+
+    * `:ignore_module_conflict` - when `true`, override modules that were
+      already defined without raising errors. Defaults to `false`.
+
+    * `:relative_paths` - when `true`, use relative paths in quoted nodes,
+      warnings and errors generated by the compiler. Note disabling this option
+      won't affect runtime warnings and errors. Defaults to `true`.
+
+    * `:warnings_as_errors` - causes compilation to fail when warnings are
+      generated. Defaults to `false`.
+
+    * `:no_warn_undefined` (since v1.10.0) - list of modules and `{Mod, fun, arity}`
+      tuples that will not emit warnings that the module or function does not exist
+      at compilation time. Pass atom `:all` to skip warning for all undefined
+      functions. This can be useful when doing dynamic compilation. Defaults to `[]`.
+
+    * `:tracers` (since v1.10.0) - a list of tracers (modules) to be used during
+      compilation. See the module docs for more information. Defaults to `[]`.
+
+    * `:parser_options` (since v1.10.0) - a keyword list of options to be given
+      to the parser when compiling files. It accepts the same options as
+      `string_to_quoted/2` (except by the options that change the AST itself).
+      This can be used in combination with the tracer to retrieve localized
+      information about events happening during compilation. Defaults to `[]`.
+
+  It always returns `:ok`. Raises an error for invalid options.
+
+  ## Examples
+
+      Code.put_compiler_option(:debug_info, true)
+      #=> :ok
+
+  """
+  @doc since: "1.10.0"
+  @spec put_compiler_option(atom, term) :: :ok
+  def put_compiler_option(key, value) when key in @boolean_compiler_options do
+    if not is_boolean(value) do
+      raise "compiler option #{inspect(key)} should be a boolean, got: #{inspect(value)}"
+    end
+
+    :elixir_config.put(key, value)
+    :ok
+  end
+
+  def put_compiler_option(:no_warn_undefined, value) do
+    if value != :all and not is_list(value) do
+      raise "compiler option :no_warn_undefined should be a list or the atom :all, " <>
+              "got: #{inspect(value)}"
+    end
+
+    :elixir_config.put(:no_warn_undefined, value)
+    :ok
+  end
+
+  def put_compiler_option(key, value) when key in @list_compiler_options do
+    if not is_list(value) do
+      raise "compiler option #{inspect(key)} should be a list, got: #{inspect(value)}"
+    end
+
+    if key == :parser_options and not Keyword.keyword?(value) do
+      raise "compiler option #{inspect(key)} should be a keyword list, " <>
+              "got: #{inspect(value)}"
+    end
+
+    if key == :tracers and not Enum.all?(value, &is_atom/1) do
+      raise "compiler option #{inspect(key)} should be a list of modules, " <>
+              "got: #{inspect(value)}"
+    end
+
+    :elixir_config.put(key, value)
+    :ok
+  end
+
+  def put_compiler_option(key, _value) do
+    raise "unknown compiler option: #{inspect(key)}"
+  end
+
+  @doc """
   Purge compiler modules.
 
   The compiler utilizes temporary modules to compile code. For example,
-  `elixir_compiler_1`, `elixir_compiler_2`, etc. In case the compiled code
+  `elixir_compiler_1`, `elixir_compiler_2`, and so on. In case the compiled code
   stores references to anonymous functions or similar, the Elixir compiler
   may be unable to reclaim those modules, keeping an unnecessary amount of
   code in memory and eventually leading to modules such as `elixir_compiler_12345`.
@@ -867,54 +1110,6 @@ defmodule Code do
   @spec purge_compiler_modules() :: {:ok, non_neg_integer()}
   def purge_compiler_modules() do
     :elixir_code_server.call(:purge_compiler_modules)
-  end
-
-  @doc """
-  Sets compilation options.
-
-  These options are global since they are stored by Elixir's Code Server.
-
-  Available options are:
-
-    * `:docs` - when `true`, retain documentation in the compiled module.
-      Defaults to `true`.
-
-    * `:debug_info` - when `true`, retain debug information in the compiled
-      module. This allows a developer to reconstruct the original source
-      code. Defaults to `false`.
-
-    * `:ignore_module_conflict` - when `true`, override modules that were
-      already defined without raising errors. Defaults to `false`.
-
-    * `:relative_paths` - when `true`, use relative paths in quoted nodes,
-      warnings and errors generated by the compiler. Note disabling this option
-      won't affect runtime warnings and errors. Defaults to `true`.
-
-    * `:warnings_as_errors` - causes compilation to fail when warnings are
-      generated. Defaults to `false`.
-
-  It returns the new map of compiler options.
-
-  ## Examples
-
-      Code.compiler_options(debug_info: true)
-      #=> %{debug_info: true, docs: true,
-      #=>   warnings_as_errors: false, ignore_module_conflict: false}
-
-  """
-  @spec compiler_options(Enumerable.t()) :: %{optional(atom) => boolean}
-  def compiler_options(opts) do
-    Enum.each(opts, fn
-      {key, value} when key in @available_compiler_options ->
-        if not is_boolean(value) do
-          raise "compiler option #{inspect(key)} should be a boolean, got: #{inspect(value)}"
-        end
-
-      {key, _} ->
-        raise "unknown compiler option: #{inspect(key)}"
-    end)
-
-    :elixir_config.update(:compiler_options, &Enum.into(opts, &1))
   end
 
   @doc """
@@ -933,7 +1128,8 @@ defmodule Code do
   """
   @spec compile_string(List.Chars.t(), binary) :: [{module, binary}]
   def compile_string(string, file \\ "nofile") when is_binary(file) do
-    :elixir_compiler.string(to_charlist(string), file, fn _, _ -> :ok end)
+    loaded = :elixir_compiler.string(to_charlist(string), file, fn _, _ -> :ok end)
+    Enum.map(loaded, fn {module, _map, binary} -> {module, binary} end)
   end
 
   @doc """
@@ -946,7 +1142,8 @@ defmodule Code do
   """
   @spec compile_quoted(Macro.t(), binary) :: [{module, binary}]
   def compile_quoted(quoted, file \\ "nofile") when is_binary(file) do
-    :elixir_compiler.quoted(quoted, file, fn _, _ -> :ok end)
+    loaded = :elixir_compiler.quoted(quoted, file, fn _, _ -> :ok end)
+    Enum.map(loaded, fn {module, _map, binary} -> {module, binary} end)
   end
 
   @doc """
@@ -966,7 +1163,8 @@ defmodule Code do
   @doc since: "1.7.0"
   @spec compile_file(binary, nil | binary) :: [{module, binary}]
   def compile_file(file, relative_to \\ nil) when is_binary(file) do
-    :elixir_compiler.file(find_file(file, relative_to), fn _, _ -> :ok end)
+    loaded = :elixir_compiler.file(find_file(file, relative_to), fn _, _ -> :ok end)
+    verify_loaded(loaded)
   end
 
   @doc """
@@ -1049,27 +1247,39 @@ defmodule Code do
   Ensures the given module is compiled and loaded.
 
   If the module is already loaded, it works as no-op. If the module was
-  not loaded yet, it checks if it needs to be compiled first and then
-  tries to load it.
+  not compiled yet, `ensure_compiled/1` halts the compilation of the caller
+  until the module given to `ensure_compiled/1` becomes available or
+  all files for the current project have been compiled. If compilation
+  finishes and the module is not available, an error tuple is returned.
+
+  Given this function halts compilation, use it carefully. In particular,
+  avoid using it to guess which modules are in the system. Overuse of this
+  function can also lead to deadlocks, where two modules check at the same time
+  if the other is compiled. This returns a specific unavailable error code,
+  where we cannot successfully verify a module is available or not.
 
   If it succeeds in loading the module, it returns `{:module, module}`.
   If not, returns `{:error, reason}` with the error reason.
 
   If the module being checked is currently in a compiler deadlock,
-  this functions returns `{:error, :nofile}`.
+  this function returns `{:error, :unavailable}`. Unavailable doesn't
+  necessarily mean the module doesn't exist, just that it is not currently
+  available, but it (or may not) become available in the future.
 
   Check `ensure_loaded/1` for more information on module loading
   and when to use `ensure_loaded/1` or `ensure_compiled/1`.
   """
   @spec ensure_compiled(module) ::
-          {:module, module} | {:error, :embedded | :badfile | :nofile | :on_load_failure}
+          {:module, module}
+          | {:error, :embedded | :badfile | :nofile | :on_load_failure | :unavailable}
   def ensure_compiled(module) when is_atom(module) do
     case :code.ensure_loaded(module) do
       {:error, :nofile} = error ->
         if is_pid(:erlang.get(:elixir_compiler_pid)) do
           case Kernel.ErrorHandler.ensure_compiled(module, :module, :soft) do
             :found -> {:module, module}
-            :not_found -> error
+            :deadlock -> {:error, :unavailable}
+            :not_found -> {:error, :nofile}
           end
         else
           error
@@ -1080,14 +1290,8 @@ defmodule Code do
     end
   end
 
-  @doc """
-  Ensures the given module is compiled and loaded.
-
-  Similar to `ensure_compiled/1`, but returns `true` if the module
-  is already loaded or was successfully loaded and compiled.
-  Returns `false` otherwise.
-  """
-  @spec ensure_compiled?(module) :: boolean
+  @doc false
+  @deprecated "Use Code.ensure_compiled/1 instead (see the proper disclaimers in its docs)"
   def ensure_compiled?(module) when is_atom(module) do
     match?({:module, ^module}, ensure_compiled(module))
   end
@@ -1109,7 +1313,7 @@ defmodule Code do
       # Module documentation of an existing module
       iex> {:docs_v1, _, :elixir, _, %{"en" => module_doc}, _, _} = Code.fetch_docs(Atom)
       iex> module_doc |> String.split("\n") |> Enum.at(0)
-      "Convenience functions for working with atoms."
+      "Atoms are constants whose values are their own name."
 
       # A module that doesn't exist
       iex> Code.fetch_docs(ModuleNotGood)
@@ -1192,5 +1396,11 @@ defmodule Code do
     else
       raise Code.LoadError, file: file
     end
+  end
+
+  defp verify_loaded(loaded) do
+    maps_binaries = Enum.map(loaded, fn {_module, map, binary} -> {map, binary} end)
+    Module.ParallelChecker.verify(maps_binaries, [])
+    Enum.map(loaded, fn {module, _map, binary} -> {module, binary} end)
   end
 end

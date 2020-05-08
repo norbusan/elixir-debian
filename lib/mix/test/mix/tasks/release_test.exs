@@ -9,7 +9,7 @@ defmodule Mix.Tasks.ReleaseTest do
   defmacrop release_node(name), do: :"#{name}@#{@hostname}"
 
   describe "customize" do
-    test "rel with eex" do
+    test "env and vm.args with EEx" do
       in_fixture("release_test", fn ->
         Mix.Project.in_project(:release_test, ".", fn _ ->
           File.mkdir_p!("rel")
@@ -84,6 +84,158 @@ defmodule Mix.Tasks.ReleaseTest do
         end)
       end)
     end
+
+    test "default overlays" do
+      in_fixture("release_test", fn ->
+        Mix.Project.in_project(:release_test, ".", fn _ ->
+          File.mkdir_p!("rel/overlays/empty/directory")
+          File.write!("rel/overlays/hello", "world")
+
+          root = Path.absname("_build/dev/rel/release_test")
+          Mix.Task.run("release")
+
+          assert root |> Path.join("empty/directory") |> File.dir?()
+          assert root |> Path.join("hello") |> File.read!() == "world"
+        end)
+      end)
+    end
+
+    test "custom overlays" do
+      in_fixture("release_test", fn ->
+        config = [releases: [release_test: [overlays: "rel/another"]]]
+
+        Mix.Project.in_project(:release_test, ".", config, fn _ ->
+          assert_raise Mix.Error, ~r"a string pointing to an existing directory", fn ->
+            Mix.Task.run("release", ["--overwrite"])
+          end
+
+          File.mkdir_p!("rel/another/empty/directory")
+          File.write!("rel/another/hello", "world")
+
+          root = Path.absname("_build/dev/rel/release_test")
+          Mix.Task.rerun("release", ["--overwrite"])
+
+          assert root |> Path.join("empty/directory") |> File.dir?()
+          assert root |> Path.join("hello") |> File.read!() == "world"
+        end)
+      end)
+    end
+  end
+
+  describe "errors" do
+    test "requires a matching name" do
+      in_fixture("release_test", fn ->
+        Mix.Project.in_project(:release_test, ".", fn _ ->
+          assert_raise Mix.Error, ~r"Unknown release :unknown", fn ->
+            Mix.Task.run("release", ["unknown"])
+          end
+        end)
+      end)
+    end
+  end
+
+  describe "tar" do
+    test "with default options" do
+      in_fixture("release_test", fn ->
+        config = [releases: [demo: [steps: [:assemble, :tar]]]]
+
+        Mix.Project.in_project(:release_test, ".", config, fn _ ->
+          root = Path.absname("_build/#{Mix.env()}/rel/demo")
+
+          ignored_app_path = Path.join([root, "lib", "ignored_app-0.1.0", "ebin"])
+          File.mkdir_p!(ignored_app_path)
+          File.touch(Path.join(ignored_app_path, "ignored_app.app"))
+
+          ignored_release_path = Path.join([root, "releases", "ignored_dir"])
+          File.mkdir_p!(ignored_release_path)
+          File.touch(Path.join(ignored_release_path, "ignored"))
+
+          # Overlays
+          File.mkdir_p!("rel/overlays/empty/directory")
+          File.write!("rel/overlays/hello", "world")
+
+          Mix.Task.run("release")
+          tar_path = Path.expand(Path.join([root, "..", "..", "demo-0.1.0.tar.gz"]))
+          message = "* building #{tar_path}"
+          assert_received {:mix_shell, :info, [^message]}
+          assert File.exists?(tar_path)
+
+          {:ok, files} = String.to_charlist(tar_path) |> :erl_tar.table([:compressed])
+
+          files = Enum.map(files, &to_string/1)
+          files_with_versions = File.ls!(Path.join(root, "lib"))
+
+          assert "bin/demo" in files
+          assert "releases/0.1.0/sys.config" in files
+          assert "releases/0.1.0/vm.args" in files
+          assert "releases/COOKIE" in files
+          assert "releases/start_erl.data" in files
+          assert "hello" in files
+          assert "empty/directory" in files
+          assert Enum.any?(files, &(&1 =~ "erts"))
+          assert Enum.any?(files, &(&1 =~ "stdlib"))
+
+          for dir <- files_with_versions -- ["ignored_app-0.1.0"] do
+            [name | _] = String.split(dir, "-")
+            assert "lib/#{dir}/ebin/#{name}.app" in files
+          end
+
+          refute "lib/ignored_app-0.1.0/ebin/ignored_app.app" in files
+          refute "releases/ignored_dir/ignored" in files
+        end)
+      end)
+    end
+
+    test "without ERTS and custom path" do
+      in_fixture("release_test", fn ->
+        config = [
+          releases: [demo: [include_erts: false, path: "tmp/rel", steps: [:assemble, :tar]]]
+        ]
+
+        Mix.Project.in_project(:release_test, ".", config, fn _ ->
+          Mix.Task.run("release")
+          tar_path = Path.expand(Path.join(["tmp", "rel", "demo-0.1.0.tar.gz"]))
+          message = "* building #{tar_path}"
+          assert_received {:mix_shell, :info, [^message]}
+          assert File.exists?(tar_path)
+
+          {:ok, files} = String.to_charlist(tar_path) |> :erl_tar.table([:compressed])
+          files = Enum.map(files, &to_string/1)
+
+          assert "bin/demo" in files
+          refute Enum.any?(files, &(&1 =~ "erts"))
+          refute Enum.any?(files, &(&1 =~ "stdlib"))
+        end)
+      end)
+    end
+
+    test "without ERTS when a previous build included ERTS" do
+      in_fixture("release_test", fn ->
+        config = [releases: [demo: [include_erts: false, steps: [:assemble, :tar]]]]
+
+        Mix.Project.in_project(:release_test, ".", config, fn _ ->
+          root = Path.absname("_build/#{Mix.env()}/rel/demo")
+
+          erts_dir_from_previous_build =
+            Path.absname("_build/#{Mix.env()}/rel/demo/erts-#{@erts_version}")
+
+          File.mkdir_p!(erts_dir_from_previous_build)
+
+          Mix.Task.run("release")
+          tar_path = Path.expand(Path.join([root, "..", "..", "demo-0.1.0.tar.gz"]))
+          message = "* building #{tar_path}"
+          assert_received {:mix_shell, :info, [^message]}
+          assert File.exists?(tar_path)
+
+          {:ok, files} = String.to_charlist(tar_path) |> :erl_tar.table([:compressed])
+          files = Enum.map(files, &to_string/1)
+
+          assert "bin/demo" in files
+          refute Enum.any?(files, &(&1 =~ "erts"))
+          refute Enum.any?(files, &(&1 =~ "stdlib"))
+        end)
+      end)
+    end
   end
 
   test "assembles a bootable release with ERTS" do
@@ -129,6 +281,7 @@ defmodule Mix.Tasks.ReleaseTest do
         assert %{
                  app_dir: app_dir,
                  cookie_env: ^cookie,
+                 encoding: {:"£", "£", '£'},
                  mode: :embedded,
                  node: release_node("release_test"),
                  protocols_consolidated?: true,
@@ -137,11 +290,10 @@ defmodule Mix.Tasks.ReleaseTest do
                  release_root: release_root,
                  release_vsn: "0.1.0",
                  root_dir: root_dir,
-                 static_config: {:ok, :was_set},
                  runtime_config: :error,
+                 static_config: {:ok, :was_set},
                  sys_config_env: sys_config_env,
-                 sys_config_init: sys_config_init,
-                 encoding: {:"£", "£", '£'}
+                 sys_config_init: sys_config_init
                } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
 
         if match?({:win32, _}, :os.type()) do
@@ -187,21 +339,26 @@ defmodule Mix.Tasks.ReleaseTest do
                |> Path.join("releases/0.1.0/sys.config")
                |> File.read!() =~ "RUNTIME_CONFIG=true"
 
+        # Make sys.config read-only and it should still boot
+        assert root
+               |> Path.join("releases/0.1.0/sys.config")
+               |> File.chmod(0o555) == :ok
+
         # Assert runtime
         open_port(Path.join(root, "bin/runtime_config"), ['start'])
 
         assert %{
+                 encoding: {:runtime, :"£", "£", '£'},
                  mode: :embedded,
                  node: release_node("runtime_config"),
                  protocols_consolidated?: true,
                  release_name: "runtime_config",
                  release_node: "runtime_config",
                  release_vsn: "0.1.0",
-                 static_config: {:ok, :was_set},
                  runtime_config: {:ok, :was_set},
+                 static_config: {:ok, :was_set},
                  sys_config_env: sys_config_env,
-                 sys_config_init: sys_config_init,
-                 encoding: {:runtime, :"£", "£", '£'}
+                 sys_config_init: sys_config_init
                } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
 
         if match?({:win32, _}, :os.type()) do
@@ -211,6 +368,27 @@ defmodule Mix.Tasks.ReleaseTest do
           assert sys_config_env =~ "tmp/runtime_config-0.1.0"
           assert sys_config_init =~ "tmp/runtime_config-0.1.0"
         end
+      end)
+    end)
+  end
+
+  test "assembles a bootable release without distribution" do
+    in_fixture("release_test", fn ->
+      config = [releases: [no_dist: []]]
+
+      Mix.Project.in_project(:release_test, ".", config, fn _ ->
+        root = Path.absname("_build/dev/rel/no_dist")
+        Mix.Task.run("release", ["no_dist"])
+        open_port(Path.join(root, "bin/no_dist"), ['start'], [{'RELEASE_DISTRIBUTION', 'none'}])
+
+        assert %{
+                 mode: :embedded,
+                 node: :nonode@nohost,
+                 protocols_consolidated?: true,
+                 release_name: "no_dist",
+                 release_node: "no_dist",
+                 release_vsn: "0.1.0"
+               } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
       end)
     end)
   end
@@ -251,8 +429,8 @@ defmodule Mix.Tasks.ReleaseTest do
                  release_root: release_root,
                  release_vsn: "0.2.0",
                  root_dir: root_dir,
-                 static_config: {:ok, :was_set},
-                 runtime_config: :error
+                 runtime_config: :error,
+                 static_config: {:ok, :was_set}
                } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
 
         if match?({:win32, _}, :os.type()) do
@@ -268,23 +446,98 @@ defmodule Mix.Tasks.ReleaseTest do
     end)
   end
 
+  test "validates compile_env" do
+    in_fixture("release_test", fn ->
+      config = [releases: [compile_env_config: []]]
+
+      File.write!("lib/compile_env.ex", """
+      _ = Application.compile_env(:release_test, :static)
+      """)
+
+      Mix.Project.in_project(:release_test, ".", config, fn _ ->
+        Mix.Task.run("loadconfig", [])
+
+        File.write!("config/releases.exs", """
+        import Config
+        config :release_test, :static, String.to_atom(System.get_env("RELEASE_STATIC"))
+        """)
+
+        root = Path.absname("_build/dev/rel/compile_env_config")
+        Mix.Task.run("release", ["compile_env_config"])
+
+        assert {output, _} =
+                 System.cmd(Path.join(root, "bin/compile_env_config"), ["start"],
+                   stderr_to_stdout: true,
+                   env: [{"RELEASE_STATIC", "runtime"}]
+                 )
+
+        assert output =~
+                 "ERROR! the application :release_test has a different value set for key :static during runtime compared to compile time"
+
+        # But now it does
+        env = [{'RELEASE_STATIC', 'was_set'}]
+        open_port(Path.join(root, "bin/compile_env_config"), ['start'], env)
+        assert %{} = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
+      end)
+    end)
+  end
+
+  test "does not validate compile_env if opted out" do
+    in_fixture("release_test", fn ->
+      config = [releases: [no_compile_env_config: [validate_compile_env: false]]]
+
+      File.write!("lib/compile_env.ex", """
+      _ = Application.compile_env(:release_test, :static)
+      """)
+
+      Mix.Project.in_project(:release_test, ".", config, fn _ ->
+        Mix.Task.run("loadconfig", [])
+
+        File.write!("config/releases.exs", """
+        import Config
+        config :release_test, :static, String.to_atom(System.get_env("RELEASE_STATIC"))
+        """)
+
+        root = Path.absname("_build/dev/rel/no_compile_env_config")
+        Mix.Task.run("release", ["no_compile_env_config"])
+
+        # It boots with mismatched config
+        env = [{'RELEASE_STATIC', 'runtime'}]
+        open_port(Path.join(root, "bin/no_compile_env_config"), ['start'], env)
+        assert %{} = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
+      end)
+    end)
+  end
+
   @tag :epmd
   test "executes rpc instructions" do
     in_fixture("release_test", fn ->
       config = [releases: [permanent1: [include_erts: false]]]
 
+      # We write the compile env to guarantee rpc still works
+      File.write!("lib/compile_env.ex", """
+      _ = Application.compile_env(:release_test, :static)
+      """)
+
       Mix.Project.in_project(:release_test, ".", config, fn _ ->
+        Mix.Task.run("loadconfig", [])
+
+        File.write!("config/releases.exs", """
+        import Config
+        """)
+
         root = Path.absname("_build/dev/rel/permanent1")
         Mix.Task.run("release")
         script = Path.join(root, "bin/permanent1")
 
         open_port(script, ['start'])
         wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
-        assert System.cmd(script, ["rpc", "ReleaseTest.hello_world"]) == {"hello world\n", 0}
-        assert System.cmd(script, ["stop"]) == {"", 0}
+        assert System.cmd(script, ["rpc", "ReleaseTest.hello_world()"]) == {"hello world\n", 0}
 
         assert {pid, 0} = System.cmd(script, ["pid"])
         assert pid != "\n"
+
+        assert System.cmd(script, ["stop"]) == {"", 0}
       end)
     end)
   end
@@ -326,8 +579,8 @@ defmodule Mix.Tasks.ReleaseTest do
                  release_node: "eval",
                  release_root: root,
                  release_vsn: "0.1.0",
-                 static_config: {:ok, :was_set},
-                 runtime_config: {:ok, :was_set}
+                 runtime_config: {:ok, :was_set},
+                 static_config: {:ok, :was_set}
                } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
       end)
     end)
@@ -356,8 +609,8 @@ defmodule Mix.Tasks.ReleaseTest do
                  release_root: ^root,
                  release_vsn: "0.1.0",
                  root_dir: root_dir,
-                 static_config: {:ok, :was_set},
                  runtime_config: :error,
+                 static_config: {:ok, :was_set},
                  sys_config_env: sys_config_env,
                  sys_config_init: sys_config_init
                } = wait_until_decoded(Path.join(root, "RELEASE_BOOTED"))
@@ -372,7 +625,7 @@ defmodule Mix.Tasks.ReleaseTest do
                    "iex(permanent2@#{@hostname})1> "
                end)
 
-        assert System.cmd(script, ["rpc", "ReleaseTest.hello_world"]) == {"hello world\n", 0}
+        assert System.cmd(script, ["rpc", "ReleaseTest.hello_world()"]) == {"hello world\n", 0}
         assert System.cmd(script, ["stop"]) == {"", 0}
       end)
     end)
@@ -397,18 +650,8 @@ defmodule Mix.Tasks.ReleaseTest do
     end)
   end
 
-  test "requires a matching name" do
-    in_fixture("release_test", fn ->
-      Mix.Project.in_project(:release_test, ".", fn _ ->
-        assert_raise Mix.Error, ~r"Unknown release :unknown", fn ->
-          Mix.Task.run("release", ["unknown"])
-        end
-      end)
-    end)
-  end
-
-  defp open_port(command, args) do
-    Port.open({:spawn_executable, to_charlist(command)}, [:hide, args: args])
+  defp open_port(command, args, env \\ []) do
+    Port.open({:spawn_executable, to_charlist(command)}, [:hide, args: args, env: env])
   end
 
   defp wait_until_decoded(file) do

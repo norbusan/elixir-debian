@@ -36,7 +36,7 @@ In the example above, this happens:
 
 ## Types and their syntax
 
-The syntax Elixir provides for type specifications is similar to [the one in Erlang](http://www.erlang.org/doc/reference_manual/typespec.html). Most of the built-in types provided in Erlang (for example, `pid()`) are expressed in the same way: `pid()` (or simply `pid`). Parameterized types (such as `list(integer)`) are supported as well and so are remote types (such as `Enum.t`). Integers and atom literals are allowed as types (e.g., `1`, `:atom`, or `false`). All other types are built out of unions of predefined types. Some shorthands are allowed, such as `[...]`, `<<>>`, and `{...}`.
+The syntax Elixir provides for type specifications is similar to [the one in Erlang](http://www.erlang.org/doc/reference_manual/typespec.html). Most of the built-in types provided in Erlang (for example, `pid()`) are expressed in the same way: `pid()` (or simply `pid`). Parameterized types (such as `list(integer)`) are supported as well and so are remote types (such as `Enum.t`). Integers and atom literals are allowed as types (for example, `1`, `:atom`, or `false`). All other types are built out of unions of predefined types. Some shorthands are allowed, such as `[...]`, `<<>>`, and `{...}`.
 
 The notation to represent the union of types is the pipe `|`. For example, the typespec `type :: atom() | pid() | tuple()` creates a type `type` that can be either an `atom`, a `pid`, or a `tuple`. This is usually called a [sum type](https://en.wikipedia.org/wiki/Tagged_union) in other languages
 
@@ -50,7 +50,6 @@ The notation to represent the union of types is the pipe `|`. For example, the t
           | pid()                   # process identifier
           | port()                  # port identifier
           | reference()
-          | struct()                # any struct
           | tuple()                 # tuple of any size
 
                                     ## Numbers
@@ -153,7 +152,7 @@ Built-in type           | Defined as
 
 ### Remote types
 
-Any module is also able to define its own types and the modules in Elixir are no exception. For example, the `Range` module defines a [`t/0`](t:Range.t/0) type that represents a range: this type can be referred to as `t:Range.t/0`. In a similar fashion, a string is `t:String.t/0`, any enumerable can be `t:Enum.t/0`, and so on.
+Any module is also able to define its own types and the modules in Elixir are no exception. For example, the `Range` module defines a `t/0` type that represents a range: this type can be referred to as `t:Range.t/0`. In a similar fashion, a string is `t:String.t/0`, any enumerable can be `t:Enum.t/0`, and so on.
 
 ### Maps
 
@@ -257,6 +256,19 @@ To specify that a module implements a given behaviour, the `@behaviour` attribut
 If a callback module that implements a given behaviour doesn't export all the functions and macros defined by that behaviour, the user will be notified through warnings during the compilation process (no errors will happen).
 
 Elixir's standard library contains a few frequently used behaviours such as `GenServer`, `Supervisor`, and `Application`.
+
+### Inspecting behaviours
+
+The `@callback` and `@optional_callback` attributes are used to create a `behaviour_info/1` function available on the defining module. This function can be used to retrieve the callbacks and optional callbacks defined by that module.
+
+For example, for the `MyBehaviour` module defined in "Optional callbacks" above:
+
+    MyBehaviour.behaviour_info(:callbacks)
+    #=> [vital_fun: 0, "MACRO-non_vital_macro": 2, non_vital_fun: 0]
+    MyBehaviour.behaviour_info(:optional_callbacks)
+    #=> ["MACRO-non_vital_macro": 2, non_vital_fun: 0]
+
+When using `iex`, the `IEx.Helpers.b/1` helper is also available.
 
 ## The `string()` type
 

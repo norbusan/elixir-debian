@@ -12,9 +12,10 @@ defmodule Kernel.QuoteTest do
   end
 
   test "keep line" do
-    # DO NOT MOVE THIS LINE
+    line = __ENV__.line + 2
+
     assert quote(location: :keep, do: bar(1, 2, 3)) ==
-             {:bar, [keep: {Path.relative_to_cwd(__ENV__.file), 16}], [1, 2, 3]}
+             {:bar, [keep: {Path.relative_to_cwd(__ENV__.file), line}], [1, 2, 3]}
   end
 
   test "fixed line" do
@@ -22,9 +23,29 @@ defmodule Kernel.QuoteTest do
   end
 
   test "quote line var" do
-    # DO NOT MOVE THIS LINE
     line = __ENV__.line
-    assert quote(line: line, do: bar(1, 2, 3)) == {:bar, [line: 26], [1, 2, 3]}
+    assert quote(line: line, do: bar(1, 2, 3)) == {:bar, [line: line], [1, 2, 3]}
+  end
+
+  test "quote context var" do
+    context = :dynamic
+    assert quote(context: context, do: bar) == {:bar, [], :dynamic}
+
+    assert_raise ArgumentError, fn ->
+      context = "oops"
+      quote(context: context, do: bar)
+    end
+
+    assert_raise ArgumentError, fn ->
+      context = nil
+      quote(context: context, do: bar)
+    end
+  end
+
+  test "operator precedence" do
+    assert {:+, _, [{:+, _, [1, _]}, 1]} = quote(do: 1 + Foo.l() + 1)
+    assert {:+, _, [{:+, _, [1, _]}, 1]} = quote(do: 1 + Foo.l() + 1)
+    assert {:+, _, [1, {_, _, [{:+, _, [1]}]}]} = quote(do: 1 + Foo.l(+1))
   end
 
   test "generated" do
@@ -46,7 +67,7 @@ defmodule Kernel.QuoteTest do
                 end
               end)
 
-    assert quote(do: foo.unquote(:bar)) == quote(do: foo.bar)
+    assert quote(do: foo.unquote(:bar)) == quote(do: foo.bar())
     assert quote(do: foo.unquote(:bar)(1)) == quote(do: foo.bar(1))
 
     assert (quote do
@@ -60,7 +81,7 @@ defmodule Kernel.QuoteTest do
                 end
               end)
 
-    assert quote(do: foo.unquote({:bar, [], nil})) == quote(do: foo.bar)
+    assert quote(do: foo.unquote({:bar, [], nil})) == quote(do: foo.bar())
     assert quote(do: foo.unquote({:bar, [], [1, 2]})) == quote(do: foo.bar(1, 2))
 
     assert Code.eval_quoted(quote(do: Foo.unquote(Bar))) == {Elixir.Foo.Bar, []}
@@ -179,7 +200,7 @@ defmodule Kernel.QuoteTest do
 
   test "bind quoted" do
     args = [
-      {:=, [], [{:foo, [], Kernel.QuoteTest}, 3]},
+      {:=, [], [{:foo, [line: __ENV__.line + 4], Kernel.QuoteTest}, 3]},
       {:foo, [], Kernel.QuoteTest}
     ]
 
@@ -270,6 +291,8 @@ end
 
 # DO NOT MOVE THIS LINE
 defmodule Kernel.QuoteTest.Errors do
+  def line, do: __ENV__.line + 4
+
   defmacro defraise do
     quote location: :keep do
       def will_raise(_a, _b), do: raise("oops")
@@ -288,6 +311,7 @@ defmodule Kernel.QuoteTest.ErrorsTest do
   # Defines the add function
   defraise()
 
+  @line line()
   test "inside function error" do
     try do
       will_raise(:a, :b)
@@ -295,12 +319,13 @@ defmodule Kernel.QuoteTest.ErrorsTest do
       RuntimeError ->
         mod = Kernel.QuoteTest.ErrorsTest
         file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
-        assert [{^mod, :will_raise, 2, [file: ^file, line: 275]} | _] = __STACKTRACE__
+        assert [{^mod, :will_raise, 2, [file: ^file, line: @line]} | _] = __STACKTRACE__
     else
       _ -> flunk("expected failure")
     end
   end
 
+  @line __ENV__.line + 3
   test "outside function error" do
     try do
       will_raise()
@@ -308,7 +333,7 @@ defmodule Kernel.QuoteTest.ErrorsTest do
       RuntimeError ->
         mod = Kernel.QuoteTest.ErrorsTest
         file = __ENV__.file |> Path.relative_to_cwd() |> String.to_charlist()
-        assert [{^mod, _, _, [file: ^file, line: 306]} | _] = __STACKTRACE__
+        assert [{^mod, _, _, [file: ^file, line: @line]} | _] = __STACKTRACE__
     else
       _ -> flunk("expected failure")
     end

@@ -5,7 +5,7 @@
 -export([start_cli/0,
   string_to_tokens/4, tokens_to_quoted/3, 'string_to_quoted!'/4,
   env_for_eval/1, env_for_eval/2, quoted_to_erl/2,
-  eval/2, eval/3, eval_forms/3, eval_forms/4, eval_quoted/3]).
+  eval_forms/3, eval_quoted/3]).
 -include("elixir.hrl").
 -define(system, 'Elixir.System').
 
@@ -26,11 +26,9 @@
 
 start(_Type, _Args) ->
   _ = parse_otp_release(),
-  Encoding = file:native_name_encoding(),
-
   preload_common_modules(),
   set_stdio_and_stderr_to_binary_and_maybe_utf8(),
-  check_file_encoding(Encoding),
+  check_file_encoding(file:native_name_encoding()),
 
   case application:get_env(elixir, check_endianness, true) of
     true  -> check_endianness();
@@ -51,24 +49,25 @@ start(_Type, _Args) ->
     {{uri, <<"ldap">>}, 389}
   ],
 
-  CompilerOpts = #{
-    docs => true,
-    ignore_module_conflict => false,
-    debug_info => true,
-    warnings_as_errors => false,
-    relative_paths => true
-  },
-
-  {ok, [[Home] | _]} = init:get_argument(home),
-
   Config = [
+    %% ARGV options
     {at_exit, []},
     {argv, []},
+    {no_halt, false},
+
+    %% Static options
     {bootstrap, false},
-    {compiler_options, CompilerOpts},
-    {home, unicode:characters_to_binary(Home, Encoding, Encoding)},
     {identifier_tokenizer, Tokenizer},
-    {no_halt, false}
+
+    %% Compiler options
+    {docs, true},
+    {ignore_module_conflict, false},
+    {parser_options, []},
+    {debug_info, true},
+    {warnings_as_errors, false},
+    {relative_paths, true},
+    {no_warn_undefined, []},
+    {tracers, []}
     | URIConfig
   ],
 
@@ -112,10 +111,10 @@ preload_common_modules() ->
 parse_otp_release() ->
   %% Whenever we change this check, we should also change Makefile.
   case string:to_integer(erlang:system_info(otp_release)) of
-    {Num, _} when Num >= 20 ->
+    {Num, _} when Num >= 21 ->
       Num;
     _ ->
-      io:format(standard_error, "ERROR! Unsupported Erlang/OTP version, expected Erlang/OTP 20+~n", []),
+      io:format(standard_error, "ERROR! Unsupported Erlang/OTP version, expected Erlang/OTP 21+~n", []),
       erlang:halt(1)
   end.
 
@@ -167,11 +166,7 @@ start_cli() ->
 %% EVAL HOOKS
 
 env_for_eval(Opts) ->
-  env_for_eval((elixir_env:new())#{
-    requires := elixir_dispatch:default_requires(),
-    functions := elixir_dispatch:default_functions(),
-    macros := elixir_dispatch:default_macros()
-  }, Opts).
+  env_for_eval(elixir_env:new(), Opts).
 
 env_for_eval(Env, Opts) ->
   Line = case lists:keyfind(line, 1, Opts) of
@@ -209,6 +204,11 @@ env_for_eval(Env, Opts) ->
     false -> nil
   end,
 
+  Tracers = case lists:keyfind(tracers, 1, Opts) of
+    {tracers, TracersOpt} when is_list(TracersOpt) -> TracersOpt;
+    false -> []
+  end,
+
   LexicalTracker = case lists:keyfind(lexical_tracker, 1, Opts) of
     {lexical_tracker, Pid} when is_pid(Pid) ->
       case is_process_alive(Pid) of
@@ -228,22 +228,10 @@ env_for_eval(Env, Opts) ->
   end,
 
   Env#{
-    file := File, module := Module, function := FA,
+    file := File, module := Module, function := FA, tracers := Tracers,
     macros := Macros, functions := Functions, lexical_tracker := LexicalTracker,
     requires := Requires, aliases := Aliases, line := Line
   }.
-
-%% String evaluation
-
-eval(String, Binding) ->
-  eval(String, Binding, []).
-
-eval(String, Binding, Opts) when is_list(Opts) ->
-  eval(String, Binding, env_for_eval(Opts));
-eval(String, Binding, #{line := Line, file := File} = E) when
-    is_list(String), is_list(Binding), is_integer(Line), is_binary(File) ->
-  Forms = 'string_to_quoted!'(String, Line, File, []),
-  eval_forms(Forms, Binding, E).
 
 %% Quoted evaluation
 
@@ -252,41 +240,78 @@ eval_quoted(Tree, Binding, Opts) when is_list(Opts) ->
 eval_quoted(Tree, Binding, #{line := Line} = E) ->
   eval_forms(elixir_quote:linify(Line, line, Tree), Binding, E).
 
-%% Handle forms evaluation. The main difference to
-%% eval_quoted is that it does not linify the given
-%% args.
-
 eval_forms(Tree, Binding, Opts) when is_list(Opts) ->
   eval_forms(Tree, Binding, env_for_eval(Opts));
-eval_forms(Tree, Binding, E) ->
-  eval_forms(Tree, Binding, E, elixir_env:env_to_scope(E)).
-eval_forms(Tree, Binding, Env, Scope) ->
-  {ParsedBinding, ParsedVars, ParsedScope} = elixir_erl_var:load_binding(Binding, Scope),
-  ParsedEnv = elixir_env:with_vars(Env, ParsedVars),
-  {Erl, NewEnv, NewScope} = quoted_to_erl(Tree, ParsedEnv, ParsedScope),
+eval_forms(Tree, RawBinding, OE) ->
+  {Vars, Binding} = normalize_binding(RawBinding, [], []),
+  E = elixir_env:with_vars(OE, Vars),
+  {_, S} = elixir_env:env_to_scope(E),
+  {Erl, NewE, NewS} = quoted_to_erl(Tree, E, S),
 
   case Erl of
     {atom, _, Atom} ->
-      {Atom, Binding, NewEnv, NewScope};
+      {Atom, Binding, NewE};
+
     _  ->
-      % Below must be all one line for locations to be the same
-      % when the stacktrace is extended to the full stacktrace.
-      {value, Value, NewBinding} =
-        try erl_eval:expr(Erl, ParsedBinding, none, none, none) catch ?WITH_STACKTRACE(Class, Exception, Stacktrace) erlang:raise(Class, Exception, get_stacktrace(Stacktrace)) end,
-      {Value, elixir_erl_var:dump_binding(NewBinding, NewScope), NewEnv, NewScope}
+      Exprs =
+        case Erl of
+          {block, _, BlockExprs} -> BlockExprs;
+          _ -> [Erl]
+        end,
+
+      ErlBinding = elixir_erl_var:load_binding(Binding, E, S),
+      {value, Value, NewBinding} = recur_eval(Exprs, ErlBinding, NewE),
+      {Value, elixir_erl_var:dump_binding(NewBinding, NewE, NewS), NewE}
   end.
 
-get_stacktrace(Stacktrace) ->
+normalize_binding([{Key, Value} | Binding], Vars, Acc) when is_atom(Key) ->
+  normalize_binding(Binding, [{Key, nil} | Vars], [{{Key, nil}, Value} | Acc]);
+normalize_binding([{Pair, Value} | Binding], Vars, Acc) ->
+  normalize_binding(Binding, [Pair | Vars], [{Pair, Value} | Acc]);
+normalize_binding([], Vars, Acc) ->
+  {Vars, Acc}.
+
+recur_eval([Expr | Exprs], Binding, Env) ->
+  {value, Value, NewBinding} =
+    % Below must be all one line for locations to be the same
+    % when the stacktrace is extended to the full stacktrace.
+    try erl_eval:expr(Expr, Binding, none, none, none) catch Class:Exception:Stacktrace -> erlang:raise(Class, rewrite_exception(Exception, Stacktrace, Expr, Env), rewrite_stacktrace(Stacktrace)) end,
+
+  case Exprs of
+    [] -> {value, Value, NewBinding};
+    _ -> recur_eval(Exprs, NewBinding, Env)
+  end.
+
+rewrite_exception(badarg, [{Mod, _, _, _} | _], Erl, #{file := File}) when Mod == erl_eval; Mod == eval_bits ->
+  {Min, Max} =
+    erl_parse:fold_anno(fun(Anno, {Min, Max}) ->
+      case erl_anno:line(Anno) of
+        Line when Line > 0 -> {min(Min, Line), max(Max, Line)};
+        _ -> {Min, Max}
+      end
+    end, {999999, -999999}, Erl),
+
+  'Elixir.ArgumentError':exception(
+    erlang:iolist_to_binary(
+      ["argument error while evaluating", badarg_file(File), badarg_line(Min, Max)]
+    )
+  );
+rewrite_exception(Other, _, _, _) ->
+  Other.
+
+badarg_file(<<"nofile">>) -> "";
+badarg_file(Path) -> [$\s, 'Elixir.Path':relative_to_cwd(Path)].
+
+badarg_line(999999, -999999) -> [];
+badarg_line(Line, Line) -> [" at line ", integer_to_binary(Line)];
+badarg_line(Min, Max) -> [" between lines ", integer_to_binary(Min), " and ", integer_to_binary(Max)].
+
+rewrite_stacktrace(Stacktrace) ->
   % eval_eval and eval_bits can call :erlang.raise/3 without the full
   % stacktrace. When this occurs re-add the current stacktrace so that no
   % stack information is lost.
-  try
-    throw(stack)
-  catch
-    ?WITH_STACKTRACE(throw, stack, CurrentStack)
-      % Ignore stack item for current function.
-      merge_stacktrace(Stacktrace, tl(CurrentStack))
-  end.
+  {current_stacktrace, CurrentStack} = erlang:process_info(self(), current_stacktrace),
+  merge_stacktrace(Stacktrace, tl(CurrentStack)).
 
 % The stacktrace did not include the current stack, re-add it.
 merge_stacktrace([], CurrentStack) ->
@@ -299,8 +324,9 @@ merge_stacktrace([StackItem | Stacktrace], CurrentStack) ->
 
 %% Converts a quoted expression to Erlang abstract format
 
-quoted_to_erl(Quoted, Env) ->
-  quoted_to_erl(Quoted, Env, elixir_env:env_to_scope(Env)).
+quoted_to_erl(Quoted, E) ->
+  {_, S} = elixir_env:env_to_scope(E),
+  quoted_to_erl(Quoted, E, S).
 
 quoted_to_erl(Quoted, Env, Scope) ->
   {Expanded, NewEnv} = elixir_expand:expand(Quoted, Env),
@@ -332,7 +358,8 @@ tokens_to_quoted(Tokens, File, Opts) ->
   after
     erase(elixir_parser_file),
     erase(elixir_parser_columns),
-    erase(elixir_formatter_metadata)
+    erase(elixir_token_metadata),
+    erase(elixir_literal_encoder)
   end.
 
 parser_line({Line, _, _}) ->
@@ -360,8 +387,14 @@ to_binary(List) when is_list(List) -> elixir_utils:characters_to_binary(List);
 to_binary(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8).
 
 handle_parsing_opts(File, Opts) ->
-  FormatterMetadata = lists:keyfind(formatter_metadata, 1, Opts) == {formatter_metadata, true},
+  LiteralEncoder =
+    case lists:keyfind(literal_encoder, 1, Opts) of
+      {literal_encoder, Fun} -> Fun;
+      false -> false
+    end,
+  TokenMetadata = lists:keyfind(token_metadata, 1, Opts) == {token_metadata, true},
   Columns = lists:keyfind(columns, 1, Opts) == {columns, true},
   put(elixir_parser_file, File),
   put(elixir_parser_columns, Columns),
-  put(elixir_formatter_metadata, FormatterMetadata).
+  put(elixir_token_metadata, TokenMetadata),
+  put(elixir_literal_encoder, LiteralEncoder).

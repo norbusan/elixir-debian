@@ -1,7 +1,7 @@
 Code.require_file("../test_helper.exs", __DIR__)
 
 defmodule Kernel.ImplTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   defp capture_err(fun) do
     ExUnit.CaptureIO.capture_io(:stderr, fun)
@@ -29,29 +29,29 @@ defmodule Kernel.ImplTest do
   end
 
   defmodule UseBehaviourWithoutImpl do
-    @callback foo() :: any
-    @callback bar() :: any
-    @callback baz() :: any
+    @callback foo_without_impl() :: any
+    @callback bar_without_impl() :: any
+    @callback baz_without_impl() :: any
 
     defmacro __using__(_opts) do
       quote do
         @behaviour Kernel.ImplTest.UseBehaviourWithoutImpl
-        def foo(), do: :auto_generated
+        def foo_without_impl(), do: :auto_generated
       end
     end
   end
 
   defmodule UseBehaviourWithImpl do
-    @callback foo() :: any
-    @callback bar() :: any
-    @callback baz() :: any
+    @callback foo_with_impl() :: any
+    @callback bar_with_impl() :: any
+    @callback baz_with_impl() :: any
 
     defmacro __using__(_opts) do
       quote do
         @behaviour Kernel.ImplTest.UseBehaviourWithImpl
         @impl true
-        def foo(), do: :auto_generated
-        def bar(), do: :auto_generated
+        def foo_with_impl(), do: :auto_generated
+        def bar_with_impl(), do: :auto_generated
       end
     end
   end
@@ -350,119 +350,103 @@ defmodule Kernel.ImplTest do
   end
 
   test "does not warn for @impl when the function with default conforms with several typespecs" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.Behaviour
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.Behaviour
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
 
-               @impl true
-               def foo(args \\ []), do: args
-             end
-             """)
-           end) == ""
+      @impl true
+      def foo(args \\ []), do: args
+    end
+    """)
   end
 
-  test "does not warn for @impl when the function conforms to typespec but has default value for arg" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
+  test "does not warn for @impl when the function conforms to behaviour but has default value for arg" do
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
 
-               @impl true
-               def foo(args \\ []), do: args
-             end
-             """)
-           end) == ""
+      @impl true
+      def foo(args \\ []), do: args
+    end
+    """)
   end
 
-  test "does not warn for @impl when the function conforms to typespec but has additional trailing default args" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
+  test "does not warn for @impl when the function conforms to behaviour but has additional trailing default args" do
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
 
-               @impl true
-               def foo(arg_1, _args \\ []), do: arg_1
-             end
-             """)
-           end) == ""
+      @impl true
+      def foo(arg_1, _args \\ []), do: arg_1
+    end
+    """)
   end
 
-  test "does not warn for @impl when the function conforms to typespec but has additional leading default args" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
+  test "does not warn for @impl when the function conforms to behaviour but has additional leading default args" do
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
 
-               @impl true
-               def foo(_defaulted_arg \\ [], args), do: args
-             end
-             """)
-           end) == ""
+      @impl true
+      def foo(_defaulted_arg \\ [], args), do: args
+    end
+    """)
   end
 
   test "does not warn for @impl when the function has more args than callback, but they're all defaulted" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
 
-               @impl true
-               def foo(args \\ [], _bar \\ []), do: args
-             end
-             """)
-           end) == ""
+      @impl true
+      def foo(args \\ [], _bar \\ []), do: args
+    end
+    """)
   end
 
   test "does not warn for @impl with defaults when the same function is defined multiple times" do
-    assert capture_err(fn ->
-             Code.eval_string(~S"""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.BehaviourWithArgument
-               @behaviour Kernel.ImplTest.BehaviourWithThreeArguments
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.BehaviourWithArgument
+      @behaviour Kernel.ImplTest.BehaviourWithThreeArguments
 
-               @impl Kernel.ImplTest.BehaviourWithArgument
-               def foo(_foo \\ [], _bar \\ []), do: :ok
+      @impl Kernel.ImplTest.BehaviourWithArgument
+      def foo(_foo \\ [], _bar \\ []), do: :ok
 
-               @impl Kernel.ImplTest.BehaviourWithThreeArguments
-               def foo(_foo, _bar, _baz, _qux \\ []), do: :ok
-             end
-             """)
-           end) == ""
+      @impl Kernel.ImplTest.BehaviourWithThreeArguments
+      def foo(_foo, _bar, _baz, _qux \\ []), do: :ok
+    end
+    """)
   end
 
   test "does not warn for no @impl when overriding callback" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.Behaviour
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.Behaviour
 
-               def foo(), do: :overridable
+      def foo(), do: :overridable
 
-               defoverridable Kernel.ImplTest.Behaviour
+      defoverridable Kernel.ImplTest.Behaviour
 
-               def foo(), do: :overridden
-             end
-             """)
-           end) == ""
+      def foo(), do: :overridden
+    end
+    """)
   end
 
   test "does not warn for overridable function missing @impl" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @behaviour Kernel.ImplTest.Behaviour
+    Code.eval_string(~S"""
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @behaviour Kernel.ImplTest.Behaviour
 
-               def foo(), do: :overridable
+      def foo(), do: :overridable
 
-               defoverridable Kernel.ImplTest.Behaviour
+      defoverridable Kernel.ImplTest.Behaviour
 
-               @impl Kernel.ImplTest.Behaviour
-               def foo(), do: :overridden
-             end
-             """)
-           end) == ""
+      @impl Kernel.ImplTest.Behaviour
+      def foo(), do: :overridden
+    end
+    """)
   end
 
   test "warns correctly for missing @impl only for end-user implemented function" do
@@ -514,14 +498,16 @@ defmodule Kernel.ImplTest do
           use Kernel.ImplTest.UseBehaviourWithoutImpl
 
           @impl true
-          def bar(), do: :overridden
-          def baz(), do: :overridden
+          def bar_without_impl(), do: :overridden
+          def baz_without_impl(), do: :overridden
         end
         """)
       end)
 
-    assert message =~ "module attribute @impl was not set for function baz/0 callback"
-    refute message =~ "foo/0"
+    assert message =~
+             "module attribute @impl was not set for function baz_without_impl/0 callback"
+
+    refute message =~ "foo_without_impl/0"
   end
 
   test "warns only for generated functions in generated @impl" do
@@ -530,42 +516,40 @@ defmodule Kernel.ImplTest do
         Code.eval_string("""
         defmodule Kernel.ImplTest.ImplAttributes do
           use Kernel.ImplTest.UseBehaviourWithImpl
-          def baz(), do: :overridden
+          def baz_with_impl(), do: :overridden
         end
         """)
       end)
 
-    assert message =~ "module attribute @impl was not set for function bar/0 callback"
-    refute message =~ "foo/0"
+    assert message =~ "module attribute @impl was not set for function bar_with_impl/0 callback"
+    refute message =~ "foo_with_impl/0"
   end
 
   test "does not warn for overridable callback when using __before_compile__/1 hook" do
-    assert capture_err(fn ->
-             Code.eval_string("""
-             defmodule BeforeCompile do
-               defmacro __before_compile__(_) do
-                 quote do
-                   @behaviour Kernel.ImplTest.Behaviour
+    Code.eval_string(~S"""
+    defmodule BeforeCompile do
+      defmacro __before_compile__(_) do
+        quote do
+          @behaviour Kernel.ImplTest.Behaviour
 
-                   def foo(), do: :overridable
+          def foo(), do: :overridable
 
-                   defoverridable Kernel.ImplTest.Behaviour
-                 end
-               end
-             end
+          defoverridable Kernel.ImplTest.Behaviour
+        end
+      end
+    end
 
-             defmodule Kernel.ImplTest.ImplAttributes do
-               @before_compile BeforeCompile
-               @behaviour Kernel.ImplTest.MacroBehaviour
+    defmodule Kernel.ImplTest.ImplAttributes do
+      @before_compile BeforeCompile
+      @behaviour Kernel.ImplTest.MacroBehaviour
 
-               defmacro bar(), do: :overridable
+      defmacro bar(), do: :overridable
 
-               defoverridable Kernel.ImplTest.MacroBehaviour
+      defoverridable Kernel.ImplTest.MacroBehaviour
 
-               @impl Kernel.ImplTest.MacroBehaviour
-               defmacro bar(), do: :overridden
-             end
-             """)
-           end) == ""
+      @impl Kernel.ImplTest.MacroBehaviour
+      defmacro bar(), do: :overridden
+    end
+    """)
   end
 end

@@ -1,7 +1,7 @@
 Code.require_file("test_helper.exs", __DIR__)
 
 defmodule IOTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
 
   doctest IO
 
@@ -16,6 +16,22 @@ defmodule IOTest do
   test "read with UTF-8 and binary" do
     {:ok, file} = File.open(Path.expand('fixtures/utf8.txt', __DIR__), [:utf8])
     assert "Русский" == IO.read(file, 7)
+    assert File.close(file) == :ok
+  end
+
+  test "read all charlist" do
+    {:ok, file} = File.open(Path.expand('fixtures/multiline_file.txt', __DIR__), [:charlist])
+    assert 'this is the first line\nthis is the second line\n' == IO.read(file, :all)
+    assert File.close(file) == :ok
+  end
+
+  test "read empty file" do
+    {:ok, file} = File.open(Path.expand('fixtures/cp_mode', __DIR__), [])
+    assert IO.read(file, :all) == ""
+    assert File.close(file) == :ok
+
+    {:ok, file} = File.open(Path.expand('fixtures/cp_mode', __DIR__), [:charlist])
+    assert IO.read(file, :all) == ''
     assert File.close(file) == :ok
   end
 
@@ -119,11 +135,20 @@ defmodule IOTest do
   end
 
   test "warn with chardata" do
-    assert capture_io(:stderr, fn -> IO.warn("hello") end) =~ "hello\n  (ex_unit) lib/ex_unit"
-    assert capture_io(:stderr, fn -> IO.warn('hello') end) =~ "hello\n  (ex_unit) lib/ex_unit"
-    assert capture_io(:stderr, fn -> IO.warn(:hello) end) =~ "hello\n  (ex_unit) lib/ex_unit"
-    assert capture_io(:stderr, fn -> IO.warn(13) end) =~ "13\n  (ex_unit) lib/ex_unit"
+    assert capture_io(:stderr, fn -> IO.warn("hello") end) =~
+             "hello\n  (ex_unit #{System.version()}) lib/ex_unit"
+
+    assert capture_io(:stderr, fn -> IO.warn('hello') end) =~
+             "hello\n  (ex_unit #{System.version()}) lib/ex_unit"
+
+    assert capture_io(:stderr, fn -> IO.warn(:hello) end) =~
+             "hello\n  (ex_unit #{System.version()}) lib/ex_unit"
+
+    assert capture_io(:stderr, fn -> IO.warn(13) end) =~
+             "13\n  (ex_unit #{System.version()}) lib/ex_unit"
+
     assert capture_io(:stderr, fn -> IO.warn("hello", []) end) =~ "hello\n"
+
     stacktrace = [{IEx.Evaluator, :eval, 4, [file: 'lib/iex/evaluator.ex', line: 108]}]
 
     assert capture_io(:stderr, fn -> IO.warn("hello", stacktrace) end) =~ """

@@ -191,6 +191,18 @@ defmodule Mix.Tasks.DepsTest do
     end)
   end
 
+  test "doesn't compile any umbrella apps if --skip-umbrella-children given" do
+    in_fixture("umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", fn _ ->
+        refute File.exists?("_build/dev/lib/foo/ebin")
+        refute File.exists?("_build/dev/lib/bar/ebin")
+        Mix.Tasks.Deps.Compile.run(["--skip-umbrella-children"])
+        refute File.exists?("_build/dev/lib/foo/ebin")
+        refute File.exists?("_build/dev/lib/bar/ebin")
+      end)
+    end)
+  end
+
   ## deps.loadpaths
 
   test "checks list of dependencies and their status with success" do
@@ -244,7 +256,7 @@ defmodule Mix.Tasks.DepsTest do
 
       # Remove the deps but set build_path, deps won't be pruned, but load paths are
       Mix.ProjectStack.post_config(deps: [], build_path: "_build")
-      Mix.ProjectStack.clear_cache()
+      Mix.State.clear_cache()
       Mix.Project.pop()
       Mix.Project.push(SuccessfulDepsApp)
 
@@ -255,7 +267,7 @@ defmodule Mix.Tasks.DepsTest do
 
       # Remove the deps without build_path, deps will be pruned
       Mix.ProjectStack.post_config(deps: [])
-      Mix.ProjectStack.clear_cache()
+      Mix.State.clear_cache()
       Mix.Project.pop()
       Mix.Project.push(SuccessfulDepsApp)
 
@@ -283,7 +295,7 @@ defmodule Mix.Tasks.DepsTest do
 
       # Remove the deps without build_path
       Mix.ProjectStack.post_config(deps: [])
-      Mix.ProjectStack.clear_cache()
+      Mix.State.clear_cache()
       Mix.Project.pop()
       Mix.Project.push(SuccessfulDepsApp)
       Code.delete_path("_build/dev/lib/ok/ebin")
@@ -305,6 +317,32 @@ defmodule Mix.Tasks.DepsTest do
       assert Mix.Dep.Lock.read() == %{git_repo: "abcdef"}
       Mix.Tasks.Deps.Unlock.run(["--all"])
       assert Mix.Dep.Lock.read() == %{}
+    end)
+  end
+
+  test "checks lock file has unused deps with --check-unused", context do
+    Mix.Project.push(DepsApp)
+
+    in_tmp(context.test, fn ->
+      Mix.Dep.Lock.write(%{whatever: "0.2.0", something_else: "1.2.3", ok: "0.1.0"})
+      assert Mix.Dep.Lock.read() == %{whatever: "0.2.0", something_else: "1.2.3", ok: "0.1.0"}
+
+      error = """
+      Unused dependencies in mix.lock file:
+
+        * :something_else
+        * :whatever
+      """
+
+      assert_raise Mix.Error, error, fn ->
+        Mix.Tasks.Deps.Unlock.run(["--check-unused"])
+      end
+
+      assert Mix.Dep.Lock.read() == %{whatever: "0.2.0", something_else: "1.2.3", ok: "0.1.0"}
+
+      Mix.Tasks.Deps.Unlock.run(["--unused"])
+      Mix.Tasks.Deps.Unlock.run(["--check-unused"])
+      assert Mix.Dep.Lock.read() == %{ok: "0.1.0"}
     end)
   end
 

@@ -50,6 +50,21 @@ defmodule Mix.ReleaseTest do
       assert release.options[:quiet]
     end
 
+    test "allows specifying the version from an application" do
+      overrides = [version: {:from_app, :elixir}]
+      release = from_config!(nil, config(), overrides)
+
+      assert release.version == to_string(Application.spec(:elixir, :vsn))
+    end
+
+    test "raises when :from_app is used with an app that doesn't exist" do
+      overrides = [version: {:from_app, :not_valid}]
+
+      assert_raise Mix.Error,
+                   ~r"Could not find version for :not_valid, please make sure the application exists",
+                   fn -> from_config!(nil, config(), overrides) end
+    end
+
     test "includes applications" do
       release = from_config!(nil, config(), [])
       assert release.applications.mix[:path] == to_charlist(Application.app_dir(:mix))
@@ -57,6 +72,12 @@ defmodule Mix.ReleaseTest do
 
       assert release.applications.kernel[:path] == to_charlist(Application.app_dir(:kernel))
       assert release.applications.kernel[:otp_app?]
+    end
+
+    test "allows release to be given as an anonymous function" do
+      release = from_config!(:foo, config(releases: [foo: fn -> [version: "0.2.0"] end]), [])
+      assert release.name == :foo
+      assert release.version == "0.2.0"
     end
 
     test "uses chosen release via the CLI" do
@@ -80,7 +101,7 @@ defmodule Mix.ReleaseTest do
     test "uses chosen release via the default_release" do
       release =
         from_config!(
-          :bar,
+          nil,
           config(
             default_release: :bar,
             releases: [foo: [version: "0.2.0"], bar: [version: "0.3.0"]]
@@ -112,12 +133,27 @@ defmodule Mix.ReleaseTest do
 
     test "uses the latest version of an app if there are multiple versions", context do
       in_tmp(context.test, fn ->
-        File.cp_r!(:code.root_dir(), ".", fn _, _ -> false end)
-        File.mkdir_p!("lib/compiler-1.0")
-        erts_source = Path.join(File.cwd!(), "erts-#{@erts_version}")
+        test_erts_dir = Path.join(File.cwd!(), "erts-#{@erts_version}")
+        test_libs_dir = Path.join(File.cwd!(), "lib")
+        libs_dir = Path.join(:code.root_dir(), "lib")
+        libs = File.ls!(libs_dir)
 
-        release = from_config!(nil, config(releases: [demo: [include_erts: erts_source]]), [])
+        File.cp_r!(@erts_source, test_erts_dir)
 
+        for lib <- libs,
+            source_file <- Path.wildcard(Path.join([libs_dir, lib, "ebin", "*.app"])) do
+          target_dir = Path.join([test_libs_dir, lib, "ebin"])
+          target_file = Path.join(target_dir, Path.basename(source_file))
+
+          File.mkdir_p!(target_dir)
+          File.cp!(source_file, target_file)
+        end
+
+        File.mkdir_p!(Path.join("lib", "compiler-1.0"))
+
+        release = from_config!(nil, config(releases: [demo: [include_erts: test_erts_dir]]), [])
+
+        assert Path.dirname(release.applications.compiler[:path]) == test_libs_dir
         assert release.applications.compiler[:vsn] != "1.0"
       end)
     end
@@ -131,6 +167,12 @@ defmodule Mix.ReleaseTest do
     test "raises for missing version" do
       assert_raise Mix.Error, ~r"No :version found", fn ->
         from_config!(nil, config() |> Keyword.drop([:version]), [])
+      end
+    end
+
+    test "raises for blank version" do
+      assert_raise Mix.Error, ~r"The release :version cannot be an empty string", fn ->
+        from_config!(nil, config(version: ""), [])
       end
     end
 
@@ -152,6 +194,14 @@ defmodule Mix.ReleaseTest do
       assert_raise Mix.Error,
                    ~r"The :steps option must contain the atom :assemble once",
                    fn -> release(steps: [:assemble, :assemble]) end
+
+      assert_raise Mix.Error,
+                   ~r"The :tar step must come after :assemble",
+                   fn -> release(steps: [:tar, :assemble]) end
+
+      assert_raise Mix.Error,
+                   ~r"The :steps option can only contain the atom :tar once",
+                   fn -> release(steps: [:assemble, :tar, :tar]) end
 
       assert_raise Mix.Error,
                    ~r"The :steps option must be",
@@ -468,7 +518,19 @@ defmodule Mix.ReleaseTest do
       assert File.read!(@sys_config) =~ "%% RUNTIME_CONFIG=true"
       {:ok, [config]} = :file.consult(@sys_config)
       assert %Config.Provider{} = provider = config[:elixir][:config_providers]
+      assert provider.reboot_after_config
       assert provider.prune_after_boot
+      assert provider.extra_config == []
+      assert config[:kernel] == [key: :value]
+    end
+
+    test "writes the given sys_config without reboot" do
+      release = release(config_providers: @providers, reboot_system_after_config: false)
+      assert make_sys_config(release, [kernel: [key: :value]], "/foo/bar/bat") == :ok
+      assert File.read!(@sys_config) =~ "%% RUNTIME_CONFIG=false"
+      {:ok, [config]} = :file.consult(@sys_config)
+      assert %Config.Provider{} = provider = config[:elixir][:config_providers]
+      refute provider.reboot_after_config
       assert provider.extra_config == []
       assert config[:kernel] == [key: :value]
     end
@@ -489,6 +551,7 @@ defmodule Mix.ReleaseTest do
                ~s|ROOTDIR="$(dirname "$(dirname "$BINDIR")")"|
 
       refute File.exists?(Path.join(destination, "bin/erl.ini"))
+      refute File.exists?(Path.join(destination, "doc"))
     end
 
     test "does not copy when include_erts is false" do

@@ -9,6 +9,7 @@ defmodule Kernel.RaiseTest do
   defp opts, do: [message: "message"]
   defp struct, do: %RuntimeError{message: "message"}
 
+  @compile {:no_warn_undefined, DoNotExist}
   @trace [{:foo, :bar, 0, []}]
 
   test "raise message" do
@@ -133,6 +134,16 @@ defmodule Kernel.RaiseTest do
     end
   end
 
+  test "reraise with invalid stacktrace" do
+    try do
+      reraise %RuntimeError{message: "message"}, {:oops, @trace}
+    rescue
+      ArgumentError ->
+        {name, arity} = __ENV__.function
+        assert [{__MODULE__, ^name, ^arity, _} | _] = __STACKTRACE__
+    end
+  end
+
   describe "rescue" do
     test "runtime error" do
       result =
@@ -197,7 +208,7 @@ defmodule Kernel.RaiseTest do
       assert result
     end
 
-    test "argument error from erlang" do
+    test "argument error from Erlang" do
       result =
         try do
           :erlang.error(:badarg)
@@ -208,7 +219,7 @@ defmodule Kernel.RaiseTest do
       assert result
     end
 
-    test "argument error from elixir" do
+    test "argument error from Elixir" do
       result =
         try do
           raise ArgumentError, ""

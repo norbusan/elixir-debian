@@ -192,7 +192,7 @@ defmodule ExUnit.FormatterTest do
                     def fetch(%module{} = container, key)
            """
 
-    assert failure =~ ~r"\(elixir\) lib/access\.ex:\d+: Access\.fetch/2"
+    assert failure =~ ~r"\(elixir #{System.version()}\) lib/access\.ex:\d+: Access\.fetch/2"
   end
 
   test "formats setup_all errors" do
@@ -201,6 +201,18 @@ defmodule ExUnit.FormatterTest do
     assert format_test_all_failure(test_module(), failure, 1, 80, &formatter/2) =~ """
              1) Hello: failure on setup_all callback, all tests have been invalidated
                 ** (RuntimeError) oops
+           """
+  end
+
+  test "formats matches correctly" do
+    failure = [{:error, catch_assertion(assert %{a: :b} = %{a: :c}), []}]
+
+    assert format_test_all_failure(test_module(), failure, 1, :infinity, &formatter/2) =~ """
+             1) Hello: failure on setup_all callback, all tests have been invalidated
+                match (=) failed
+                code:  assert %{a: :b} = %{a: :c}
+                left:  %{a: :b}
+                right: %{a: :c}
            """
   end
 
@@ -223,9 +235,7 @@ defmodule ExUnit.FormatterTest do
              1) Hello: failure on setup_all callback, all tests have been invalidated
                 Assertion with == failed
                 code:  assert [1, 2, 3] == [4, 5, 6]
-                left:  [1,
-                        2,
-                        3]
+                left:  [1, 2, 3]
                 right: [4,
                         5,
                         6]
