@@ -171,7 +171,7 @@ defmodule Mix.Local.Installer do
   @doc """
   Receives `argv` and `opts` from options parsing and returns an `install_spec`.
   """
-  @spec parse_args([String.t()], keyword) :: install_spec
+  @spec parse_args([String.t()], keyword) :: install_spec | {:error, String.t()}
   def parse_args(argv, opts)
 
   def parse_args([], _opts) do
@@ -193,7 +193,7 @@ defmodule Mix.Local.Installer do
   end
 
   def parse_args(["git", url], opts) do
-    parse_args(["git", url, "branch", "master"], opts)
+    git_fetcher(url, [], opts)
   end
 
   def parse_args(["git", url, ref_type, ref], opts) do
@@ -202,16 +202,7 @@ defmodule Mix.Local.Installer do
         {:error, error}
 
       git_config ->
-        git_opts = git_config ++ [git: url, submodules: opts[:submodules]]
-
-        app_name =
-          if opts[:app] do
-            opts[:app]
-          else
-            "new package"
-          end
-
-        {:fetcher, {String.to_atom(app_name), git_opts}}
+        git_fetcher(url, git_config, opts)
     end
   end
 
@@ -231,16 +222,39 @@ defmodule Mix.Local.Installer do
         package_name
       end
 
-    dep_opts =
-      opts
-      |> Keyword.take([:organization])
-      |> Keyword.put(:hex, String.to_atom(package_name))
+    dep_opts = [
+      hex: String.to_atom(package_name),
+      repo: hex_repo(opts)
+    ]
 
     {:fetcher, {String.to_atom(app_name), version, dep_opts}}
   end
 
   def parse_args(["hex" | [_package_name | rest]], _opts) do
     {:error, "received invalid Hex package spec: #{Enum.join(rest, " ")}"}
+  end
+
+  defp hex_repo(opts) do
+    repo = Keyword.get(opts, :repo, "hexpm")
+
+    if organization = opts[:organization] do
+      repo <> ":" <> organization
+    else
+      repo
+    end
+  end
+
+  defp git_fetcher(url, git_config, opts) do
+    git_opts = git_config ++ [git: url, submodules: opts[:submodules]]
+
+    app_name =
+      if opts[:app] do
+        opts[:app]
+      else
+        "new package"
+      end
+
+    {:fetcher, {String.to_atom(app_name), git_opts}}
   end
 
   defp ref_to_config("branch", branch), do: [branch: branch]

@@ -36,7 +36,9 @@ defmodule IEx.Pry do
     opts = [
       binding: binding,
       dot_iex_path: "",
-      env: env,
+      # Remove all tracers because the tracer code is most
+      # likely stale by the time we are prying the code.
+      env: %{env | tracers: []},
       prefix: "pry",
       stacktrace: prune_stacktrace(stacktrace)
     ]
@@ -56,20 +58,8 @@ defmodule IEx.Pry do
         :error -> []
       end
 
-    # If we are the current evaluator, it is because we just
-    # reached a pry/breakpoint and the user hit continue().
-    # In both cases, we are safe to print and the request will
-    # succeed.
-    request =
-      if Process.get(:iex_evaluator) do
-        IO.puts(IEx.color(:eval_interrupt, "Break reached: #{location}#{whereami}"))
-        "Prying #{inspect(self)} at #{location}"
-      else
-        "Request to pry #{inspect(self)} at #{location}#{whereami}"
-      end
-
     # We cannot use colors because IEx may be off
-    case IEx.Broker.take_over(request, [evaluator: self()] ++ opts) do
+    case IEx.Broker.take_over(location, whereami, [evaluator: self()] ++ opts) do
       {:ok, server, group_leader} ->
         IEx.Evaluator.init(:no_ack, server, group_leader, opts)
 

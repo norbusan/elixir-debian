@@ -4,6 +4,7 @@ defmodule ExUnit.AssertionsTest.Value do
   def tuple, do: {2, 1}
   def falsy, do: nil
   def truthy, do: :truthy
+  def binary, do: <<5, "Frank the Walrus">>
 end
 
 defmodule ExUnit.AssertionsTest.BrokenError do
@@ -153,6 +154,27 @@ defmodule ExUnit.AssertionsTest do
 
   test "assert match when equal" do
     {2, 1} = assert {2, 1} = Value.tuple()
+
+    # With dup vars
+    assert {tuple, tuple} = {Value.tuple(), Value.tuple()}
+    assert <<name_size::size(8), _::binary-size(name_size), " the ", _::binary>> = Value.binary()
+  end
+
+  test "assert match with unused var" do
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             Code.eval_string("""
+             defmodule ExSample do
+               import ExUnit.Assertions
+
+               def run do
+                 {2, 1} = assert {2, var} = ExUnit.AssertionsTest.Value.tuple()
+               end
+             end
+             """)
+           end) =~ "variable \"var\" is unused"
+  after
+    :code.delete(ExSample)
+    :code.purge(ExSample)
   end
 
   test "assert match expands argument in match context" do
@@ -308,7 +330,7 @@ defmodule ExUnit.AssertionsTest do
     timeout = ok(1)
 
     try do
-      assert_receive {~l(a)}, timeout
+      assert_receive {~l(_a)}, timeout
     rescue
       error in [ArgumentError] ->
         "timeout must be a non-negative integer, got: {:ok, 1}" = error.message
@@ -673,11 +695,11 @@ defmodule ExUnit.AssertionsTest do
       """ <> _ = error.message
   end
 
-  test "assert greater than operator" do
+  test "assert greater-than operator" do
     true = assert 2 > 1
   end
 
-  test "assert greater than operator error" do
+  test "assert greater-than operator error" do
     "This should never be tested" = assert 1 > 2
   rescue
     error in [ExUnit.AssertionError] ->

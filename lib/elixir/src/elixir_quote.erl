@@ -1,5 +1,5 @@
 -module(elixir_quote).
--export([escape/3, linify/3, linify_with_context_counter/3, build/6, quote/6, has_unquotes/1]).
+-export([escape/3, linify/3, linify_with_context_counter/3, build/6, quote/6, has_unquotes/1, fun_to_quoted/1]).
 -export([dot/5, tail_list/3, list/2, validate_runtime/2]). %% Quote callbacks
 
 -include("elixir.hrl").
@@ -36,6 +36,8 @@ build(Meta, Line, File, Context, Unquote, Generated) ->
 
   {Q, Acc3}.
 
+validate_compile(_Meta, line, Value, Acc) when is_boolean(Value) ->
+  {Value, Acc};
 validate_compile(_Meta, file, nil, Acc) ->
   {nil, Acc};
 validate_compile(Meta, Key, Value, Acc) ->
@@ -56,13 +58,13 @@ validate_runtime(Key, Value) ->
     false ->
       erlang:error(
         'Elixir.ArgumentError':exception(
-          <<"invalid value for option :", (erlang:atom_to_binary(Key, utf8))/binary,
+          <<"invalid runtime value for option :", (erlang:atom_to_binary(Key, utf8))/binary,
             " in quote, got: ", ('Elixir.Kernel':inspect(Value))/binary>>
         )
       )
   end.
 
-is_valid(line, _Line) -> true;
+is_valid(line, Line) -> is_integer(Line);
 is_valid(file, File) -> is_binary(File);
 is_valid(context, Context) -> is_atom(Context) andalso (Context /= nil);
 is_valid(generated, Generated) -> is_boolean(Generated);
@@ -137,11 +139,11 @@ dot(Meta, Left, Right, nil) when is_atom(Right) ->
     "Elixir." ++ _ ->
       {'__aliases__', Meta, [Left, Right]};
     _ ->
-      {{'.', Meta, [Left, Right]}, Meta, []}
+      {{'.', Meta, [Left, Right]}, [{no_parens, true} | Meta], []}
   end;
 
 dot(Meta, Left, {Right, _, Context}, nil) when is_atom(Right), is_atom(Context) ->
-  {{'.', Meta, [Left, Right]}, Meta, []};
+  {{'.', Meta, [Left, Right]}, [{no_parens, true} | Meta], []};
 
 dot(Meta, Left, {Right, _, Args}, nil) when is_atom(Right) ->
   {{'.', Meta, [Left, Right]}, Meta, Args};
@@ -222,6 +224,15 @@ escape(Expr, Kind, Unquote) ->
     imports_hygiene=false,
     unquote=Unquote
   }, Kind).
+
+%% fun_to_quoted
+
+fun_to_quoted(Function) ->
+  Meta = [],
+  {module, Module} = erlang:fun_info(Function, module),
+  {name, Name}     = erlang:fun_info(Function, name),
+  {arity, Arity}   = erlang:fun_info(Function, arity),
+  {'&', Meta, [{'/', Meta, [{{'.', Meta, [Module, Name]}, [{no_parens, true} | Meta], []}, Arity]}]}.
 
 %% Quotes an expression and return its quoted Elixir AST.
 
@@ -399,7 +410,7 @@ do_escape(Other, _, _)
 do_escape(Fun, _, _) when is_function(Fun) ->
   case (erlang:fun_info(Fun, env) == {env, []}) andalso
        (erlang:fun_info(Fun, type) == {type, external}) of
-    true  -> Fun;
+    true  -> fun_to_quoted(Fun);
     false -> bad_escape(Fun)
   end;
 

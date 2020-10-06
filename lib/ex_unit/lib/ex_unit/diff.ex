@@ -26,17 +26,17 @@ defmodule ExUnit.Diff do
 
   The `left` side can be a literal or an AST, the `right` should always be a
   value. The `context` should be `{:match, pins}` for pattern matching and
-  `expr` for any other case.
+  `==` and `===` for comparison cases.
   """
   def compute(left, right, context) do
     diff(left, right, context_to_env(context))
   end
 
-  defp context_to_env(:expr),
-    do: %{pins: %{}, context: nil, current_vars: %{}}
-
   defp context_to_env({:match, pins}),
     do: %{pins: Map.new(pins), context: :match, current_vars: %{}}
+
+  defp context_to_env(op) when op in [:==, :===],
+    do: %{pins: %{}, context: op, current_vars: %{}}
 
   # Main entry point for recursive diff
 
@@ -129,6 +129,10 @@ defmodule ExUnit.Diff do
     {%__MODULE__{equivalent?: true, left: literal, right: literal}, env}
   end
 
+  defp diff_value(left, right, %{context: :==} = env) when left == right and is_number(left) do
+    {%__MODULE__{equivalent?: true, left: left, right: right}, env}
+  end
+
   defp diff_value(left, right, env) when is_number(left) and is_number(right) do
     diff_number(left, right, env)
   end
@@ -180,13 +184,18 @@ defmodule ExUnit.Diff do
   defp diff_guard({:when, _, [expression, clause]}, right, env) do
     {diff_expression, post_env} = diff_quoted(expression, right, env)
 
-    bindings = Map.merge(post_env.pins, post_env.current_vars)
-    {diff_clause, clause_equivalent?} = diff_guard_clause(clause, Map.to_list(bindings))
+    {guard_clause, guard_equivalent?} =
+      if diff_expression.equivalent? do
+        bindings = Map.merge(post_env.pins, post_env.current_vars)
+        diff_guard_clause(clause, Map.to_list(bindings))
+      else
+        {clause, false}
+      end
 
     diff = %__MODULE__{
       diff_expression
-      | left: {:when, [], [diff_expression.left, diff_clause]},
-        equivalent?: diff_expression.equivalent? and clause_equivalent?
+      | left: {:when, [], [diff_expression.left, guard_clause]},
+        equivalent?: guard_equivalent?
     }
 
     {diff, post_env}
@@ -280,6 +289,10 @@ defmodule ExUnit.Diff do
   end
 
   # Lists
+
+  defp diff_maybe_list([], [], env) do
+    {%__MODULE__{equivalent?: true, left: [], right: []}, env}
+  end
 
   defp diff_maybe_list(left, right, env) do
     if List.ascii_printable?(left) and List.ascii_printable?(right) do
@@ -628,11 +641,11 @@ defmodule ExUnit.Diff do
     left = load_struct(kw[:__struct__])
 
     if left && Enum.all?(kw, fn {k, _} -> Map.has_key?(left, k) end) do
-      if Macro.quoted_literal?(kw) do
-        {eval_kw, []} = Code.eval_quoted(kw, [])
+      with true <- Macro.quoted_literal?(kw),
+           {eval_kw, []} <- safe_eval(kw) do
         diff_quoted_struct(struct!(left, eval_kw), kw, right, struct1, env)
       else
-        diff_map(kw, right, struct1, maybe_struct(right), env)
+        _ -> diff_map(kw, right, struct1, maybe_struct(right), env)
       end
     else
       diff_map(kw, right, nil, maybe_struct(right), env)
@@ -648,10 +661,9 @@ defmodule ExUnit.Diff do
   end
 
   defp diff_struct(left, kw, right, struct1, struct2, env) do
-    if Inspect.impl_for(left) not in [Inspect.Any, Inspect.Map] do
-      inspect_left = inspect(left)
-      inspect_right = inspect(right)
-
+    with true <- Inspect.impl_for(left) not in [Inspect.Any, Inspect.Map],
+         {:ok, inspect_left} <- safe_inspect(left),
+         {:ok, inspect_right} <- safe_inspect(right) do
       if inspect_left != inspect_right do
         diff_string(inspect_left, inspect_right, :none, env)
       else
@@ -667,7 +679,7 @@ defmodule ExUnit.Diff do
         end
       end
     else
-      diff_map(kw, right, struct1, struct2, env)
+      _ -> diff_map(kw, right, struct1, struct2, env)
     end
   end
 
@@ -1063,5 +1075,17 @@ defmodule ExUnit.Diff do
 
   defp var_context({name, meta, context}) do
     {name, meta[:counter] || context}
+  end
+
+  defp safe_eval(expr) do
+    Code.eval_quoted(expr, [])
+  rescue
+    _ -> :error
+  end
+
+  defp safe_inspect(value) do
+    {:ok, inspect(value, safe: false)}
+  rescue
+    _ -> :error
   end
 end

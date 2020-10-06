@@ -15,8 +15,8 @@ defmodule Mix.Tasks.Deps.Compile do
     * `mix.exs` - invokes `mix compile`
     * `rebar.config` - invokes `rebar compile`
     * `Makefile.win`- invokes `nmake /F Makefile.win` (only on Windows)
-    * `Makefile` - invokes `gmake` on FreeBSD and OpenBSD, invokes `make`
-      on any other operating system (except on Windows)
+    * `Makefile` - invokes `gmake` on DragonFlyBSD, FreeBSD, NetBSD, and OpenBSD,
+      invokes `make` on any other operating system (except on Windows)
 
   The compilation can be customized by passing a `compile` option
   in the dependency:
@@ -30,11 +30,20 @@ defmodule Mix.Tasks.Deps.Compile do
   recompiled without propagating those changes upstream. To ensure
   `b` is included in the compilation step, pass `--include-children`.
 
-  If you want to exclude umbrella applications from building pass
-  `--skip-umbrella-children`.
+  ## Command line options
+
+    * `--force` - force compilation of deps
+    * `--skip-umbrella-children` - skips umbrella applications from compiling
+    * `--skip-local-deps` - skips non-remote dependencies, such as path deps, from compiling
+
   """
 
-  @switches [include_children: :boolean, force: :boolean, skip_umbrella_children: :boolean]
+  @switches [
+    include_children: :boolean,
+    force: :boolean,
+    skip_umbrella_children: :boolean,
+    skip_local_deps: :boolean
+  ]
 
   @impl true
   def run(args) do
@@ -61,13 +70,12 @@ defmodule Mix.Tasks.Deps.Compile do
   def compile(deps, options \\ []) do
     shell = Mix.shell()
     config = Mix.Project.deps_config()
-    skip_umbrella_children = Keyword.get(options, :skip_umbrella_children)
-
     Mix.Task.run("deps.precompile")
 
     compiled =
       deps
-      |> reject_umbrella_children(skip_umbrella_children)
+      |> reject_umbrella_children(options)
+      |> reject_local_deps(options)
       |> Enum.map(fn %Mix.Dep{app: app, status: status, opts: opts, scm: scm} = dep ->
         check_unavailable!(app, status)
         maybe_clean(dep, options)
@@ -154,7 +162,8 @@ defmodule Mix.Tasks.Deps.Compile do
 
       try do
         options = [
-          "--no-deps",
+          "--no-deps-loading",
+          "--no-apps-loading",
           "--no-archives-check",
           "--no-elixir-version-check",
           "--no-warnings-as-errors"
@@ -188,8 +197,14 @@ defmodule Mix.Tasks.Deps.Compile do
     config_path = Path.join(dep_path, "mix.rebar.config")
     lib_path = Path.join(config[:env_path], "lib/*/ebin")
 
-    env = [{"REBAR_CONFIG", config_path}, {"TERM", "dumb"}]
-    cmd = "#{rebar_cmd(dep)} bare compile --paths=#{inspect(lib_path)}"
+    # REBAR_BARE_COMPILER_OUTPUT_DIR is only honored by rebar3 >= 3.14
+    env = [
+      {"REBAR_CONFIG", config_path},
+      {"TERM", "dumb"},
+      {"REBAR_BARE_COMPILER_OUTPUT_DIR", dep_path}
+    ]
+
+    cmd = "#{rebar_cmd(dep)} bare compile --paths #{lib_path}"
 
     File.mkdir_p!(dep_path)
     File.write!(config_path, rebar_config(dep))
@@ -244,7 +259,7 @@ defmodule Mix.Tasks.Deps.Compile do
         {:win32, _} when makefile_win? ->
           "nmake /F Makefile.win"
 
-        {:unix, type} when type in [:freebsd, :openbsd] ->
+        {:unix, type} when type in [:dragonfly, :freebsd, :netbsd, :openbsd] ->
           "gmake"
 
         _ ->
@@ -317,12 +332,19 @@ defmodule Mix.Tasks.Deps.Compile do
     File.regular?(Path.join(opts[:dest], "Makefile.win"))
   end
 
-  defp reject_umbrella_children(deps, true) do
-    deps
-    |> Enum.reject(fn %{opts: opts} -> Keyword.get(opts, :from_umbrella) == true end)
+  defp reject_umbrella_children(deps, options) do
+    if options[:skip_umbrella_children] do
+      Enum.reject(deps, fn %{opts: opts} -> Keyword.get(opts, :from_umbrella) == true end)
+    else
+      deps
+    end
   end
 
-  defp reject_umbrella_children(deps, _) do
-    deps
+  defp reject_local_deps(deps, options) do
+    if options[:skip_local_deps] do
+      Enum.filter(deps, fn %{scm: scm} -> scm.fetchable? end)
+    else
+      deps
+    end
   end
 end

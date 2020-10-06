@@ -50,8 +50,10 @@ defmodule Mix.Tasks.Archive.Install do
     * `--app` - specifies a custom app name to be used for building the archive
       from Git, GitHub, or Hex
 
-    * `--organization` - specifies an organization to use if fetching the package
-      from a private Hex repository
+    * `--organization` - set this for Hex private packages belonging to an
+      organization
+
+    * `--repo` - set this for self-hosted Hex instances, defaults to `hexpm`
 
   """
 
@@ -63,6 +65,7 @@ defmodule Mix.Tasks.Archive.Install do
     submodules: :boolean,
     app: :string,
     organization: :string,
+    repo: :string,
     timeout: :integer
   ]
 
@@ -113,7 +116,7 @@ defmodule Mix.Tasks.Archive.Install do
     remove_previous_versions(previous)
 
     File.mkdir_p!(dir_dest)
-    {:ok, _} = :zip.extract(contents, cwd: dir_dest)
+    {:ok, _} = :zip.extract(contents, cwd: to_charlist(dir_dest))
     Mix.shell().info([:green, "* creating ", :reset, Path.relative_to_cwd(dir_dest)])
 
     ebin = Mix.Local.archive_ebin(dir_dest)

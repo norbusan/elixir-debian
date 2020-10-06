@@ -182,6 +182,7 @@ defmodule Logger.Formatter do
 
   defp metadata(:time, _), do: nil
   defp metadata(:gl, _), do: nil
+  defp metadata(:report_cb, _), do: nil
 
   defp metadata(_, nil), do: nil
   defp metadata(_, string) when is_binary(string), do: string
@@ -218,5 +219,12 @@ defmodule Logger.Formatter do
     Exception.format_mfa(mod, fun, arity)
   end
 
-  defp metadata(_, _), do: nil
+  defp metadata(_, list) when is_list(list), do: nil
+
+  defp metadata(_, other) do
+    case String.Chars.impl_for(other) do
+      nil -> nil
+      impl -> impl.to_string(other)
+    end
+  end
 end

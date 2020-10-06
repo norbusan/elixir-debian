@@ -1,6 +1,7 @@
 defmodule IO.ANSI.Docs do
   @moduledoc false
 
+  @bullet_text "• "
   @bullets [?*, ?-, ?+]
   @spaces [" ", "\n", "\t"]
 
@@ -46,15 +47,20 @@ defmodule IO.ANSI.Docs do
 
   See `default_options/0` for docs on the supported options.
   """
-  @spec print_heading(String.t(), keyword) :: :ok
-  def print_heading(heading, options \\ []) do
-    IO.puts(IO.ANSI.reset())
+  @spec print_headings([String.t()], keyword) :: :ok
+  def print_headings(headings, options \\ []) do
     options = Keyword.merge(default_options(), options)
+    newline_after_block(options)
     width = options[:width]
-    padding = div(width + String.length(heading), 2)
-    heading = heading |> String.pad_leading(padding) |> String.pad_trailing(width)
-    write(:doc_title, heading, options)
-    newline_after_block()
+
+    for heading <- headings do
+      padding = div(width + String.length(heading), 2)
+      heading = String.pad_leading(heading, padding)
+      heading = if options[:enabled], do: String.pad_trailing(heading, width), else: heading
+      write(:doc_title, heading, options)
+    end
+
+    newline_after_block(options)
   end
 
   @doc """
@@ -78,11 +84,11 @@ defmodule IO.ANSI.Docs do
         write_with_wrap([label | String.split(value, @spaces)], options[:width], indent, true, "")
 
       {key, value}, _printed when is_boolean(value) and key in @metadata_filter ->
-        IO.puts([metadata_label(key, options), ' ', to_string(value)])
+        IO.puts([metadata_label(key, options), ?\s, to_string(value)])
 
       {:delegate_to, {m, f, a}}, _printed ->
         label = metadata_label(:delegate_to, options)
-        IO.puts([label, ' ', Exception.format_mfa(m, f, a)])
+        IO.puts([label, ?\s, Exception.format_mfa(m, f, a)])
 
       _metadata, printed ->
         printed
@@ -90,21 +96,200 @@ defmodule IO.ANSI.Docs do
   end
 
   defp metadata_label(key, options) do
-    if options[:enabled] do
-      "#{color(:doc_metadata, options)}#{key}:#{IO.ANSI.reset()}"
-    else
-      "#{key}:"
-    end
+    "#{color(:doc_metadata, options)}#{key}:#{maybe_reset(options)}"
   end
 
   @doc """
-  Prints the documentation body.
+  Prints the documentation body `doc` according to `format`.
 
-  In addition to the printing string, takes a set of `options`
-  defined in `default_options/0`.
+  It takes a set of `options` defined in `default_options/0`.
   """
-  @spec print(String.t(), keyword) :: :ok
-  def print(doc, options \\ []) do
+  @spec print(term(), String.t(), keyword) :: :ok
+  def print(doc, format, options \\ [])
+
+  def print(doc, "text/markdown", options) when is_binary(doc) and is_list(options) do
+    print_markdown(doc, options)
+  end
+
+  def print(doc, "application/erlang+html", options) when is_list(options) do
+    print_erlang_html(doc, options)
+  end
+
+  def print(_doc, format, options) when is_binary(format) and is_list(options) do
+    IO.puts("\nUnknown documentation format #{inspect(format)}\n")
+  end
+
+  ## Erlang+html
+
+  def print_erlang_html(doc, options) do
+    options = Keyword.merge(default_options(), options)
+    IO.write(traverse_erlang_html(doc, "", options))
+  end
+
+  defp traverse_erlang_html(text, _indent, _options) when is_binary(text) do
+    text
+  end
+
+  defp traverse_erlang_html(nodes, indent, options) when is_list(nodes) do
+    for node <- nodes do
+      traverse_erlang_html(node, indent, options)
+    end
+  end
+
+  defp traverse_erlang_html({:div, [class: class] ++ _, entries}, indent, options) do
+    prefix = indent <> quote_prefix(options)
+
+    content =
+      entries
+      |> traverse_erlang_html(indent, options)
+      |> IO.iodata_to_binary()
+      |> String.trim_trailing()
+
+    [
+      prefix,
+      class |> to_string() |> String.upcase(),
+      "\n#{prefix}\n#{prefix}" | String.replace(content, "\n", "\n#{prefix}")
+    ]
+    |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:p, _, entries}, indent, options) do
+    [indent | handle_erlang_html_text(entries, indent, options)]
+  end
+
+  defp traverse_erlang_html({:h1, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(1, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:h2, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(2, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:h3, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(3, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:h4, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(4, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:h5, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(5, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:h6, _, entries}, indent, options) do
+    entries |> traverse_erlang_html(indent, options) |> heading(6, options) |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:br, _, []}, _indent, _options) do
+    []
+  end
+
+  defp traverse_erlang_html({:i, _, entries}, indent, options) do
+    inline_text("_", traverse_erlang_html(entries, indent, options), options)
+  end
+
+  defp traverse_erlang_html({:em, _, entries}, indent, options) do
+    inline_text("*", traverse_erlang_html(entries, indent, options), options)
+  end
+
+  defp traverse_erlang_html({:code, _, entries}, indent, options) do
+    inline_text("`", traverse_erlang_html(entries, indent, options), options)
+  end
+
+  defp traverse_erlang_html({:pre, _, [{:code, _, entries}]}, indent, options) do
+    string =
+      entries
+      |> traverse_erlang_html(indent, options)
+      |> IO.iodata_to_binary()
+
+    ["#{indent}    ", String.replace(string, "\n", "\n#{indent}    ")] |> newline_cons()
+  end
+
+  defp traverse_erlang_html({:a, attributes, entries}, indent, options) do
+    if href = attributes[:href] do
+      [traverse_erlang_html(entries, indent, options), ?\s, ?(, href, ?)]
+    else
+      traverse_erlang_html(entries, indent, options)
+    end
+  end
+
+  defp traverse_erlang_html({:dl, _, entries}, indent, options) do
+    traverse_erlang_html(entries, indent, options)
+  end
+
+  defp traverse_erlang_html({:dt, _, entries}, indent, options) do
+    ["#{indent}  ", @bullet_text | handle_erlang_html_text(entries, indent <> "    ", options)]
+  end
+
+  defp traverse_erlang_html({:dd, _, entries}, indent, options) do
+    ["#{indent}    " | handle_erlang_html_text(entries, indent <> "    ", options)]
+  end
+
+  defp traverse_erlang_html({:ul, attributes, entries}, indent, options) do
+    if attributes[:class] == "types" do
+      types =
+        for {:li, _, lines} <- entries,
+            line <- lines,
+            do: ["#{indent}    ", line, ?\n]
+
+      ["#{indent}Typespecs:\n\n", types, ?\n]
+    else
+      for {:li, _, lines} <- entries do
+        ["#{indent}  ", @bullet_text | handle_erlang_html_text(lines, indent <> "    ", options)]
+      end
+    end
+  end
+
+  defp traverse_erlang_html({:ol, _, entries}, indent, options) do
+    for {{:li, _, lines}, i} <- Enum.with_index(entries, 1) do
+      [
+        "#{indent}  ",
+        Integer.to_string(i),
+        ". " | handle_erlang_html_text(lines, indent <> "     ", options)
+      ]
+    end
+  end
+
+  defp traverse_erlang_html({tag, _, entries}, indent, options) do
+    [
+      indent <> "<#{tag}>\n",
+      traverse_erlang_html(entries, indent <> "    ", options)
+      |> IO.iodata_to_binary()
+      |> String.trim_trailing(),
+      "\n" <> indent <> "</#{tag}>"
+    ]
+    |> newline_cons()
+  end
+
+  defp newline_cons(text) do
+    [text | "\n\n"]
+  end
+
+  defp handle_erlang_html_text(entries, indent, options) do
+    if Enum.all?(entries, &inline_html?/1) do
+      entries
+      |> traverse_erlang_html(indent, options)
+      |> IO.iodata_to_binary()
+      |> String.split(@spaces)
+      |> wrap_text(options[:width], indent, true, "", [])
+      |> tl()
+      |> newline_cons()
+    else
+      entries
+      |> traverse_erlang_html(indent, options)
+      |> IO.iodata_to_binary()
+      |> String.trim_leading()
+    end
+  end
+
+  defp inline_html?(binary) when is_binary(binary), do: true
+  defp inline_html?({tag, _, _}) when tag in [:a, :code, :em, :i, :br], do: true
+  defp inline_html?(_), do: false
+
+  ## Markdown
+
+  def print_markdown(doc, options) do
     options = Keyword.merge(default_options(), options)
 
     doc
@@ -181,16 +366,16 @@ defmodule IO.ANSI.Docs do
     end
   end
 
-  ## Headings
+  ### Headings
 
   defp write_heading(heading, rest, text, indent, options) do
     write_text(text, indent, options)
     write(:doc_headings, heading, options)
-    newline_after_block()
+    newline_after_block(options)
     process(rest, [], "", options)
   end
 
-  ## Quotes
+  ### Quotes
 
   defp process_quote([], lines, indent, options) do
     write_quote(lines, indent, options, false)
@@ -223,21 +408,19 @@ defmodule IO.ANSI.Docs do
     )
   end
 
-  defp quote_prefix(options), do: "#{color(:doc_quote, options)}> #{IO.ANSI.reset()}"
-
   defp write_empty_quote_line(options) do
     options
     |> quote_prefix()
     |> IO.puts()
   end
 
-  ## Lists
+  ### Lists
 
   defp process_rest(stripped, rest, count, text, indent, options) do
     case stripped do
       <<bullet, ?\s, item::binary>> when bullet in @bullets ->
         write_text(text, indent, options)
-        process_list("• ", item, rest, count, indent, options)
+        process_list(@bullet_text, item, rest, count, indent, options)
 
       <<d1, ?., ?\s, item::binary>> when d1 in ?0..?9 ->
         write_text(text, indent, options)
@@ -257,10 +440,12 @@ defmodule IO.ANSI.Docs do
     entry = if indent == "", do: "  " <> entry, else: entry
     new_indent = indent <> String.duplicate(" ", String.length(entry))
 
-    {contents, rest, done} = process_list_next(rest, count, byte_size(new_indent), [])
+    {contents, rest, done} =
+      process_list_next(rest, count, byte_size(new_indent) - byte_size(indent), [])
+
     process(contents, [indent <> entry <> line, :no_wrap], new_indent, options)
 
-    if done, do: newline_after_block()
+    if done, do: newline_after_block(options)
     process(rest, [], indent, options)
   end
 
@@ -301,7 +486,7 @@ defmodule IO.ANSI.Docs do
     end
   end
 
-  ## Text
+  ### Text
 
   defp write_text(text, indent, options) do
     case Enum.reverse(text) do
@@ -325,7 +510,7 @@ defmodule IO.ANSI.Docs do
     |> String.split(@spaces)
     |> write_with_wrap(options[:width] - byte_size(indent), indent, no_wrap, prefix)
 
-    unless no_wrap, do: newline_after_block()
+    unless no_wrap, do: newline_after_block(options)
   end
 
   defp format_text(text, options) do
@@ -334,7 +519,7 @@ defmodule IO.ANSI.Docs do
     |> handle_inline(options)
   end
 
-  ## Code blocks
+  ### Code blocks
 
   defp process_code([], code, indent, options) do
     write_code(code, indent, options)
@@ -373,15 +558,15 @@ defmodule IO.ANSI.Docs do
 
   defp write_code(code, indent, options) do
     write(:doc_code, "#{indent}    #{Enum.join(Enum.reverse(code), "\n#{indent}    ")}", options)
-    newline_after_block()
+    newline_after_block(options)
   end
 
-  ## Tables
+  ### Tables
 
   defp process_table(lines, indent, options) do
     {table, rest} = Enum.split_while(lines, &table_line?/1)
     table_lines(table, options)
-    newline_after_block()
+    newline_after_block(options)
     process(rest, [], indent, options)
   end
 
@@ -407,7 +592,7 @@ defmodule IO.ANSI.Docs do
     line
     |> String.trim(" ")
     |> String.trim("|")
-    |> String.split("|")
+    |> String.split(~r{(?<!\\)\|})
     |> Enum.map(&render_column(&1, options))
   end
 
@@ -524,7 +709,7 @@ defmodule IO.ANSI.Docs do
   defp strip_spaces(rest, acc, _max), do: {rest, acc}
 
   defp write(style, string, options) do
-    IO.puts([color(style, options), string, IO.ANSI.reset()])
+    IO.puts([color(style, options), string, maybe_reset(options)])
   end
 
   defp write_with_wrap([], _available, _indent, _first, _prefix) do
@@ -534,7 +719,7 @@ defmodule IO.ANSI.Docs do
   defp write_with_wrap(words, available, indent, first, prefix) do
     words
     |> wrap_text(available, indent, first, prefix, [])
-    |> Enum.join("\n")
+    |> tl()
     |> IO.puts()
   end
 
@@ -547,7 +732,7 @@ defmodule IO.ANSI.Docs do
     {words, rest} = take_words(words, available - prefix_length, [])
     line = [if(first, do: "", else: indent), prefix, Enum.join(words, " ")]
 
-    wrap_text(rest, available, indent, false, prefix, [line | wrapped_lines])
+    wrap_text(rest, available, indent, false, prefix, [line, ?\n | wrapped_lines])
   end
 
   defp take_words([word | words], available, acc) do
@@ -621,7 +806,7 @@ defmodule IO.ANSI.Docs do
   @delimiters [?\s, ?', ?", ?!, ?@, ?#, ?$, ?%, ?^, ?&] ++
                 [?-, ?+, ?(, ?), ?[, ?], ?{, ?}, ?<, ?>, ?.]
 
-  # Inline start
+  ### Inline start
 
   defp handle_inline(<<?*, ?*, rest::binary>>, options) do
     handle_inline(rest, ?d, ["**"], [], options)
@@ -635,7 +820,7 @@ defmodule IO.ANSI.Docs do
     handle_inline(rest, nil, [], [], options)
   end
 
-  # Inline delimiters
+  ### Inline delimiters
 
   defp handle_inline(<<delimiter, ?*, ?*, rest::binary>>, nil, buffer, acc, options)
        when rest != "" and delimiter in @delimiters do
@@ -652,7 +837,7 @@ defmodule IO.ANSI.Docs do
     handle_inline(rest, ?`, ["`"], [Enum.reverse(buffer) | acc], options)
   end
 
-  # Clauses for handling escape
+  ### Clauses for handling escape
 
   defp handle_inline(<<?\\, ?\\, ?*, ?*, rest::binary>>, nil, buffer, acc, options)
        when rest != "" do
@@ -673,7 +858,7 @@ defmodule IO.ANSI.Docs do
     handle_inline(rest, limit, [mark | buffer], acc, options)
   end
 
-  # Inline end
+  ### Inline end
 
   defp handle_inline(<<?*, ?*, delimiter, rest::binary>>, ?d, buffer, acc, options)
        when delimiter in @delimiters do
@@ -701,7 +886,7 @@ defmodule IO.ANSI.Docs do
     handle_inline(rest, nil, [], [inline_buffer(buffer, options) | acc], options)
   end
 
-  # Catch all
+  ### Catch all
 
   defp handle_inline(<<char, rest::binary>>, mark, buffer, acc, options) do
     handle_inline(rest, mark, [char | buffer], acc, options)
@@ -712,8 +897,24 @@ defmodule IO.ANSI.Docs do
   end
 
   defp inline_buffer(buffer, options) do
-    [h | t] = Enum.reverse([IO.ANSI.reset() | buffer])
-    [color_for(h, options) | t]
+    [mark | t] = Enum.reverse(buffer)
+    inline_text(mark, t, options)
+  end
+
+  ## Helpers
+
+  defp quote_prefix(options), do: "#{color(:doc_quote, options)}> #{maybe_reset(options)}"
+
+  defp heading(text, n, options) do
+    [color(:doc_headings, options), String.duplicate("#", n), " ", text, maybe_reset(options)]
+  end
+
+  defp inline_text(mark, text, options) do
+    if options[:enabled] do
+      [[color_for(mark, options) | text] | IO.ANSI.reset()]
+    else
+      [[mark | text] | mark]
+    end
   end
 
   defp color_for(mark, colors) do
@@ -726,9 +927,14 @@ defmodule IO.ANSI.Docs do
   end
 
   defp color(style, colors) do
-    color = colors[style]
-    IO.ANSI.format_fragment(color, colors[:enabled])
+    IO.ANSI.format_fragment(colors[style], colors[:enabled])
   end
 
-  defp newline_after_block, do: IO.puts(IO.ANSI.reset())
+  defp newline_after_block(options) do
+    IO.puts(maybe_reset(options))
+  end
+
+  defp maybe_reset(options) do
+    if options[:enabled], do: IO.ANSI.reset(), else: ""
+  end
 end

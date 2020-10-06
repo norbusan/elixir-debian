@@ -17,4 +17,17 @@ defmodule Mix.ShellTest do
   after
     Mix.shell(Mix.Shell.Process)
   end
+
+  test "with :cd" do
+    Mix.shell(Mix.Shell.IO)
+    tmp_dir = System.tmp_dir()
+    File.mkdir_p!(tmp_dir)
+    {pwd, 0} = System.cmd("pwd", [], cd: tmp_dir)
+
+    assert ExUnit.CaptureIO.capture_io(fn ->
+             Mix.shell().cmd("pwd", cd: tmp_dir)
+           end) == pwd
+  after
+    Mix.shell(Mix.Shell.Process)
+  end
 end

@@ -187,13 +187,7 @@ defmodule Kernel.SpecialForms do
       iex> <<0, "foo">>
       <<0, 102, 111, 111>>
 
-  Variables or any other type need to be explicitly tagged:
-
-      iex> rest = "oo"
-      iex> <<102, rest>>
-      ** (ArgumentError) argument error
-
-  We can solve this by explicitly tagging it as `binary`:
+  Binaries need to be explicitly tagged as `binary`:
 
       iex> rest = "oo"
       iex> <<102, rest::binary>>
@@ -206,6 +200,12 @@ defmodule Kernel.SpecialForms do
       <<0, 102, 0, 111, 0, 111>>
       iex> <<"foo"::utf32>>
       <<0, 0, 0, 102, 0, 0, 0, 111, 0, 0, 0, 111>>
+
+  Otherwise we get an `ArgumentError` when construcing the binary:
+
+      rest = "oo"
+      <<102, rest>>
+      ** (ArgumentError) argument error
 
   ## Options
 
@@ -371,7 +371,7 @@ defmodule Kernel.SpecialForms do
   defmacro unquote(:<<>>)(args), do: error!([args])
 
   @doc """
-  Defines a remote call, a call to an anonymous function, or an alias.
+  Dot operator. Defines a remote call, a call to an anonymous function, or an alias.
 
   The dot (`.`) in Elixir can be used for remote calls:
 
@@ -438,7 +438,7 @@ defmodule Kernel.SpecialForms do
       ...> end
       {{:., [], [{:__aliases__, [alias: false], [:String]}, :downcase]}, [], ["FOO"]}
 
-  Notice we have an inner tuple, containing the atom `:.` representing
+  Note that we have an inner tuple, containing the atom `:.` representing
   the dot as first element:
 
       {:., [], [{:__aliases__, [alias: false], [:String]}, :downcase]}
@@ -513,7 +513,7 @@ defmodule Kernel.SpecialForms do
       Keyword.values #=> uses MyKeyword.values
       Elixir.Keyword.values #=> uses Keyword.values
 
-  Notice that calling `alias` without the `:as` option automatically
+  Note that calling `alias` without the `:as` option automatically
   sets an alias based on the last part of the module. For example:
 
       alias Foo.Bar.Baz
@@ -599,7 +599,7 @@ defmodule Kernel.SpecialForms do
   ## Selector
 
   By default, Elixir imports functions and macros from the given
-  module, except the ones starting with underscore (which are
+  module, except the ones starting with an underscore (which are
   usually callbacks):
 
       import List
@@ -617,7 +617,7 @@ defmodule Kernel.SpecialForms do
       import List, only: [flatten: 1]
       import String, except: [split: 2]
 
-  Notice that calling `except` is always exclusive on a previously
+  Note that calling `except` is always exclusive on a previously
   declared `import/2`. If there is no previous import, then it applies
   to all functions and macros in the module. For example:
 
@@ -637,7 +637,7 @@ defmodule Kernel.SpecialForms do
 
   ## Lexical scope
 
-  It is important to notice that `import/2` is lexical. This means you
+  It is important to note that `import/2` is lexical. This means you
   can import specific macros inside specific functions:
 
       defmodule Math do
@@ -721,10 +721,11 @@ defmodule Kernel.SpecialForms do
   To retrieve the stacktrace of the current process, use
   `Process.info(self(), :current_stacktrace)` instead.
   """
+  @doc since: "1.7.0"
   defmacro __STACKTRACE__, do: error!([])
 
   @doc """
-  Accesses an already bound variable in match clauses. Also known as the pin operator.
+  Pin operator. Accesses an already bound variable in match clauses.
 
   ## Examples
 
@@ -756,12 +757,12 @@ defmodule Kernel.SpecialForms do
   defmacro ^var, do: error!([var])
 
   @doc """
-  Matches the value on the right against the pattern on the left.
+  Match operator. Matches the value on the right against the pattern on the left.
   """
   defmacro left = right, do: error!([left, right])
 
   @doc """
-  Used by types and bitstrings to specify types.
+  Type operator. Used by types and bitstrings to specify types.
 
   This operator is used in two distinct occasions in Elixir.
   It is used in typespecs to specify the type of a variable,
@@ -805,7 +806,7 @@ defmodule Kernel.SpecialForms do
     * The first element of the tuple is always an atom or
       another tuple in the same representation.
 
-    * The second element of the tuple represents [metadata](t:Macro.metadata/0).
+    * The second element of the tuple represents [metadata](`t:Macro.metadata/0`).
 
     * The third element of the tuple are the arguments for the
       function call. The third argument may be an atom, which is
@@ -1063,7 +1064,7 @@ defmodule Kernel.SpecialForms do
       Hygiene.no_interference()
       #=> %{}
 
-  Notice that, even though the alias `M` is not available
+  Note that, even though the alias `M` is not available
   in the context the macro is expanded, the code above works
   because `M` still expands to `Map`.
 
@@ -1558,6 +1559,8 @@ defmodule Kernel.SpecialForms do
   @doc """
   Defines an anonymous function.
 
+  See `Function` for more information.
+
   ## Examples
 
       iex> add = fn a, b -> a + b end
@@ -1595,7 +1598,7 @@ defmodule Kernel.SpecialForms do
   defmacro unquote(:__block__)(args), do: error!([args])
 
   @doc """
-  Captures or creates an anonymous function.
+  Caputure operator. Captures or creates an anonymous function.
 
   ## Capture
 
@@ -1745,7 +1748,7 @@ defmodule Kernel.SpecialForms do
 
   ## Variable handling
 
-  Notice that variables bound in a clause do not leak to the outer context:
+  Note that variables bound in a clause do not leak to the outer context:
 
       case data do
         {:ok, value} -> value

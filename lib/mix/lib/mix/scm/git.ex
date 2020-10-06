@@ -7,7 +7,11 @@ defmodule Mix.SCM.Git do
   end
 
   def format(opts) do
-    opts[:git]
+    if rev = get_opts_rev(opts) do
+      "#{redact_uri(opts[:git])} - #{rev}"
+    else
+      redact_uri(opts[:git])
+    end
   end
 
   def format_lock(opts) do
@@ -120,7 +124,7 @@ defmodule Mix.SCM.Git do
     |> git!()
 
     # Migrate the Git repo
-    rev = get_lock_rev(opts[:lock], opts) || get_opts_rev(opts)
+    rev = get_lock_rev(opts[:lock], opts) || get_opts_rev(opts) || default_branch()
     git!(["--git-dir=.git", "checkout", "--quiet", rev])
 
     if opts[:submodules] do
@@ -182,7 +186,7 @@ defmodule Mix.SCM.Git do
   defp validate_git_options(opts) do
     err =
       "You should specify only one of branch, ref or tag, and only once. " <>
-        "Error on Git dependency: #{opts[:git]}"
+        "Error on Git dependency: #{redact_uri(opts[:git])}"
 
     validate_single_uniq(opts, [:branch, :ref, :tag], err)
   end
@@ -224,7 +228,14 @@ defmodule Mix.SCM.Git do
     if branch = opts[:branch] do
       "origin/#{branch}"
     else
-      opts[:ref] || opts[:tag] || "origin/master"
+      opts[:ref] || opts[:tag]
+    end
+  end
+
+  defp redact_uri(git) do
+    case URI.parse(git) do
+      %{userinfo: nil} -> git
+      uri -> URI.to_string(%{uri | userinfo: "****:****"})
     end
   end
 
@@ -247,12 +258,20 @@ defmodule Mix.SCM.Git do
     :ok
   end
 
+  defp default_branch() do
+    git!(["--git-dir=.git", "remote", "set-head", "origin", "-a"])
+    "origin/HEAD"
+  end
+
   defp git!(args, into \\ default_into()) do
     opts = cmd_opts(into: into, stderr_to_stdout: true)
 
     case System.cmd("git", args, opts) do
-      {response, 0} -> response
-      {_, _} -> Mix.raise("Command \"git #{Enum.join(args, " ")}\" failed")
+      {response, 0} ->
+        response
+
+      {response, _} ->
+        Mix.raise("Command \"git #{Enum.join(args, " ")}\" failed with reason: #{response}")
     end
   end
 

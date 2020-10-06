@@ -13,17 +13,17 @@ defmodule Mix.Tasks.Format do
 
   ## Formatting options
 
-  The formatter will read a `.formatter.exs` in the current directory for
+  The formatter will read a `.formatter.exs` file in the current directory for
   formatter configuration. Evaluating this file should return a keyword list.
 
-  Here is an example `.formatter.exs` that works as a starting point:
+  Here is an example of a `.formatter.exs` file that works as a starting point:
 
       [
         inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
       ]
 
   Besides the options listed in `Code.format_string!/2`, the `.formatter.exs`
-  supports the following options:
+  file supports the following options:
 
     * `:inputs` (a list of paths and patterns) - specifies the default inputs
       to be used by this task. For example, `["mix.exs", "{config,lib,test}/**/*.{ex,exs}"]`.
@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Format do
 
   It is also possible to format code across the whole project by passing a list
   of patterns and files to `mix format`, as shown at the top of this task
-  documentation. This list can also be set in the `.formatter.exs` under the
+  documentation. This list can also be set in the `.formatter.exs` file under the
   `:inputs` key.
 
   ## Importing dependencies configuration
@@ -101,7 +101,7 @@ defmodule Mix.Tasks.Format do
   a dependency can be imported in a project by listing that dependency in the
   `:import_deps` option of the formatter configuration file of the project.
 
-  For example, consider I have a project `my_app` that depends on `my_dep`.
+  For example, consider you have a project called `my_app` that depends on another one called `my_dep`.
   `my_dep` wants to export some configuration, so `my_dep/.formatter.exs`
   would look like this:
 
@@ -320,7 +320,7 @@ defmodule Mix.Tasks.Format do
     if no_entries_in_formatter_opts?(formatter_opts_and_subs) do
       Mix.raise(
         "Expected one or more files/patterns to be given to mix format " <>
-          "or for a .formatter.exs to exist with an :inputs or :subdirectories key"
+          "or for a .formatter.exs file to exist with an :inputs or :subdirectories key"
       )
     end
 
@@ -480,18 +480,18 @@ defmodule Mix.Tasks.Format do
   defp check!({_exits, [_ | _] = not_equivalent, _not_formatted}) do
     Mix.raise("""
     mix format failed due to --check-equivalent.
-    The following files were not equivalent:
+    The following files are not equivalent:
 
     #{to_bullet_list(not_equivalent)}
 
-    Please report this bug with the input files at github.com/elixir-lang/elixir/issues
+    Please report this bug with the input files at https://github.com/elixir-lang/elixir/issues
     """)
   end
 
   defp check!({_exits, _not_equivalent, [_ | _] = not_formatted}) do
     Mix.raise("""
     mix format failed due to --check-formatted.
-    The following files were not formatted:
+    The following files are not formatted:
 
     #{to_bullet_list(not_formatted)}
     """)

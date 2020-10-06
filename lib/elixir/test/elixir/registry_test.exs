@@ -383,7 +383,9 @@ defmodule RegistryTest do
         assert is_pid(pid)
         assert sum_pid_entries(registry, partitions) == 2
 
-        assert {:error, {:already_registered, pid}} = Registry.register(registry, "hello", :value)
+        assert {:error, {:already_registered, _pid}} =
+                 Registry.register(registry, "hello", :value)
+
         assert sum_pid_entries(registry, partitions) == 2
       end
 
@@ -859,6 +861,13 @@ defmodule RegistryTest do
     assert_raise ArgumentError, ~r/expected :name to be an atom, got/, fn ->
       Registry.start_link(keys: :unique, name: [])
     end
+  end
+
+  test "unregistration on crash with {registry, key, value} via tuple", %{registry: registry} do
+    name = {:via, Registry, {registry, :name, :value}}
+    spec = %{id: :foo, start: {Agent, :start_link, [fn -> raise "some error" end, [name: name]]}}
+    assert {:error, {error, _childspec}} = start_supervised(spec)
+    assert {%RuntimeError{message: "some error"}, _stacktrace} = error
   end
 
   defp register_task(registry, key, value) do

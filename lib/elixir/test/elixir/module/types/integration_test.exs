@@ -1,6 +1,6 @@
-Code.require_file("../test_helper.exs", __DIR__)
+Code.require_file("../../test_helper.exs", __DIR__)
 
-defmodule Module.CheckerTest do
+defmodule Module.Types.IntegrationTest do
   use ExUnit.Case
 
   import ExUnit.CaptureIO
@@ -639,6 +639,31 @@ defmodule Module.CheckerTest do
       assert_warnings(files, warning)
     end
 
+    test "reports imported functions" do
+      files = %{
+        "a.ex" => """
+        defmodule A do
+          @deprecated "oops"
+          def a, do: :ok
+        end
+        """,
+        "b.ex" => """
+        defmodule B do
+          import A
+          def b, do: a()
+        end
+        """
+      }
+
+      warning = """
+      warning: A.a/0 is deprecated. oops
+        b.ex:3: B.b/0
+
+      """
+
+      assert_warnings(files, warning)
+    end
+
     test "reports structs" do
       files = %{
         "a.ex" => """
@@ -695,188 +720,6 @@ defmodule Module.CheckerTest do
       warning = """
       warning: A.a/0 is deprecated. oops
         b.ex:3: B
-
-      """
-
-      assert_warnings(files, warning)
-    end
-  end
-
-  describe "function header inference" do
-    test "warns on literals" do
-      files = %{
-        "a.ex" => """
-        defmodule A do
-          def a(var = 123, var = "abc"), do: var
-        end
-        """
-      }
-
-      warning = """
-      warning: incompatible types:
-
-          integer() !~ binary()
-
-      in expression:
-
-          def(a(var = 123, var = "abc"))
-
-      where "var" was given the type binary() in:
-
-          # a.ex:2
-          var = "abc"
-
-      where "var" was given the type integer() in:
-
-          # a.ex:2
-          var = 123
-
-      Conflict found at
-        a.ex:2: A.a/2
-
-      """
-
-      assert_warnings(files, warning)
-    end
-
-    test "warns on binary patterns" do
-      files = %{
-        "a.ex" => """
-        defmodule A do
-          def a(<<var::integer, var::binary>>), do: var
-        end
-        """
-      }
-
-      warning = """
-      warning: incompatible types:
-
-          integer() !~ binary()
-
-      in expression:
-
-          <<var::integer(), var::binary()>>
-
-      where "var" was given the type binary() in:
-
-          # a.ex:2
-          var :: binary()
-
-      where "var" was given the type integer() in:
-
-          # a.ex:2
-          var :: integer()
-
-      Conflict found at
-        a.ex:2: A.a/1
-
-      """
-
-      assert_warnings(files, warning)
-    end
-
-    test "warns on recursive patterns" do
-      files = %{
-        "a.ex" => """
-        defmodule A do
-          def a({var} = var), do: var
-        end
-        """
-      }
-
-      warning = """
-      warning: incompatible types:
-
-          {var0} !~ var0
-
-      in expression:
-
-          {var} = var
-
-      where "var" was given the type {var0} in:
-
-          # a.ex:2
-          {var} = var
-
-      Conflict found at
-        a.ex:2: A.a/1
-
-      """
-
-      assert_warnings(files, warning)
-    end
-
-    test "warns on guards" do
-      files = %{
-        "a.ex" => """
-        defmodule A do
-          def a(var) when is_integer(var) and is_binary(var), do: var
-        end
-        """
-      }
-
-      warning = """
-      warning: incompatible types:
-
-          integer() !~ binary()
-
-      in expression:
-
-          is_integer(var) and is_binary(var)
-
-      where "var" was given the type binary() in:
-
-          # a.ex:2
-          is_binary(var)
-
-      where "var" was given the type integer() in:
-
-          # a.ex:2
-          is_integer(var)
-
-      Conflict found at
-        a.ex:2: A.a/1
-
-      """
-
-      assert_warnings(files, warning)
-    end
-
-    test "warns on guards with multiple variables" do
-      files = %{
-        "a.ex" => """
-        defmodule A do
-          def a(x = y) when is_integer(x) and is_binary(y), do: {x, y}
-        end
-        """
-      }
-
-      warning = """
-      warning: incompatible types:
-
-          integer() !~ binary()
-
-      in expression:
-
-          def(a(x = y) when is_integer(x) and is_binary(y))
-
-      where "x" was given the type integer() in:
-
-          # a.ex:2
-          is_integer(x)
-
-      where "x" was given the same type as "y" in:
-
-          # a.ex:2
-          x = y
-
-      where "y" was given the type binary() in:
-
-          # a.ex:2
-          is_binary(y)
-
-      Conflict found at
-        a.ex:2: A.a/1
 
       """
 

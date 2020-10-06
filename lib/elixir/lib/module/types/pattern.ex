@@ -1,12 +1,29 @@
 defmodule Module.Types.Pattern do
   @moduledoc false
 
-  import Module.Types.{Helpers, Infer}
+  alias Module.Types.Of
+  import Module.Types.{Helpers, Unify}
+
+  @doc """
+  Handles patterns and guards at once.
+  """
+  def of_head(patterns, guards, stack, context) do
+    with {:ok, types, context} <-
+           map_reduce_ok(patterns, context, &of_pattern(&1, stack, &2)),
+         # TODO: Check that of_guard/3 returns boolean() | :fail
+         {:ok, _, context} <- of_guard(guards_to_or(guards), stack, context),
+         do: {:ok, types, context}
+  end
 
   @doc """
   Return the type and typing context of a pattern expression or an error
   in case of a typing conflict.
   """
+  def of_pattern(pattern, %{context: stack_context} = stack, context)
+      when stack_context != :pattern do
+    of_pattern(pattern, %{stack | context: :pattern}, context)
+  end
+
   # :atom
   def of_pattern(atom, _stack, context) when is_atom(atom) do
     {:ok, {:atom, atom}, context}
@@ -28,10 +45,10 @@ defmodule Module.Types.Pattern do
   end
 
   # <<...>>>
-  def of_pattern({:<<>>, _meta, args} = expr, stack, context) do
-    stack = push_expr_stack(expr, stack)
+  def of_pattern({:<<>>, _meta, args}, stack, context) do
+    result = Of.binary(args, stack, context, &of_pattern/3)
 
-    case reduce_ok(args, context, &of_binary(&1, stack, &2)) do
+    case result do
       {:ok, context} -> {:ok, :binary, context}
       {:error, reason} -> {:error, reason}
     end
@@ -111,6 +128,11 @@ defmodule Module.Types.Pattern do
     {:ok, :dynamic, context}
   end
 
+  # ^var
+  def of_pattern({:^, _meta, [var]}, _stack, context) do
+    {:ok, get_var!(var, context), context}
+  end
+
   # var
   def of_pattern(var, _stack, context) when is_var(var) do
     {type, context} = new_var(var, context)
@@ -127,7 +149,7 @@ defmodule Module.Types.Pattern do
     stack = push_expr_stack(expr, stack)
 
     case map_reduce_ok(exprs, context, &of_pattern(&1, stack, &2)) do
-      {:ok, types, context} -> {:ok, {:tuple, types}, context}
+      {:ok, types, context} -> {:ok, {:tuple, length(types), types}, context}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -144,10 +166,17 @@ defmodule Module.Types.Pattern do
   # %{...}
   def of_pattern({:%{}, _meta, args} = expr, stack, context) do
     stack = push_expr_stack(expr, stack)
+    Of.open_map(args, stack, context, &of_pattern/3)
+  end
 
-    case of_pairs(args, stack, context) do
-      {:ok, pairs, context} -> {:ok, {:map, pairs_to_unions(pairs, context)}, context}
-      {:error, reason} -> {:error, reason}
+  # %Struct{...}
+  def of_pattern({:%, meta1, [module, {:%{}, _meta2, args}]} = expr, stack, context)
+      when is_atom(module) do
+    stack = push_expr_stack(expr, stack)
+
+    with {:ok, struct, context} <- Of.struct(module, meta1, context),
+         {:ok, map, context} <- Of.open_map(args, stack, context, &of_pattern/3) do
+      unify(map, struct, stack, context)
     end
   end
 
@@ -160,122 +189,80 @@ defmodule Module.Types.Pattern do
       when is_atom(var_context) do
     stack = push_expr_stack(expr, stack)
 
-    case of_pairs(args, stack, context) do
-      {:ok, pairs, context} ->
-        pairs = [{{:atom, :__struct__}, :atom} | pairs]
-        {:ok, {:map, pairs}, context}
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, {:map, pairs}, context} <- Of.open_map(args, stack, context, &of_pattern/3) do
+      {:ok, {:map, [{:required, {:atom, :__struct__}, :atom} | pairs]}, context}
     end
   end
 
-  # %var{...}
-  def of_pattern({:%, _meta1, [var, {:%{}, _meta2, args}]} = expr, stack, context)
-      when is_var(var) do
+  # %var{...} and %^var{...}
+  def of_pattern({:%, _meta1, [var, {:%{}, _meta2, args}]} = expr, stack, context) do
     stack = push_expr_stack(expr, stack)
 
-    with {:ok, pairs, context} <- of_pairs(args, stack, context),
-         {var_type, context} = new_var(var, context),
-         {:ok, _, context} <- unify(var_type, :atom, stack, context) do
-      pairs = [{{:atom, :__struct__}, var_type} | pairs]
-      {:ok, {:map, pairs}, context}
+    with {:ok, var_type, context} = of_pattern(var, stack, context),
+         {:ok, _, context} <- unify(var_type, :atom, stack, context),
+         {:ok, {:map, pairs}, context} <- Of.open_map(args, stack, context, &of_pattern/3) do
+      {:ok, {:map, [{:required, {:atom, :__struct__}, var_type} | pairs]}, context}
     end
   end
 
-  # %Struct{...}
-  def of_pattern({:%, _meta1, [module, {:%{}, _meta2, args}]} = expr, stack, context)
-      when is_atom(module) do
-    stack = push_expr_stack(expr, stack)
-
-    case of_pairs(args, stack, context) do
-      {:ok, pairs, context} ->
-        pairs = [{{:atom, :__struct__}, {:atom, module}} | pairs]
-        {:ok, {:map, pairs}, context}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp of_pairs(pairs, stack, context) do
-    map_reduce_ok(pairs, context, fn {key, value}, context ->
-      with {:ok, key_type, context} <- of_pattern(key, stack, context),
-           {:ok, value_type, context} <- of_pattern(value, stack, context),
-           do: {:ok, {key_type, value_type}, context}
-    end)
-  end
-
-  defp pairs_to_unions(pairs, context) do
-    # Maps only allow simple literal keys in patterns so
-    # we do not have to do subtype checking
-
-    Enum.reduce(pairs, [], fn {key, value}, pairs ->
-      case :lists.keyfind(key, 1, pairs) do
-        {^key, {:union, union}} ->
-          :lists.keystore(key, 1, pairs, {key, to_union([value | union], context)})
-
-        {^key, original_value} ->
-          :lists.keystore(key, 1, pairs, {key, to_union([value, original_value], context)})
-
-        false ->
-          [{key, value} | pairs]
-      end
-    end)
-  end
+  def unify_kinds(:required, _), do: :required
+  def unify_kinds(_, :required), do: :required
+  def unify_kinds(:optional, :optional), do: :optional
 
   ## GUARDS
 
   # TODO: Some guards can be changed to intersection types or higher order types
+  @boolean {:union, [{:atom, true}, {:atom, false}]}
+  @number {:union, [:integer, :float]}
 
   @guard_functions %{
-    {:is_atom, 1} => {[:atom], :boolean},
-    {:is_binary, 1} => {[:binary], :boolean},
-    {:is_bitstring, 1} => {[:binary], :boolean},
-    {:is_boolean, 1} => {[:boolean], :boolean},
-    {:is_float, 1} => {[:float], :boolean},
-    {:is_function, 1} => {[:fun], :boolean},
-    {:is_function, 2} => {[:fun, :integer], :boolean},
-    {:is_integer, 1} => {[:integer], :boolean},
-    {:is_list, 1} => {[{:list, :dynamic}], :boolean},
-    {:is_map, 1} => {[{:map, []}], :boolean},
-    {:is_map_key, 2} => {[:dynamic, {:map, []}], :dynamic},
-    {:is_number, 1} => {[:number], :boolean},
-    {:is_pid, 1} => {[:pid], :boolean},
-    {:is_port, 1} => {[:port], :boolean},
-    {:is_reference, 1} => {[:reference], :boolean},
-    {:is_tuple, 1} => {[:tuple], :boolean},
-    {:<, 2} => {[:dynamic, :dynamic], :boolean},
-    {:"=<", 2} => {[:dynamic, :dynamic], :boolean},
-    {:>, 2} => {[:dynamic, :dynamic], :boolean},
-    {:>=, 2} => {[:dynamic, :dynamic], :boolean},
-    {:"/=", 2} => {[:dynamic, :dynamic], :boolean},
-    {:"=/=", 2} => {[:dynamic, :dynamic], :boolean},
-    {:==, 2} => {[:dynamic, :dynamic], :boolean},
-    {:"=:=", 2} => {[:dynamic, :dynamic], :boolean},
-    {:*, 2} => {[:number, :number], :number},
-    {:+, 1} => {[:number], :number},
-    {:+, 2} => {[:number, :number], :number},
-    {:-, 1} => {[:number], :number},
-    {:-, 2} => {[:number, :number], :number},
-    {:/, 2} => {[:number, :number], :number},
-    {:abs, 1} => {[:number], :number},
-    {:ceil, 1} => {[:number], :integer},
-    {:floor, 1} => {[:number], :integer},
-    {:round, 1} => {[:number], :integer},
-    {:trunc, 1} => {[:number], :integer},
+    {:is_atom, 1} => {[:atom], @boolean},
+    {:is_binary, 1} => {[:binary], @boolean},
+    {:is_bitstring, 1} => {[:binary], @boolean},
+    {:is_boolean, 1} => {[@boolean], @boolean},
+    {:is_float, 1} => {[:float], @boolean},
+    {:is_function, 1} => {[:fun], @boolean},
+    {:is_function, 2} => {[:fun, :integer], @boolean},
+    {:is_integer, 1} => {[:integer], @boolean},
+    {:is_list, 1} => {[{:list, :dynamic}], @boolean},
+    {:is_map, 1} => {[{:map, [{:optional, :dynamic, :dynamic}]}], @boolean},
+    {:is_map_key, 2} => {[:dynamic, {:map, [{:optional, :dynamic, :dynamic}]}], :dynamic},
+    {:is_number, 1} => {[@number], @boolean},
+    {:is_pid, 1} => {[:pid], @boolean},
+    {:is_port, 1} => {[:port], @boolean},
+    {:is_reference, 1} => {[:reference], @boolean},
+    {:is_tuple, 1} => {[:tuple], @boolean},
+    {:<, 2} => {[:dynamic, :dynamic], @boolean},
+    {:"=<", 2} => {[:dynamic, :dynamic], @boolean},
+    {:>, 2} => {[:dynamic, :dynamic], @boolean},
+    {:>=, 2} => {[:dynamic, :dynamic], @boolean},
+    {:"/=", 2} => {[:dynamic, :dynamic], @boolean},
+    {:"=/=", 2} => {[:dynamic, :dynamic], @boolean},
+    {:==, 2} => {[:dynamic, :dynamic], @boolean},
+    {:"=:=", 2} => {[:dynamic, :dynamic], @boolean},
+    {:*, 2} => {[@number, @number], @number},
+    {:+, 1} => {[@number], @number},
+    {:+, 2} => {[@number, @number], @number},
+    {:-, 1} => {[@number], @number},
+    {:-, 2} => {[@number, @number], @number},
+    {:/, 2} => {[@number, @number], @number},
+    {:abs, 1} => {[@number], @number},
+    {:ceil, 1} => {[@number], :integer},
+    {:floor, 1} => {[@number], :integer},
+    {:round, 1} => {[@number], :integer},
+    {:trunc, 1} => {[@number], :integer},
     {:element, 2} => {[:integer, :tuple], :dynamic},
     {:hd, 1} => {[{:list, :dynamic}], :dynamic},
     {:length, 1} => {[{:list, :dynamic}], :integer},
-    {:map_get, 2} => {[:dynamic, {:map, []}], :dynamic},
-    {:map_size, 1} => {[{:map, []}], :integer},
+    {:map_get, 2} => {[:dynamic, {:map, [{:optional, :dynamic, :dynamic}]}], :dynamic},
+    {:map_size, 1} => {[{:map, [{:optional, :dynamic, :dynamic}]}], :integer},
     {:tl, 1} => {[{:list, :dynamic}], :dynamic},
     {:tuple_size, 1} => {[:tuple], :integer},
     {:node, 1} => {[{:union, [:pid, :reference, :port]}], :atom},
     {:binary_part, 3} => {[:binary, :integer, :integer], :binary},
     {:bit_size, 1} => {[:binary], :integer},
     {:byte_size, 1} => {[:binary], :integer},
-    {:size, 1} => {[{:union, [:binary, :tuple]}], :boolean},
+    {:size, 1} => {[{:union, [:binary, :tuple]}], @boolean},
     {:div, 2} => {[:integer, :integer], :integer},
     {:rem, 2} => {[:integer, :integer], :integer},
     {:node, 0} => {[], :atom},
@@ -286,13 +273,15 @@ defmodule Module.Types.Pattern do
     {:bxor, 2} => {[:integer, :integer], :integer},
     {:bsl, 2} => {[:integer, :integer], :integer},
     {:bsr, 2} => {[:integer, :integer], :integer},
-    {:xor, 2} => {[:boolean, :boolean], :boolean},
-    {:not, 1} => {[:boolean], :boolean}
+    {:or, 2} => {[@boolean, @boolean], @boolean},
+    {:and, 2} => {[@boolean, @boolean], @boolean},
+    {:xor, 2} => {[@boolean, @boolean], @boolean},
+    {:not, 1} => {[@boolean], @boolean}
 
     # Following guards are matched explicitly to handle
     # type guard functions such as is_atom/1
-    # {:andalso, 2} => {[:boolean, :boolean], :boolean}
-    # {:orelse, 2} => {[:boolean, :boolean], :boolean}
+    # {:andalso, 2} => {[@boolean, @boolean], @boolean}
+    # {:orelse, 2} => {[@boolean, @boolean], @boolean}
   }
 
   @type_guards [
@@ -317,6 +306,10 @@ defmodule Module.Types.Pattern do
   Refines the type variables in the typing context using type check guards
   such as `is_integer/1`.
   """
+  def of_guard(expr, %{context: stack_context} = stack, context) when stack_context != :pattern do
+    of_guard(expr, %{stack | context: :pattern}, context)
+  end
+
   def of_guard({{:., _, [:erlang, :andalso]}, _, [left, right]} = expr, stack, context) do
     stack = push_expr_stack(expr, stack)
     fresh_context = fresh_context(context)
@@ -324,9 +317,9 @@ defmodule Module.Types.Pattern do
     with {:ok, left_type, left_context} <- of_guard(left, stack, fresh_context),
          {:ok, right_type, right_context} <- of_guard(right, stack, fresh_context),
          {:ok, context} <- merge_context_and(context, stack, left_context, right_context),
-         {:ok, _, context} <- unify(left_type, :boolean, stack, context),
-         {:ok, _, context} <- unify(right_type, :boolean, stack, context),
-         do: {:ok, :boolean, context}
+         {:ok, _, context} <- unify(left_type, @boolean, stack, context),
+         {:ok, _, context} <- unify(right_type, @boolean, stack, context),
+         do: {:ok, @boolean, context}
   end
 
   def of_guard({{:., _, [:erlang, :orelse]}, _, [left, right]} = expr, stack, context) do
@@ -336,10 +329,25 @@ defmodule Module.Types.Pattern do
     with {:ok, left_type, left_context} <- of_guard(left, stack, fresh_context),
          {:ok, _right_type, right_context} <- of_guard(right, stack, fresh_context),
          {:ok, context} <- merge_context_or(context, stack, left_context, right_context),
-         {:ok, _, context} <- unify(left_type, :boolean, stack, context),
-         do: {:ok, :boolean, context}
+         {:ok, _, context} <- unify(left_type, @boolean, stack, context),
+         do: {:ok, @boolean, context}
   end
 
+  # The unary operators + and - are special cased to avoid common warnings until
+  # we add support for intersection types for the guard functions
+  # -integer / +integer
+  def of_guard({{:., _, [:erlang, guard]}, _, [integer]}, _stack, context)
+      when guard in [:+, :-] and is_integer(integer) do
+    {:ok, :integer, context}
+  end
+
+  # -float / +float
+  def of_guard({{:., _, [:erlang, guard]}, _, [float]}, _stack, context)
+      when guard in [:+, :-] and is_float(float) do
+    {:ok, :float, context}
+  end
+
+  # fun(args)
   def of_guard({{:., _, [:erlang, guard]}, _, args} = expr, stack, context) do
     stack = push_expr_stack(expr, stack)
     {param_types, return_type} = guard_signature(guard, length(args))
@@ -353,7 +361,7 @@ defmodule Module.Types.Pattern do
 
       with {:ok, arg_types, context} <-
              map_reduce_ok(args, context, &of_guard(&1, arg_stack, &2)),
-           {:ok, context} <- unify_call(param_types, arg_types, stack, context) do
+           {:ok, context} <- unify_call(arg_types, param_types, stack, context) do
         {arg_types, guard_sources} =
           case arg_types do
             [{:var, index} | rest_arg_types] when type_guard? ->
@@ -382,11 +390,18 @@ defmodule Module.Types.Pattern do
     end
   end
 
+  # map.field
+  def of_guard({{:., meta1, [map, field]}, meta2, []}, stack, context) do
+    of_guard({{:., meta1, [:erlang, :map_get]}, meta2, [field, map]}, stack, context)
+  end
+
+  # var
   def of_guard(var, _stack, context) when is_var(var) do
     type = Map.fetch!(context.vars, var_name(var))
     {:ok, type, context}
   end
 
+  # other literals
   def of_guard(expr, stack, context) do
     # Fall back to of_pattern/3 for literals
     of_pattern(expr, stack, context)
@@ -398,9 +413,9 @@ defmodule Module.Types.Pattern do
     %{context | types: types, traces: traces}
   end
 
-  defp unify_call(params, args, stack, context) do
-    reduce_ok(Enum.zip(params, args), context, fn {param, arg}, context ->
-      case unify(param, arg, stack, context) do
+  defp unify_call(args, params, stack, context) do
+    reduce_ok(Enum.zip(args, params), context, fn {arg, param}, context ->
+      case unify(arg, param, stack, context) do
         {:ok, _, context} -> {:ok, context}
         {:error, reason} -> {:error, reason}
       end
@@ -445,7 +460,6 @@ defmodule Module.Types.Pattern do
 
     cond do
       :fail in sources -> [:fail]
-      :guarded_fail in sources -> [:guarded_fail]
       :guarded in sources -> [:guarded]
       true -> []
     end
@@ -456,7 +470,7 @@ defmodule Module.Types.Pattern do
       # When the failing guard function wont fail due to type check function before it,
       # for example: is_list(x) and length(x)
       if :guarded in left and :fail in right do
-        [:guarded_fail]
+        [:guarded]
       else
         join_guard_source(left, right)
       end
@@ -528,52 +542,6 @@ defmodule Module.Types.Pattern do
 
     {:ok, context}
   end
-
-  # binary-pattern :: specifier
-  defp of_binary({:"::", _meta, [expr, specifiers]} = full_expr, stack, context) do
-    {expected_type, utf?} = collect_binary_type(specifiers) || {:integer, false}
-    stack = push_expr_stack(full_expr, stack)
-
-    # Special case utf specifiers with binary literals since they allow
-    # both integer and binary literals but variables are always integer
-    if is_binary(expr) and utf? do
-      {:ok, context}
-    else
-      with {:ok, type, context} <- of_pattern(expr, stack, context),
-           {:ok, _type, context} <- unify(type, expected_type, stack, context),
-           do: {:ok, context}
-    end
-  end
-
-  # binary-pattern
-  defp of_binary(expr, stack, context) do
-    case of_pattern(expr, stack, context) do
-      {:ok, type, context} when type in [:integer, :float, :binary] ->
-        {:ok, context}
-
-      {:ok, type, _context} ->
-        {:error, {:invalid_binary_type, type}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  # Collect binary type specifiers,
-  # from `<<pattern::integer-size(10)>>` collect `integer`
-  defp collect_binary_type({:-, _meta, [left, right]}),
-    do: collect_binary_type(left) || collect_binary_type(right)
-
-  defp collect_binary_type({:integer, _, _}), do: {:integer, false}
-  defp collect_binary_type({:float, _, _}), do: {:float, false}
-  defp collect_binary_type({:bits, _, _}), do: {:binary, false}
-  defp collect_binary_type({:bitstring, _, _}), do: {:binary, false}
-  defp collect_binary_type({:bytes, _, _}), do: {:binary, false}
-  defp collect_binary_type({:binary, _, _}), do: {:binary, false}
-  defp collect_binary_type({:utf8, _, _}), do: {:integer, true}
-  defp collect_binary_type({:utf16, _, _}), do: {:integer, true}
-  defp collect_binary_type({:utf32, _, _}), do: {:integer, true}
-  defp collect_binary_type(_), do: nil
 
   defp guard_signature(name, arity) do
     Map.fetch!(@guard_functions, {name, arity})

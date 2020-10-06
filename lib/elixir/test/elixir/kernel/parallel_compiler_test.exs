@@ -26,6 +26,30 @@ defmodule Kernel.ParallelCompilerTest do
   end
 
   describe "compile" do
+    test "with profiling" do
+      fixtures =
+        write_tmp(
+          "profile_time",
+          bar: """
+          defmodule HelloWorld do
+          end
+          """
+        )
+
+      profile =
+        capture_io(:stderr, fn ->
+          assert {:ok, modules, []} = Kernel.ParallelCompiler.compile(fixtures, profile: :time)
+
+          assert HelloWorld in modules
+        end)
+
+      assert profile =~ ~r"\[profile\] .*tmp/profile_time/bar.ex compiled in \d+ms"
+      assert profile =~ ~r"\[profile\] Finished compilation cycle of 1 modules in \d+ms"
+      assert profile =~ ~r"\[profile\] Finished group pass check of 1 modules in \d+ms"
+    after
+      purge([HelloWorld])
+    end
+
     test "solves dependencies between modules" do
       fixtures =
         write_tmp(
@@ -230,10 +254,41 @@ defmodule Kernel.ParallelCompilerTest do
           """
         )
 
-      assert {:ok, modules, []} = Kernel.ParallelCompiler.compile([foo, bar])
+      assert {:ok, _modules, []} = Kernel.ParallelCompiler.compile([foo, bar])
       assert Enum.sort([FooCircular, BarCircular]) == [BarCircular, FooCircular]
     after
       purge([FooCircular, BarCircular])
+    end
+
+    test "handles async compilation" do
+      [foo, bar] =
+        write_tmp(
+          "async_compile",
+          foo: """
+          defmodule FooAsync do
+            true = Code.can_await_module_compilation?()
+
+            Kernel.ParallelCompiler.async(fn ->
+              true = Code.can_await_module_compilation?()
+              BarAsync.__info__(:module)
+            end)
+          end
+          """,
+          bar: """
+          defmodule BarAsync do
+            true = Code.can_await_module_compilation?()
+          end
+          """
+        )
+
+      capture_io(fn ->
+        fixtures = [foo, bar]
+        assert assert {:ok, modules, []} = Kernel.ParallelCompiler.compile(fixtures)
+        assert FooAsync in modules
+        assert BarAsync in modules
+      end)
+    after
+      purge([FooAsync, BarAsync])
     end
 
     test "handles async deadlocks" do

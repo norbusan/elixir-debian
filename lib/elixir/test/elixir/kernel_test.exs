@@ -334,6 +334,89 @@ defmodule KernelTest do
     assert struct_or_map?(10) == false
   end
 
+  defp struct?(arg, name) when is_struct(arg, name), do: true
+  defp struct?(_arg, _name), do: false
+
+  defp struct_or_map?(arg, name) when is_struct(arg, name) or is_map(arg), do: true
+  defp struct_or_map?(_arg, _name), do: false
+
+  defp not_atom(), do: "not atom"
+
+  test "is_struct/2" do
+    assert is_struct(%{}, Macro.Env) == false
+    assert is_struct([], Macro.Env) == false
+    assert is_struct(%Macro.Env{}, Macro.Env) == true
+    assert is_struct(%Macro.Env{}, URI) == false
+    assert struct?(%Macro.Env{}, Macro.Env) == true
+    assert struct?(%Macro.Env{}, URI) == false
+    assert struct?(%{__struct__: "foo"}, "foo") == false
+    assert struct?(%{__struct__: "foo"}, Macro.Env) == false
+    assert struct?([], Macro.Env) == false
+    assert struct?(%{}, Macro.Env) == false
+
+    assert_raise ArgumentError, "argument error", fn ->
+      is_struct(%{}, not_atom())
+    end
+  end
+
+  test "is_struct/2 and other match works" do
+    assert struct_or_map?(%{}, "foo") == false
+    assert struct_or_map?(%{}, Macro.Env) == true
+    assert struct_or_map?(%Macro.Env{}, Macro.Env) == true
+  end
+
+  defp exception?(arg) when is_exception(arg), do: true
+  defp exception?(_arg), do: false
+
+  defp exception_or_map?(arg) when is_exception(arg) or is_map(arg), do: true
+  defp exception_or_map?(_arg), do: false
+
+  test "is_exception/1" do
+    assert is_exception(%{}) == false
+    assert is_exception([]) == false
+    assert is_exception(%RuntimeError{}) == true
+    assert is_exception(%{__exception__: "foo"}) == false
+    assert exception?(%RuntimeError{}) == true
+    assert exception?(%{__exception__: "foo"}) == false
+    assert exception?([]) == false
+    assert exception?(%{}) == false
+  end
+
+  test "is_exception/1 and other match works" do
+    assert exception_or_map?(%RuntimeError{}) == true
+    assert exception_or_map?(%{}) == true
+    assert exception_or_map?(10) == false
+  end
+
+  defp exception?(arg, name) when is_exception(arg, name), do: true
+  defp exception?(_arg, _name), do: false
+
+  defp exception_or_map?(arg, name) when is_exception(arg, name) or is_map(arg), do: true
+  defp exception_or_map?(_arg, _name), do: false
+
+  test "is_exception/2" do
+    assert is_exception(%{}, RuntimeError) == false
+    assert is_exception([], RuntimeError) == false
+    assert is_exception(%RuntimeError{}, RuntimeError) == true
+    assert is_exception(%RuntimeError{}, Macro.Env) == false
+    assert exception?(%RuntimeError{}, RuntimeError) == true
+    assert exception?(%RuntimeError{}, Macro.Env) == false
+    assert exception?(%{__exception__: "foo"}, "foo") == false
+    assert exception?(%{__exception__: "foo"}, RuntimeError) == false
+    assert exception?([], RuntimeError) == false
+    assert exception?(%{}, RuntimeError) == false
+
+    assert_raise ArgumentError, "argument error", fn ->
+      is_exception(%{}, not_atom())
+    end
+  end
+
+  test "is_exception/2 and other match works" do
+    assert exception_or_map?(%{}, "foo") == false
+    assert exception_or_map?(%{}, RuntimeError) == true
+    assert exception_or_map?(%RuntimeError{}, RuntimeError) == true
+  end
+
   test "if/2 boolean optimization does not leak variables during expansion" do
     if false do
       :ok
@@ -343,6 +426,13 @@ defmodule KernelTest do
   end
 
   describe "in/2" do
+    test "too large list in guards" do
+      defmodule TooLargeList do
+        @list Enum.map(1..1024, & &1)
+        defguard is_value(value) when value in @list
+      end
+    end
+
     test "with literals on right side" do
       assert 2 in [1, 2, 3]
       assert 2 in 1..3
@@ -454,6 +544,34 @@ defmodule KernelTest do
       assert case_in(2, 1..3) == true
       assert case_in(3, 1..3) == true
       assert case_in(-3, -1..-3) == true
+    end
+
+    def map_dot(map) when map.field, do: true
+    def map_dot(_other), do: false
+
+    test "map dot guard" do
+      refute map_dot(:foo)
+      refute map_dot(%{})
+      refute map_dot(%{field: false})
+      assert map_dot(%{field: true})
+
+      message =
+        "cannot invoke remote function in guard. " <>
+          "If you want to do a map lookup instead, please remove parens from map.field()"
+
+      assert_raise CompileError, Regex.compile!(message), fn ->
+        defmodule MapDot do
+          def map_dot(map) when map.field(), do: true
+        end
+      end
+
+      message = ~r"cannot invoke remote function Module.fun/0 inside guards"
+
+      assert_raise CompileError, message, fn ->
+        defmodule MapDot do
+          def map_dot(map) when Module.fun(), do: true
+        end
+      end
     end
 
     test "performs all side-effects" do
@@ -604,9 +722,7 @@ defmodule KernelTest do
       result = expand_to_string(quote(do: rand() in [{1}, {2}, {3} | some_call()]))
       assert result =~ "var = rand()"
       assert result =~ "{arg0, arg1, arg2, arg3} = {{1}, {2}, {3}, some_call()}"
-
-      assert result =~
-               ":erlang.orelse(:erlang.\"=:=\"(var, arg1), :erlang.orelse(:erlang.\"=:=\"(var, arg2), :lists.member(var, arg3))))"
+      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, arg2), :lists.member(var, arg3)))"
     end
 
     defp quote_case_in(left, right) do

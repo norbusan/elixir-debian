@@ -8,6 +8,7 @@ Elixir applies bug fixes only to the latest minor branch. Security patches are a
 
 Elixir version | Support
 :------------- | :-----------------------------
+1.11           | Development
 1.10           | Bug fixes and security patches
 1.9            | Security patches only
 1.8            | Security patches only
@@ -52,7 +53,8 @@ Elixir version | Supported Erlang/OTP versions
 1.7            | 19 - 22
 1.8            | 20 - 22
 1.9            | 20 - 22
-1.10           | 21 - 22
+1.10           | 21 - 22 (and Erlang/OTP 23 from v1.10.3)
+1.11           | 21 - 23
 
 While Elixir often adds compatibility to new Erlang/OTP versions on released branches, such as support for Erlang/OTP 20 in v1.4.5, those releases usually contain the minimum changes for Elixir to run without errors. Only the next minor release, in this case v1.5.0, does effectively leverage the new features provided by the latest Erlang/OTP release.
 
@@ -74,6 +76,10 @@ The first column is the version the feature was hard deprecated. The second colu
 
 Version | Deprecated feature                                  | Replaced by (available since)
 :-------| :-------------------------------------------------- | :---------------------------------------------------------------
+[v1.11] | `Mix.Project.compile/2`                             | `Mix.Task.run("compile", args)` (v1.0)
+[v1.11] | `Supervisor.Spec.worker/3` and `Supervisor.Spec.supervisor/3` | The new child specs outlined in `Supervisor` (v1.5)
+[v1.11] | `Supervisor.start_child/2` and `Supervisor.terminate_child/2` | `DynamicSupervisor` (v1.6)
+[v1.11] | `System.stacktrace/1`                               | `__STACKTRACE__` in `try/catch/rescue` (v1.7)
 [v1.10] | `Code.ensure_compiled?/1`                           | `Code.ensure_compiled/1` (v1.0)
 [v1.10] | `Code.load_file/2`                                  | `Code.require_file/2` (v1.0) or `Code.compile_file/2` (v1.7)
 [v1.10] | `Code.loaded_files/0`                               | `Code.required_files/0` (v1.7)
@@ -104,9 +110,7 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.7]  | `Registry.start_link/3`                             | `Registry.start_link/1` (v1.5)
 [v1.7]  | `Stream.chunk/2,3,4`                                | `Stream.chunk_every/2` and [`Stream.chunk_every/3,4`](`Stream.chunk_every/4`) (v1.5)
 [v1.6]  | `Enum.partition/2`                                  | `Enum.split_with/2` (v1.4)
-[v1.6]  | `Keyword.replace/3`                                 | `Keyword.fetch/2` + `Keyword.put/3` (v1.0)
 [v1.6]  | `Macro.unescape_tokens/1,2`                         | Use `Enum.map/2` to traverse over the arguments (v1.0)
-[v1.6]  | `Map.replace/3`                                     | `Map.fetch/2` + `Map.put/3` (v1.0)
 [v1.6]  | `Module.add_doc/6`                                  | [`@doc`](`Module`) module attribute (v1.0)
 [v1.6]  | `Range.range?/1`                                    | Pattern match on [`_.._`](`Kernel.../2`) (v1.0)
 [v1.5]  | `()` to mean `nil`                                  | `nil` (v1.0)
@@ -170,3 +174,4 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.8]: https://github.com/elixir-lang/elixir/blob/v1.8/CHANGELOG.md#4-hard-deprecations
 [v1.9]: https://github.com/elixir-lang/elixir/blob/v1.9/CHANGELOG.md#4-hard-deprecations
 [v1.10]: https://github.com/elixir-lang/elixir/blob/v1.10/CHANGELOG.md#4-hard-deprecations
+[v1.11]: https://github.com/elixir-lang/elixir/blob/v1.11/CHANGELOG.md#4-hard-deprecations

@@ -1,8 +1,11 @@
 defmodule Keyword do
   @moduledoc """
-  Keyword lists are lists of two-element tuples, where the first
-  element of the tuple is an atom and the second element can be any
-  value, used mostly to work with optional values.
+  A keyword list is a list that consists exclusively of two-element tuples.
+
+  The first element of these tuples is known as the *key*, and it must be an atom.
+  The second element, known as the *value*, can be any term.
+
+  Keywords are mostly used to work with optional values.
 
   ## Examples
 
@@ -36,18 +39,32 @@ defmodule Keyword do
   in the `Map` module. For example, `Keyword.get/3` will get the first
   entry matching the given key, regardless if duplicated entries exist.
   Similarly, `Keyword.put/3` and `Keyword.delete/2` ensure all duplicated
-  entries for a given key are removed when invoked. Note however that
-  keyword list operations need to traverse the list in order to find
+  entries for a given key are removed when invoked. Note, however, that
+  keyword list operations need to traverse the whole list in order to find
   keys, so these operations are slower than their map counterparts.
 
   A handful of functions exist to handle duplicated keys, for example,
   `get_values/2` returns all values for a given key and `delete_first/2`
   deletes just one of the existing entries.
 
-  The functions in `Keyword` do not guarantee any property when it comes
-  to ordering. However, since a keyword list is simply a list, all the
-  operations defined in `Enum` and `List` can be applied too, especially
-  when ordering is required.
+  Even though lists preserve the user ordering, the functions in
+  `Keyword` do not guarantee any ordering. For example, if you invoke
+  `Keyword.put(opts, new_key, new_value)`, there is no guarantee to
+  where `new_key` will be added (to the front, to the end, or
+  anywhere else).
+
+  Given ordering is not guaranteed, it is not recommended to pattern
+  match on keyword lists either. For example, a function such as:
+
+      def my_function([some_key: value, another_key: another_value])
+
+  will match
+
+      my_function([some_key: :foo, another_key: :bar])
+
+  but it won't match
+
+      my_function([another_key: :bar, some_key: :foo])
 
   Most of the functions in this module work in linear time. This means
   that, the time it takes to perform an operation grows at the same
@@ -55,8 +72,8 @@ defmodule Keyword do
 
   ## Call syntax
 
-  When keyword lists are passed as the last argument to a function, then
-  the square brackets around the keyword list can be omitted as well. For
+  When keyword lists are passed as the last argument to a function,
+  the square brackets around the keyword list can be omitted. For
   example, the keyword list syntax:
 
       String.split("1-0", "-", [trim: true, parts: 2])
@@ -242,13 +259,13 @@ defmodule Keyword do
   Gets the value from `key` and updates it, all in one pass.
 
   This `fun` argument receives the value of `key` (or `nil` if `key`
-  is not present) and must return a two-element tuple: the "get" value
+  is not present) and must return a two-element tuple: the current value
   (the retrieved value, which can be operated on before being returned)
   and the new value to be stored under `key`. The `fun` may also
   return `:pop`, implying the current value shall be removed from the
   keyword list and returned.
 
-  The returned value is a tuple with the "get" value returned by
+  The returned value is a tuple with the current value returned by
   `fun` and a new keyword list with the updated value under `key`.
 
   ## Examples
@@ -270,7 +287,9 @@ defmodule Keyword do
       {nil, [a: 1]}
 
   """
-  @spec get_and_update(t, key, (value -> {get, value} | :pop)) :: {get, t} when get: term
+  @spec get_and_update(t, key, (value -> {current_value, new_value :: value} | :pop)) ::
+          {current_value, value}
+        when current_value: value
   def get_and_update(keywords, key, fun)
       when is_list(keywords) and is_atom(key),
       do: get_and_update(keywords, [], key, fun)
@@ -307,11 +326,11 @@ defmodule Keyword do
   Gets the value from `key` and updates it. Raises if there is no `key`.
 
   This `fun` argument receives the value of `key` and must return a
-  two-element tuple: the "get" value (the retrieved value, which can be
+  two-element tuple: the current value (the retrieved value, which can be
   operated on before being returned) and the new value to be stored under
   `key`.
 
-  The returned value is a tuple with the "get" value returned by `fun` and a new
+  The returned value is a tuple with the current value returned by `fun` and a new
   keyword list with the updated value under `key`.
 
   ## Examples
@@ -332,7 +351,9 @@ defmodule Keyword do
       {1, []}
 
   """
-  @spec get_and_update!(t, key, (value -> {get, value})) :: {get, t} when get: term
+  @spec get_and_update!(t, key, (value -> {current_value, new_value :: value} | :pop)) ::
+          {current_value, t}
+        when current_value: value
   def get_and_update!(keywords, key, fun) do
     get_and_update!(keywords, key, fun, [])
   end
@@ -431,13 +452,30 @@ defmodule Keyword do
 
       iex> Keyword.keys(a: 1, b: 2)
       [:a, :b]
+
       iex> Keyword.keys(a: 1, b: 2, a: 3)
       [:a, :b, :a]
+
+      iex> Keyword.keys([{:a, 1}, {"b", 2}, {:c, 3}])
+      ** (ArgumentError) expected a keyword list, but an entry in the list is not a two-element tuple with an atom as its first element, got: {"b", 2}
 
   """
   @spec keys(t) :: [key]
   def keys(keywords) when is_list(keywords) do
-    :lists.map(fn {k, _} -> k end, keywords)
+    try do
+      :lists.map(
+        fn
+          {key, _} when is_atom(key) -> key
+          element -> throw(element)
+        end,
+        keywords
+      )
+    catch
+      element ->
+        raise ArgumentError,
+              "expected a keyword list, but an entry in the list is not a two-element tuple with an atom as its first element, " <>
+                "got: #{inspect(element)}"
+    end
   end
 
   @doc """
@@ -612,18 +650,41 @@ defmodule Keyword do
     end
   end
 
-  @doc false
-  @deprecated "Use Keyword.fetch/2 + Keyword.put/3 instead"
+  @doc """
+  Puts a value under `key` only if the `key` already exists in `keywords`.
+
+  In the case a value is stored multiple times in the keyword list,
+  later occurrences are removed.
+
+  ## Examples
+
+      iex> Keyword.replace([a: 1, b: 2, a: 4], :a, 3)
+      [a: 3, b: 2]
+
+      iex> Keyword.replace([a: 1], :b, 2)
+      [a: 1]
+
+  """
+  @doc since: "1.11.0"
+  @spec replace(t, key, value) :: t
   def replace(keywords, key, value) when is_list(keywords) and is_atom(key) do
-    case :lists.keyfind(key, 1, keywords) do
-      {^key, _} -> [{key, value} | delete(keywords, key)]
-      false -> keywords
-    end
+    do_replace(keywords, key, value)
+  end
+
+  defp do_replace([{key, _} | keywords], key, value) do
+    [{key, value} | delete(keywords, key)]
+  end
+
+  defp do_replace([{_, _} = e | keywords], key, value) do
+    [e | do_replace(keywords, key, value)]
+  end
+
+  defp do_replace([], _key, _value) do
+    []
   end
 
   @doc """
-  Alters the value stored under `key` to `value`, but only
-  if the entry `key` already exists in `keywords`.
+  Puts a value under `key` only if the `key` already exists in `keywords`.
 
   If `key` is not present in `keywords`, a `KeyError` exception is raised.
 
@@ -652,7 +713,7 @@ defmodule Keyword do
     [e | replace!(keywords, key, value, original)]
   end
 
-  defp replace!([], key, _value, original) when is_atom(key) do
+  defp replace!([], key, _value, original) do
     raise(KeyError, key: key, term: original)
   end
 
@@ -822,7 +883,7 @@ defmodule Keyword do
       ** (KeyError) key :b not found in: [a: 1]
 
   """
-  @spec update!(t, key, (value -> value)) :: t
+  @spec update!(t, key, (current_value :: value -> new_value :: value)) :: t
   def update!(keywords, key, fun)
       when is_list(keywords) and is_atom(key) and is_function(fun, 1) do
     update!(keywords, key, fun, keywords)
@@ -843,34 +904,38 @@ defmodule Keyword do
   @doc """
   Updates the `key` in `keywords` with the given function.
 
-  If the `key` does not exist, inserts the given `initial` value.
+  If the `key` does not exist, it inserts the given `default` value.
 
   If there are duplicated keys, they are all removed and only the first one
   is updated.
 
+  The default value will not be passed through the update function.
+
   ## Examples
 
-      iex> Keyword.update([a: 1], :a, 13, &(&1 * 2))
+      iex> Keyword.update([a: 1], :a, 13, fn existing_value -> existing_value * 2 end)
       [a: 2]
-      iex> Keyword.update([a: 1, a: 2], :a, 13, &(&1 * 2))
+
+      iex> Keyword.update([a: 1, a: 2], :a, 13, fn existing_value -> existing_value * 2 end)
       [a: 2]
-      iex> Keyword.update([a: 1], :b, 11, &(&1 * 2))
+
+      iex> Keyword.update([a: 1], :b, 11, fn existing_value -> existing_value * 2 end)
       [a: 1, b: 11]
 
   """
-  @spec update(t, key, value, (value -> value)) :: t
-  def update(keywords, key, initial, fun)
+  @spec update(t, key, default :: value, (existing_value :: value -> updated_value :: value)) :: t
+  def update(keywords, key, default, fun)
 
-  def update([{key, value} | keywords], key, _initial, fun) do
+  def update([{key, value} | keywords], key, _default, fun) do
     [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  def update([{_, _} = e | keywords], key, initial, fun) do
-    [e | update(keywords, key, initial, fun)]
+  def update([{_, _} = e | keywords], key, default, fun) do
+    [e | update(keywords, key, default, fun)]
   end
 
-  def update([], key, initial, _fun) when is_atom(key) do
-    [{key, initial}]
+  def update([], key, default, _fun) when is_atom(key) do
+    [{key, default}]
   end
 
   @doc """
@@ -974,7 +1039,7 @@ defmodule Keyword do
   end
 
   @doc """
-  Returns the first value for `key` and removes all associated antries in the keyword list,
+  Returns the first value for `key` and removes all associated entries in the keyword list,
   raising if `key` is not present.
 
   This function behaves like `pop/3`, but raises in cases the `key` is not present in the

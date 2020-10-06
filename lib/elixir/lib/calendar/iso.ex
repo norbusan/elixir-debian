@@ -8,6 +8,12 @@ defmodule Calendar.ISO do
   applied for all time, consequently the dates give different results
   before the year 1583 from when the Gregorian calendar was adopted.
 
+  Given this is the default calendar used by Elixir, it has one
+  difference compared to the ISO8601 specification in that it allows
+  a whitespace instead of `T` as a seperator between date and times
+  both when parsing and formatting. Strict formatting can be done
+  by using the `to_iso8601` found in `NaiveDateTime` and `DateTime`.
+
   Note that while ISO 8601 allows times and datetimes to specify
   24:00:00 as the zero hour of the next day, this notation is not
   supported by Elixir.
@@ -44,6 +50,7 @@ defmodule Calendar.ISO do
   @type hour :: 0..23
   @type minute :: 0..59
   @type second :: 0..59
+  @type weekday :: :monday | :tuesday | :wednesday | :thursday | :friday | :saturday | :sunday
 
   @typedoc """
   Microseconds with stored precision.
@@ -493,12 +500,12 @@ defmodule Calendar.ISO do
     total_microseconds = divide_by_parts_per_day(parts_in_day, parts_per_day)
 
     {hours, rest_microseconds1} =
-      div_mod(total_microseconds, @seconds_per_hour * @microseconds_per_second)
+      div_rem(total_microseconds, @seconds_per_hour * @microseconds_per_second)
 
     {minutes, rest_microseconds2} =
-      div_mod(rest_microseconds1, @seconds_per_minute * @microseconds_per_second)
+      div_rem(rest_microseconds1, @seconds_per_minute * @microseconds_per_second)
 
-    {seconds, microseconds} = div_mod(rest_microseconds2, @microseconds_per_second)
+    {seconds, microseconds} = div_rem(rest_microseconds2, @microseconds_per_second)
     {hours, minutes, seconds, {microseconds, 6}}
   end
 
@@ -533,7 +540,7 @@ defmodule Calendar.ISO do
     {year, month, day_in_month + 1}
   end
 
-  defp div_mod(int1, int2) do
+  defp div_rem(int1, int2) do
     div = div(int1, int2)
     rem = int1 - div * int2
 
@@ -619,42 +626,82 @@ defmodule Calendar.ISO do
     rem(year, 4) === 0 and (rem(year, 100) !== 0 or rem(year, 400) === 0)
   end
 
+  # TODO: Deprecate me on v1.15
+  @doc false
+  def day_of_week(year, month, day) do
+    day_of_week(year, month, day, :default) |> elem(0)
+  end
+
   @doc """
   Calculates the day of the week from the given `year`, `month`, and `day`.
 
-  It is an integer from 1 to 7, where 1 is Monday and 7 is Sunday.
+  It is an integer from 1 to 7, where 1 is the given `starting_on` weekday.
+  For example, if `starting_on` is set to `:monday`, then 1 is Monday and
+  7 is Sunday.
+
+  `starting_on` can also be `:default`, which is equivalent to `:monday`.
 
   ## Examples
 
-      iex> Calendar.ISO.day_of_week(2016, 10, 31)
-      1
-      iex> Calendar.ISO.day_of_week(2016, 11, 1)
-      2
-      iex> Calendar.ISO.day_of_week(2016, 11, 2)
-      3
-      iex> Calendar.ISO.day_of_week(2016, 11, 3)
-      4
-      iex> Calendar.ISO.day_of_week(2016, 11, 4)
-      5
-      iex> Calendar.ISO.day_of_week(2016, 11, 5)
-      6
-      iex> Calendar.ISO.day_of_week(2016, 11, 6)
-      7
-      iex> Calendar.ISO.day_of_week(-99, 1, 31)
-      4
+      iex> Calendar.ISO.day_of_week(2016, 10, 31, :monday)
+      {1, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 1, :monday)
+      {2, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 2, :monday)
+      {3, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 3, :monday)
+      {4, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 4, :monday)
+      {5, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 5, :monday)
+      {6, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 6, :monday)
+      {7, 1, 7}
+      iex> Calendar.ISO.day_of_week(-99, 1, 31, :monday)
+      {4, 1, 7}
+
+      iex> Calendar.ISO.day_of_week(2016, 10, 31, :sunday)
+      {2, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 1, :sunday)
+      {3, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 2, :sunday)
+      {4, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 3, :sunday)
+      {5, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 4, :sunday)
+      {6, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 5, :sunday)
+      {7, 1, 7}
+      iex> Calendar.ISO.day_of_week(2016, 11, 6, :sunday)
+      {1, 1, 7}
+      iex> Calendar.ISO.day_of_week(-99, 1, 31, :sunday)
+      {5, 1, 7}
+
+      iex> Calendar.ISO.day_of_week(2016, 10, 31, :saturday)
+      {3, 1, 7}
 
   """
-  @doc since: "1.4.0"
-  @spec day_of_week(year, month, day) :: day_of_week()
+  @doc since: "1.11.0"
+  @spec day_of_week(year, month, day, :default | weekday) :: {day_of_week(), 1, 7}
   @impl true
-  def day_of_week(year, month, day) do
-    date_to_iso_days(year, month, day)
-    |> iso_days_to_day_of_week()
+  def day_of_week(year, month, day, starting_on) do
+    iso_days = date_to_iso_days(year, month, day)
+    {iso_days_to_day_of_week(iso_days, starting_on), 1, 7}
   end
 
-  defp iso_days_to_day_of_week(iso_days) do
-    Integer.mod(iso_days + 5, 7) + 1
+  @doc false
+  def iso_days_to_day_of_week(iso_days, starting_on) do
+    Integer.mod(iso_days + day_of_week_offset(starting_on), 7) + 1
   end
+
+  defp day_of_week_offset(:default), do: 5
+  defp day_of_week_offset(:wednesday), do: 3
+  defp day_of_week_offset(:thursday), do: 2
+  defp day_of_week_offset(:friday), do: 1
+  defp day_of_week_offset(:saturday), do: 0
+  defp day_of_week_offset(:sunday), do: 6
+  defp day_of_week_offset(:monday), do: 5
+  defp day_of_week_offset(:tuesday), do: 4
 
   @doc """
   Calculates the day of the year from the given `year`, `month`, and `day`.
@@ -1161,6 +1208,14 @@ defmodule Calendar.ISO do
   end
 
   @doc false
+  def gregorian_seconds_to_iso_days(seconds, microsecond) do
+    {days, rest_seconds} = div_rem(seconds, @seconds_per_day)
+    microseconds_in_day = rest_seconds * @microseconds_per_second + microsecond
+    day_fraction = {microseconds_in_day, @parts_per_day}
+    {days, day_fraction}
+  end
+
+  @doc false
   def iso_days_to_unit({days, {parts, ppd}}, unit) do
     day_microseconds = days * @parts_per_day
     microseconds = divide_by_parts_per_day(parts, ppd)
@@ -1312,7 +1367,7 @@ defmodule Calendar.ISO do
   end
 
   defp iso_seconds_to_datetime(seconds) do
-    {days, rest_seconds} = div_mod(seconds, @seconds_per_day)
+    {days, rest_seconds} = div_rem(seconds, @seconds_per_day)
 
     date = date_from_iso_days(days)
     time = seconds_to_time(rest_seconds)
@@ -1320,8 +1375,8 @@ defmodule Calendar.ISO do
   end
 
   defp seconds_to_time(seconds) when seconds in 0..@last_second_of_the_day do
-    {hour, rest_seconds} = div_mod(seconds, @seconds_per_hour)
-    {minute, second} = div_mod(rest_seconds, @seconds_per_minute)
+    {hour, rest_seconds} = div_rem(seconds, @seconds_per_hour)
+    {minute, second} = div_rem(rest_seconds, @seconds_per_minute)
 
     {hour, minute, second}
   end

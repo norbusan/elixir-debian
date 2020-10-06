@@ -92,23 +92,17 @@ dispatch_import(Meta, Name, Args, E, Callback) ->
     {ok, Receiver, Quoted} ->
       expand_quoted(Meta, Receiver, Name, Arity, Quoted, E);
     {ok, Receiver, NewName, NewArgs} ->
-      elixir_expand:expand({{'.', [], [Receiver, NewName]}, Meta, NewArgs}, E);
+      elixir_expand:expand({{'.', Meta, [Receiver, NewName]}, Meta, NewArgs}, E);
     error ->
       Callback()
   end.
 
 dispatch_require(Meta, 'Elixir.System', stacktrace, [], #{contextual_vars := Vars} = E, Callback) ->
+  Message = "System.stacktrace/0 is deprecated, use __STACKTRACE__ instead",
+  elixir_errors:erl_warn(?line(Meta), ?key(E, file), Message),
   case lists:member('__STACKTRACE__', Vars) of
-    true ->
-      {{'__STACKTRACE__', [], nil}, E};
-    false ->
-      Message =
-        "System.stacktrace/0 outside of rescue/catch clauses is deprecated. "
-          "If you want to support only Elixir v1.7+, you must access __STACKTRACE__ "
-          "inside a rescue/catch. If you want to support earlier Elixir versions, "
-          "move System.stacktrace/0 inside a rescue/catch",
-      elixir_errors:erl_warn(?line(Meta), ?key(E, file), Message),
-      Callback('Elixir.System', stacktrace, [])
+    true -> {{'__STACKTRACE__', [], nil}, E};
+    false -> Callback('Elixir.System', stacktrace, [])
   end;
 
 dispatch_require(Meta, Receiver, Name, Args, E, Callback) when is_atom(Receiver) ->
@@ -321,21 +315,29 @@ is_ensure_loaded(Receiver) ->
 %% Do not try to get macros from Erlang. Speeds up compilation a bit.
 get_macros(erlang, _) -> [];
 
+%% Module was not required, so we don't try to load it.
 get_macros(Receiver, false) ->
   case erlang:module_loaded(Receiver) of
     true -> get_info(Receiver, macros);
     false -> []
   end;
 
+%% If module was required, do a function call to force
+%% the error handler in.
 get_macros(Receiver, true) ->
-  case is_ensure_loaded(Receiver) of
-    true -> get_info(Receiver, macros);
-    false -> []
+  try
+    Receiver:'__info__'(macros)
+  catch
+    error:_ -> []
   end.
 
-%% Kernel deprecations are inlined.
-get_deprecations(?kernel) -> [];
-get_deprecations(Receiver) -> get_info(Receiver, deprecated).
+%% Deprecations checks only happen at the module body,
+%% so in there we can try to at least load the module.
+get_deprecations(Receiver) ->
+  case is_ensure_loaded(Receiver) of
+    true -> get_info(Receiver, deprecated);
+    false -> []
+  end.
 
 get_info(Receiver, Key) ->
   case erlang:function_exported(Receiver, '__info__', 1) of
@@ -365,26 +367,19 @@ elixir_imported_macros() ->
 
 check_deprecated(_, erlang, _, _, _) ->
   ok;
-check_deprecated(_, _, _, _, #{module := 'Elixir.HashDict'}) ->
+check_deprecated(_, ?kernel, _, _, _) ->
   ok;
 check_deprecated(Meta, Receiver, Name, Arity, E) ->
-  case (?key(E, function) == nil) andalso is_ensure_loaded(Receiver) of
-    true ->
-      case check_deprecated(Receiver, Name, Arity, get_deprecations(Receiver)) of
-        nil -> ok;
-        Other -> elixir_errors:form_warn(Meta, E, ?MODULE, Other)
+  case (?key(E, function) == nil) andalso get_deprecations(Receiver) of
+    [_ | _] = Deprecations ->
+      case lists:keyfind({Name, Arity}, 1, Deprecations) of
+        {_, Message} ->
+          elixir_errors:form_warn(Meta, E, ?MODULE, {deprecated, Receiver, Name, Arity, Message});
+
+        false ->
+          false
       end;
 
-    false ->
+    _ ->
       ok
   end.
-
-check_deprecated(?kernel, to_char_list, 1, _) ->
-  {deprecated, ?kernel, to_char_list, 1, "Use Kernel.to_charlist/1 instead"};
-check_deprecated(Mod, Fun, Arity, [_ | _] = Deprecated) ->
-  case lists:keyfind({Fun, Arity}, 1, Deprecated) of
-    {_, Message} -> {deprecated, Mod, Fun, Arity, Message};
-    false -> nil
-  end;
-check_deprecated(_, _, _, _) ->
-  nil.

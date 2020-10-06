@@ -4,9 +4,10 @@ defmodule ApplicationTest do
   use ExUnit.Case, async: true
 
   import PathHelpers
+  import ExUnit.CaptureIO
 
   test "application environment" do
-    assert_raise ArgumentError, ~r/because the application was not loaded\/started/, fn ->
+    assert_raise ArgumentError, ~r/because the application was not loaded nor configured/, fn ->
       Application.fetch_env!(:unknown, :unknown)
     end
 
@@ -30,9 +31,31 @@ defmodule ApplicationTest do
     Application.delete_env(:elixir, :unknown)
   end
 
+  test "deprecated non-atom keys" do
+    assert_deprecated(fn ->
+      Application.put_env(:elixir, [:a, :b], :c)
+    end)
+
+    assert_deprecated(fn ->
+      assert Application.get_env(:elixir, [:a, :b]) == :c
+    end)
+
+    assert_deprecated(fn ->
+      assert Application.fetch_env!(:elixir, [:a, :b]) == :c
+    end)
+  after
+    assert_deprecated(fn ->
+      Application.delete_env(:elixir, [:a, :b])
+    end)
+  end
+
+  defp assert_deprecated(fun) do
+    assert capture_io(:stderr, fun) =~ ~r/passing non-atom as application env key is deprecated/
+  end
+
   describe "compile environment" do
     test "invoked at compile time" do
-      assert_raise ArgumentError, ~r/because the application was not loaded\/started/, fn ->
+      assert_raise ArgumentError, ~r/because the application was not loaded nor configured/, fn ->
         compile_env!(:unknown, :unknown)
       end
 

@@ -317,7 +317,7 @@ defmodule IO do
   @spec warn(chardata | String.Chars.t(), Exception.stacktrace()) :: :ok
   def warn(message, []) do
     message = [to_chardata(message), ?\n]
-    :elixir_errors.io_warn(nil, nil, message, message)
+    :elixir_errors.io_warn(0, nil, message, message)
   end
 
   def warn(message, [{_, _, _, opts} | _] = stacktrace) do
@@ -327,17 +327,34 @@ defmodule IO do
     file = opts[:file]
 
     :elixir_errors.io_warn(
-      line,
+      line || 0,
       file && List.to_string(file),
       message,
       [message, ?\n, "  ", formatted_trace, ?\n]
     )
   end
 
+  @doc false
+  def warn_once(key, message, stacktrace_drop_levels) do
+    {:current_stacktrace, stacktrace} = Process.info(self(), :current_stacktrace)
+    stacktrace = Enum.drop(stacktrace, stacktrace_drop_levels)
+
+    if :elixir_config.warn(key, stacktrace) do
+      warn(message, stacktrace)
+    else
+      :ok
+    end
+  end
+
   @doc """
   Writes a `message` to stderr, along with the current stacktrace.
 
   It returns `:ok` if it succeeds.
+
+  Do not call this function at the tail of another function. Due to tail
+  call optimization, a stacktrace entry would not be added and the
+  stacktrace would be incorrectly trimmed. Therefore make sure at least
+  one expression (or an atom such as `:ok`) follows the `IO.warn/1` call.
 
   ## Examples
 
@@ -430,8 +447,8 @@ defmodule IO do
   See `IO.getn/3` for a description of return values.
 
   """
-  @spec getn(chardata | String.Chars.t(), pos_integer) :: chardata | nodata
-  @spec getn(device, chardata | String.Chars.t()) :: chardata | nodata
+  @spec getn(device | chardata | String.Chars.t(), pos_integer | chardata | String.Chars.t()) ::
+          chardata | nodata
   def getn(prompt, count \\ 1)
 
   def getn(prompt, count) when is_integer(count) and count > 0 do
@@ -582,7 +599,7 @@ defmodule IO do
 
   The operation is Unicode unsafe.
 
-  Notice that this function treats integers in the given IO data as
+  Note that this function treats integers in the given IO data as
   raw bytes and does not perform any kind of encoding conversion.
   If you want to convert from a charlist to a UTF-8-encoded string,
   use `chardata_to_string/1` instead. For more information about

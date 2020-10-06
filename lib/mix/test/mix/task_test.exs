@@ -150,11 +150,25 @@ defmodule Mix.TaskTest do
     in_fixture("umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project(:umbrella, ".", fn _ ->
         assert [:ok, :ok] = Mix.Task.run("clean")
-        assert :noop = Mix.Task.run("clean")
+        assert [:noop, :noop] = Mix.Task.run("clean")
 
         Mix.Task.reenable("clean")
         assert [:ok, :ok] = Mix.Task.run("clean")
-        assert :noop = Mix.Task.run("clean")
+        assert [:noop, :noop] = Mix.Task.run("clean")
+      end)
+    end)
+  end
+
+  test "reenable/1 for recursive inside umbrella child" do
+    in_fixture("umbrella_dep/deps/umbrella", fn ->
+      Mix.Project.in_project(:umbrella, ".", fn _ ->
+        assert [:ok, :ok] = Mix.Task.run("cmd", ["echo", "hello"])
+        assert [:ok, :ok] = Mix.Task.run("cmd", ["echo", "world"])
+
+        assert_received {:mix_shell, :run, ["hello" <> _]}
+        assert_received {:mix_shell, :run, ["world" <> _]}
+        assert_received {:mix_shell, :run, ["hello" <> _]}
+        assert_received {:mix_shell, :run, ["world" <> _]}
       end)
     end)
   end
@@ -178,7 +192,7 @@ defmodule Mix.TaskTest do
     in_fixture("umbrella_dep/deps/umbrella", fn ->
       Mix.Project.in_project(:umbrella, ".", fn _ ->
         assert [:ok, :ok] = Mix.Task.run("clean")
-        assert :noop = Mix.Task.run("clean")
+        assert [:noop, :noop] = Mix.Task.run("clean")
         assert [:ok, :ok] = Mix.Task.rerun("clean")
       end)
     end)
@@ -186,7 +200,6 @@ defmodule Mix.TaskTest do
 
   test "get!" do
     Mix.Project.push(MixTest.Case.Sample)
-
     assert Mix.Task.get!("hello") == Mix.Tasks.Hello
 
     assert_raise Mix.NoTaskError, "The task \"unknown\" could not be found", fn ->
@@ -236,5 +249,35 @@ defmodule Mix.TaskTest do
 
   test "shortdoc/1" do
     assert Mix.Task.shortdoc(Mix.Tasks.Hello) == "This is short documentation, see"
+  end
+
+  defmodule Elixir.Mix.Tasks.WithRequirement do
+    use Mix.Task
+    @shortdoc "This is short documentation, see"
+    @requirements "help \"compile\""
+
+    @moduledoc """
+    A test task.
+    """
+
+    def run(_args) do
+      "Task with requirements"
+    end
+  end
+
+  test "requirements/1" do
+    assert Mix.Task.requirements(Mix.Tasks.WithRequirement) == ["help \"compile\""]
+  end
+
+  test "@requirements are running during task execution" do
+    assert ExUnit.CaptureIO.capture_io(fn ->
+             assert Mix.Task.run("with_requirement") == "Task with requirements"
+           end) =~ "mix compile"
+
+    Mix.Task.reenable("help")
+
+    assert ExUnit.CaptureIO.capture_io(fn ->
+             assert Mix.Task.run("with_requirement") == :noop
+           end) == ""
   end
 end

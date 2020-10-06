@@ -152,8 +152,8 @@ defmodule Path do
 
   ## Examples
 
-      Path.expand("/foo/bar/../bar")
-      #=> "/foo/bar"
+      Path.expand("/foo/bar/../baz")
+      #=> "/foo/baz"
 
   """
   @spec expand(t) :: binary
@@ -564,9 +564,6 @@ defmodule Path do
 
   """
   @spec split(t) :: [binary]
-
-  # Work around a bug in Erlang on Unix-like operating systems
-  def split(""), do: []
 
   def split(path) do
     :filename.split(IO.chardata_to_string(path))

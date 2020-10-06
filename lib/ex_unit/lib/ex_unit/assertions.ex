@@ -11,7 +11,7 @@ defmodule ExUnit.AssertionError do
                expr: @no_value,
                args: @no_value,
                doctest: @no_value,
-               context: :expr
+               context: :==
 
   @doc """
   Indicates no meaningful value for a field.
@@ -262,8 +262,9 @@ defmodule ExUnit.Assertions do
     nil
   end
 
-  defp translate_operator(kind, {_, meta, [left, right]} = expr, call, message, true, _caller) do
+  defp translate_operator(kind, {op, meta, [left, right]} = expr, call, message, true, _caller) do
     expr = escape_quoted(kind, meta, expr)
+    context = if op in [:===, :!==], do: :===, else: :==
 
     quote do
       left = unquote(left)
@@ -280,14 +281,16 @@ defmodule ExUnit.Assertions do
           left: left,
           right: right,
           expr: unquote(expr),
-          message: unquote(message)
+          message: unquote(message),
+          context: unquote(context)
         )
       end
     end
   end
 
-  defp translate_operator(kind, {_, meta, [left, right]} = expr, call, message, false, _caller) do
+  defp translate_operator(kind, {op, meta, [left, right]} = expr, call, message, false, _caller) do
     expr = escape_quoted(kind, meta, expr)
+    context = if op in [:===, :!==], do: :===, else: :==
 
     quote do
       left = unquote(left)
@@ -297,7 +300,8 @@ defmodule ExUnit.Assertions do
         left: left,
         right: right,
         expr: unquote(expr),
-        message: unquote(message)
+        message: unquote(message),
+        context: unquote(context)
       )
     end
   end
@@ -352,7 +356,7 @@ defmodule ExUnit.Assertions do
           case right do
             unquote(left) ->
               unquote(check)
-              unquote(vars)
+              unquote(mark_as_generated(vars))
 
             _ ->
               left = unquote(Macro.escape(left))
@@ -420,11 +424,7 @@ defmodule ExUnit.Assertions do
       assert_receive {:count, ^x}
 
   """
-  defmacro assert_receive(
-             pattern,
-             timeout \\ Application.fetch_env!(:ex_unit, :assert_receive_timeout),
-             failure_message \\ nil
-           ) do
+  defmacro assert_receive(pattern, timeout \\ nil, failure_message \\ nil) do
     code = escape_quoted(:assert_receive, [], pattern)
     assert_receive(pattern, timeout, failure_message, __CALLER__, code)
   end
@@ -477,7 +477,7 @@ defmodule ExUnit.Assertions do
       quote do
         case message do
           unquote(pattern) ->
-            _ = unquote(vars)
+            _ = unquote(mark_as_generated(vars))
             true
 
           _ ->
@@ -490,13 +490,6 @@ defmodule ExUnit.Assertions do
         fn message ->
           unquote(suppress_warning(quoted_pattern))
         end
-      end
-
-    timeout =
-      if is_integer(timeout) do
-        timeout
-      else
-        quote do: ExUnit.Assertions.__timeout__(unquote(timeout))
       end
 
     failure_message =
@@ -512,11 +505,11 @@ defmodule ExUnit.Assertions do
         end
 
     quote do
-      timeout = unquote(timeout)
+      timeout = ExUnit.Assertions.__timeout__(unquote(timeout), :assert_receive_timeout)
 
       {received, unquote(vars)} =
         receive do
-          unquote(pattern) -> {received, unquote(vars)}
+          unquote(pattern) -> {received, unquote(mark_as_generated(vars))}
         after
           timeout -> flunk(unquote(failure_message))
         end
@@ -529,9 +522,11 @@ defmodule ExUnit.Assertions do
   @max_mailbox_length 10
 
   @doc false
-  def __timeout__(timeout) when is_integer(timeout) and timeout >= 0, do: timeout
+  def __timeout__(timeout, _) when is_integer(timeout) and timeout >= 0, do: timeout
 
-  def __timeout__(timeout),
+  def __timeout__(nil, key), do: Application.fetch_env!(:ex_unit, key)
+
+  def __timeout__(timeout, _),
     do: raise(ArgumentError, "timeout must be a non-negative integer, got: #{inspect(timeout)}")
 
   @doc false
@@ -630,7 +625,7 @@ defmodule ExUnit.Assertions do
 
     vars =
       for {name, _, context} = var <- collect_vars_from_pattern(right),
-          Enum.any?(pattern, &match?({^name, _, ^context}, &1)),
+          has_var?(pattern, name, context),
           do: var
 
     pattern ++ vars
@@ -638,8 +633,8 @@ defmodule ExUnit.Assertions do
 
   defp collect_vars_from_pattern(expr) do
     Macro.prewalk(expr, [], fn
-      {:"::", _, [left, _]}, acc ->
-        {[left], acc}
+      {:"::", _, [left, right]}, acc ->
+        {[left], collect_vars_from_binary(right, acc)}
 
       {skip, _, [_]}, acc when skip in [:^, :@] ->
         {:ok, acc}
@@ -651,12 +646,34 @@ defmodule ExUnit.Assertions do
         {[expanded], acc}
 
       {name, meta, context}, acc when is_atom(name) and is_atom(context) ->
-        {:ok, [{name, [generated: true] ++ meta, context} | acc]}
+        {:ok, [{name, meta, context} | acc]}
 
       node, acc ->
         {node, acc}
     end)
     |> elem(1)
+  end
+
+  defp collect_vars_from_binary(right, original_acc) do
+    Macro.prewalk(right, original_acc, fn
+      {mode, _, [{name, meta, context}]}, acc
+      when is_atom(mode) and is_atom(name) and is_atom(context) ->
+        if has_var?(original_acc, name, context) do
+          {:ok, [{name, meta, context} | acc]}
+        else
+          {:ok, acc}
+        end
+
+      node, acc ->
+        {node, acc}
+    end)
+    |> elem(1)
+  end
+
+  defp has_var?(pattern, name, context), do: Enum.any?(pattern, &match?({^name, _, ^context}, &1))
+
+  defp mark_as_generated(vars) do
+    for {name, meta, context} <- vars, do: {name, [generated: true] ++ meta, context}
   end
 
   @doc false
@@ -717,7 +734,7 @@ defmodule ExUnit.Assertions do
     match? =
       cond do
         is_binary(message) -> Exception.message(error) == message
-        Regex.regex?(message) -> Exception.message(error) =~ message
+        is_struct(message, Regex) -> Exception.message(error) =~ message
       end
 
     message =
@@ -900,11 +917,7 @@ defmodule ExUnit.Assertions do
       refute_receive :bye, 1000
 
   """
-  defmacro refute_receive(
-             pattern,
-             timeout \\ Application.fetch_env!(:ex_unit, :refute_receive_timeout),
-             failure_message \\ nil
-           ) do
+  defmacro refute_receive(pattern, timeout \\ nil, failure_message \\ nil) do
     do_refute_receive(pattern, timeout, failure_message)
   end
 
@@ -935,10 +948,12 @@ defmodule ExUnit.Assertions do
     receive_clause = refute_receive_clause(pattern, failure_message)
 
     quote do
+      timeout = ExUnit.Assertions.__timeout__(unquote(timeout), :refute_receive_timeout)
+
       receive do
         unquote(receive_clause)
       after
-        unquote(timeout) -> false
+        timeout -> false
       end
     end
   end

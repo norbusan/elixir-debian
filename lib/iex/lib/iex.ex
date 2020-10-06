@@ -29,6 +29,17 @@ defmodule IEx do
   to work. `--werl` may be permanently enabled by setting the `IEX_WITH_WERL`
   environment variable.
 
+  ## Coloring
+
+  Coloring is enabled by default on most Unix terminals. They are also
+  available on Windows consoles from Windows 10, although it must be
+  explicitly enabled for the current user in the registry by running
+  the following command:
+
+      reg add HKCU\Console /v VirtualTerminalLevel /t REG_DWORD /d 1
+
+  After running the command above, you must restart your current console.
+
   ## Shell history
 
   It is possible to get shell history by passing some options that enable it
@@ -273,12 +284,16 @@ defmodule IEx do
 
   When starting, IEx looks for a local `.iex.exs` file (located in the current
   working directory), then a global one (located at `~/.iex.exs`) and loads the
-  first one it finds (if any). The code in the loaded `.iex.exs` file is
-  evaluated in the shell's context. So, for instance, any modules that are
-  loaded or variables that are bound in the `.iex.exs` file will be available in the
-  shell after it has booted.
+  first one it finds (if any). Note the location of the `.iex.exs` files, both
+  in the current directory and the global one, are taken relative to the user
+  that started the application, not to the user that is connecting to the node in
+  case of remote IEx connections.
 
-  For example, take the following `.iex.exs` file:
+  The code in the loaded `.iex.exs` file is evaluated in the shell's context.
+  For instance, any modules that are loaded or variables that are bound in the
+  `.iex.exs` file will be available in the shell after it has booted.
+
+  Take the following `.iex.exs` file:
 
       # Load another ".iex.exs" file
       import_file("~/.iex.exs")
@@ -480,7 +495,7 @@ defmodule IEx do
 
   ANSI escapes in `string` are not processed in any way.
   """
-  @spec color(atom(), String.t()) :: String.t()
+  @spec color(atom(), iodata()) :: iodata()
   def color(color, string) do
     case IEx.Config.color(color) do
       nil ->
@@ -753,7 +768,7 @@ defmodule IEx do
   `IEx.break!` multiple times with different patterns, only the last
   pattern is kept.
 
-  Notice that, while patterns may be given to macros, remember that
+  Note that, while patterns may be given to macros, remember that
   macros receive ASTs as arguments, and not values. For example, if
   you try to break on a macro with the following pattern:
 

@@ -735,6 +735,7 @@ defmodule File do
       File.rename("samples", "tmp")
 
   """
+  @doc since: "1.1.0"
   @spec rename(Path.t(), Path.t()) :: :ok | {:error, posix}
   def rename(source, destination) do
     :file.rename(source, destination)
@@ -1503,6 +1504,12 @@ defmodule File do
   @doc """
   Sets the current working directory.
 
+  The current working directory is set for the BEAM globally. This can lead to
+  race conditions if multiple processes are changing the current working
+  directory concurrently. To run an external command in a given directory
+  without changing the global current working directory, use the `:cd` option
+  of `System.cmd/3` and `Port.open/2`.
+
   Returns `:ok` if successful, `{:error, reason}` otherwise.
   """
   @spec cd(Path.t()) :: :ok | {:error, posix}
@@ -1637,7 +1644,7 @@ defmodule File do
 
   See `Stream.run/1` for an example of streaming into a file.
   """
-  @spec stream!(Path.t(), stream_mode, :line | pos_integer) :: File.Stream.t()
+  @spec stream!(Path.t(), [stream_mode], :line | pos_integer) :: File.Stream.t()
   def stream!(path, modes \\ [], line_or_bytes \\ :line) do
     modes = normalize_modes(modes, true)
     File.Stream.__build__(IO.chardata_to_string(path), modes, line_or_bytes)

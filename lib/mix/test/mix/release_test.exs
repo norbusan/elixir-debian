@@ -131,7 +131,49 @@ defmodule Mix.ReleaseTest do
       end
     end
 
-    test "uses the latest version of an app if there are multiple versions", context do
+    test "uses the locked version of an app", context do
+      in_tmp(context.test, fn ->
+        # install newer version of the app in the custom erts
+        custom_erts_path = Path.join([File.cwd!(), "erts-#{@erts_version}"])
+        File.cp_r!(@erts_source, custom_erts_path)
+
+        ebin_dir = Path.expand(Path.join([custom_erts_path, "..", "lib", "cowboy-2.0.0", "ebin"]))
+        File.mkdir_p!(ebin_dir)
+        app_resource = "{application,cowboy,[{vsn,\"2.0.0\"},{modules,[]},{applications,[]}]}."
+        File.write!(Path.join(ebin_dir, "cowboy.app"), app_resource)
+
+        # install older version of the app in the project dependencies
+        project_path = Path.join(File.cwd!(), "project")
+        build_path = Path.join(project_path, "_build")
+        ebin_dir = Path.join([build_path, "dev", "lib", "cowboy", "ebin"])
+        File.mkdir_p!(ebin_dir)
+        app_resource = "{application,cowboy,[{vsn,\"1.1.2\"},{modules,[]},{applications,[]}]}."
+        File.write!(Path.join(ebin_dir, "cowboy.app"), app_resource)
+
+        File.mkdir_p!(Path.join([project_path, "deps", "cowboy"]))
+        lockfile = Path.join(project_path, "mix.lock")
+
+        File.write!(lockfile, ~S"""
+        %{
+          "cowboy": {:hex, :cowboy, "1.1.2"},
+        }
+        """)
+
+        app_config =
+          config(
+            deps: [{:cowboy, "~> 1.0", path: "deps/cowvoy"}],
+            releases: [demo: [include_erts: custom_erts_path, applications: [cowboy: :permanent]]]
+          )
+
+        Mix.Project.in_project(:mix, project_path, app_config, fn _ ->
+          Code.prepend_path(ebin_dir)
+          release = from_config!(nil, app_config, [])
+          assert release.applications.cowboy[:vsn] == '1.1.2'
+        end)
+      end)
+    end
+
+    test "uses the latest version of an app if it is not locked", context do
       in_tmp(context.test, fn ->
         test_erts_dir = Path.join(File.cwd!(), "erts-#{@erts_version}")
         test_libs_dir = Path.join(File.cwd!(), "lib")
@@ -228,8 +270,8 @@ defmodule Mix.ReleaseTest do
       assert %Mix.Release{
                name: :foo,
                version: "0.1.0",
-               path: path,
-               version_path: version_path
+               path: _path,
+               version_path: _version_path
              } = from_config!(nil, config, [])
     end
   end
@@ -488,20 +530,24 @@ defmodule Mix.ReleaseTest do
     end
 
     test "writes sys_config with encoding" do
-      assert make_sys_config(release([]), [encoding: {:"£", "£", '£'}], "unused/runtime/path") ==
+      assert make_sys_config(
+               release([]),
+               [encoding: {:time_μs, :"£", "£", '£'}],
+               "unused/runtime/path"
+             ) ==
                :ok
 
       {:ok, contents} = :file.consult(@sys_config)
-      assert contents == [[encoding: {:"£", "£", '£'}]]
+      assert contents == [[encoding: {:time_μs, :"£", "£", '£'}]]
     end
 
     test "writes the given sys_config with config providers" do
-      release = release(config_providers: @providers)
+      release = release(config_providers: @providers, reboot_system_after_config: true)
       assert make_sys_config(release, [kernel: [key: :value]], "/foo/bar/bat") == :ok
       assert File.read!(@sys_config) =~ "%% RUNTIME_CONFIG=true"
       {:ok, [config]} = :file.consult(@sys_config)
-      assert %Config.Provider{} = provider = config[:elixir][:config_providers]
-      refute provider.prune_after_boot
+      assert %Config.Provider{} = provider = config[:elixir][:config_provider_init]
+      refute provider.prune_runtime_sys_config_after_boot
       assert provider.extra_config == [kernel: [start_distribution: true]]
       assert config[:kernel] == [key: :value, start_distribution: false]
     end
@@ -510,6 +556,7 @@ defmodule Mix.ReleaseTest do
       release =
         release(
           config_providers: @providers,
+          reboot_system_after_config: true,
           start_distribution_during_config: true,
           prune_runtime_sys_config_after_boot: true
         )
@@ -517,9 +564,9 @@ defmodule Mix.ReleaseTest do
       assert make_sys_config(release, [kernel: [key: :value]], "/foo/bar/bat") == :ok
       assert File.read!(@sys_config) =~ "%% RUNTIME_CONFIG=true"
       {:ok, [config]} = :file.consult(@sys_config)
-      assert %Config.Provider{} = provider = config[:elixir][:config_providers]
-      assert provider.reboot_after_config
-      assert provider.prune_after_boot
+      assert %Config.Provider{} = provider = config[:elixir][:config_provider_init]
+      assert provider.reboot_system_after_config
+      assert provider.prune_runtime_sys_config_after_boot
       assert provider.extra_config == []
       assert config[:kernel] == [key: :value]
     end
@@ -529,8 +576,8 @@ defmodule Mix.ReleaseTest do
       assert make_sys_config(release, [kernel: [key: :value]], "/foo/bar/bat") == :ok
       assert File.read!(@sys_config) =~ "%% RUNTIME_CONFIG=false"
       {:ok, [config]} = :file.consult(@sys_config)
-      assert %Config.Provider{} = provider = config[:elixir][:config_providers]
-      refute provider.reboot_after_config
+      assert %Config.Provider{} = provider = config[:elixir][:config_provider_init]
+      refute provider.reboot_system_after_config
       assert provider.extra_config == []
       assert config[:kernel] == [key: :value]
     end
@@ -550,8 +597,20 @@ defmodule Mix.ReleaseTest do
       assert File.read!(Path.join(destination, "bin/erl")) =~
                ~s|ROOTDIR="$(dirname "$(dirname "$BINDIR")")"|
 
+      unless match?({:win32, _}, :os.type()) do
+        assert File.lstat!(Path.join(destination, "bin/erl")).mode |> rem(0o1000) == 0o755
+      end
+
       refute File.exists?(Path.join(destination, "bin/erl.ini"))
       refute File.exists?(Path.join(destination, "doc"))
+
+      # Now we copy from the copy using a string and without src
+      new_destination = tmp_path("mix_release/_build/dev/rel/new_demo/erts-#{@erts_version}")
+      File.rm_rf!(Path.join(destination, "src"))
+
+      release = from_config!(nil, config(releases: [new_demo: [include_erts: destination]]), [])
+      assert copy_erts(release)
+      assert File.exists?(new_destination)
     end
 
     test "does not copy when include_erts is false" do
@@ -638,6 +697,16 @@ defmodule Mix.ReleaseTest do
       assert {:error, :beam_lib, {:missing_chunk, _, 'Dbgi'}} = :beam_lib.chunks(beam, ['Dbgi'])
       assert {:error, :beam_lib, {:missing_chunk, _, 'Docs'}} = :beam_lib.chunks(beam, ['Docs'])
     end
+
+    test "can keep docs and debug info, if requested" do
+      {:ok, beam} =
+        Path.join(@eex_ebin, "Elixir.EEx.beam")
+        |> File.read!()
+        |> strip_beam(keep: ["Docs", "Dbgi"])
+
+      assert {:ok, {EEx, [{'Dbgi', _}]}} = :beam_lib.chunks(beam, ['Dbgi'])
+      assert {:ok, {EEx, [{'Docs', _}]}} = :beam_lib.chunks(beam, ['Docs'])
+    end
   end
 
   describe "included applications" do
@@ -705,5 +774,18 @@ defmodule Mix.ReleaseTest do
       config_path: tmp_path("mix_release/config/config.exs")
     ]
     |> Keyword.merge(extra)
+  end
+
+  defmodule ReleaseApp do
+    def project do
+      [
+        app: :mix,
+        version: "0.1.0",
+        build_path: tmp_path("mix_release/_build"),
+        build_per_environment: true,
+        config_path: tmp_path("mix_release/config/config.exs")
+      ]
+      |> Keyword.merge(Process.get(:project))
+    end
   end
 end

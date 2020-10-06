@@ -22,9 +22,9 @@ defmodule Kernel.Typespec do
       {:docs_v1, _, _, _, _, _, docs} ->
         for {{:type, name, arity}, _, _, doc, _} <- docs do
           case doc do
-            :none -> {{name, arity}, nil}
-            :hidden -> {{name, arity}, false}
             %{"en" => doc_string} -> {{name, arity}, doc_string}
+            :hidden -> {{name, arity}, false}
+            _ -> {{name, arity}, nil}
           end
         end
 
@@ -83,7 +83,7 @@ defmodule Kernel.Typespec do
         store_typespec(bag, kind, expr, pos)
 
         case :ets.lookup(set, {:function, name, arity}) do
-          [{{:function, ^name, ^arity}, line, _, doc, doc_meta}] ->
+          [{{:function, ^name, ^arity}, _, line, _, doc, doc_meta}] ->
             store_doc(set, kind, name, arity, line, :doc, doc, doc_meta)
 
           _ ->
@@ -130,11 +130,18 @@ defmodule Kernel.Typespec do
     store_typespec(bag, kind, expr, pos)
   end
 
+  @reserved_signatures [required: 1, optional: 1]
   def deftypespec(kind, expr, line, file, module, pos)
       when kind in [:type, :typep, :opaque] do
     {set, bag} = :elixir_module.data_tables(module)
 
     case type_to_signature(expr) do
+      {name, arity} = signature when signature in @reserved_signatures ->
+        compile_error(
+          :elixir_locals.get_cached_env(pos),
+          "type #{name}/#{arity} is a reserved type and it cannot be defined"
+        )
+
       {name, arity} when kind == :typep ->
         {line, doc} = get_doc_info(set, :typedoc, line)
 
@@ -250,7 +257,13 @@ defmodule Kernel.Typespec do
           end
 
           if Map.has_key?(type_pairs, type_pair) do
-            compile_error(env, "type #{name}/#{arity} is already defined")
+            {error_full_path, error_line} = type_pairs[type_pair]
+            error_relative_path = Path.relative_to_cwd(error_full_path)
+
+            compile_error(
+              env,
+              "type #{name}/#{arity} is already defined in #{error_relative_path}:#{error_line}"
+            )
           end
 
           Map.put(type_pairs, type_pair, {file, line})
@@ -464,7 +477,7 @@ defmodule Kernel.Typespec do
          _,
          state
        )
-       when is_atom(ctx1) and is_atom(ctx2) and is_integer(unit) and unit >= 0 do
+       when is_atom(ctx1) and is_atom(ctx2) and unit in 1..256 do
     line = line(meta)
     {{:type, line, :binary, [{:integer, line, 0}, {:integer, line(unit_meta), unit}]}, state}
   end
@@ -489,7 +502,7 @@ defmodule Kernel.Typespec do
          state
        )
        when is_atom(ctx1) and is_atom(ctx2) and is_atom(ctx3) and is_integer(size) and
-              is_integer(unit) and size >= 0 and unit >= 0 do
+              size >= 0 and unit in 1..256 do
     args = [{:integer, line(size_meta), size}, {:integer, line(unit_meta), unit}]
     {{:type, line(meta), :binary, args}, state}
   end
@@ -497,7 +510,7 @@ defmodule Kernel.Typespec do
   defp typespec({:<<>>, _meta, _args}, _vars, caller, _state) do
     message =
       "invalid binary specification, expected <<_::size>>, <<_::_*unit>>, " <>
-        "or <<_::size, _::_*unit>> with size and unit being non-negative integers"
+        "or <<_::size, _::_*unit>> with size being non-negative integers, and unit being an integer between 1 and 256"
 
     compile_error(caller, message)
   end

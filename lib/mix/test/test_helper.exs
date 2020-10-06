@@ -28,6 +28,10 @@ defmodule MixTest.Case do
     def project do
       [app: :sample, version: "0.1.0", aliases: [sample: "compile"]]
     end
+
+    def application do
+      Process.get({__MODULE__, :application}) || []
+    end
   end
 
   using do
@@ -53,6 +57,8 @@ defmodule MixTest.Case do
         Application.stop(app)
         Application.unload(app)
       end
+
+      :ok
     end)
 
     :ok
@@ -134,8 +140,14 @@ defmodule MixTest.Case do
 
   def ensure_touched(file, current) do
     File.touch!(file)
+    mtime = File.stat!(file).mtime
 
-    unless File.stat!(file).mtime > current do
+    if mtime <= current do
+      seconds =
+        :calendar.datetime_to_gregorian_seconds(current) -
+          :calendar.datetime_to_gregorian_seconds(mtime)
+
+      Process.sleep(seconds * 1000)
       ensure_touched(file, current)
     end
   end
@@ -176,18 +188,23 @@ defmodule MixTest.Case do
   end
 end
 
-## Set up Mix home with Rebar
+## Set up globals
 
-home = MixTest.Case.tmp_path(".mix")
+home = MixTest.Case.tmp_path(".home")
 File.mkdir_p!(home)
-System.put_env("MIX_HOME", home)
+System.put_env("HOME", home)
+
+mix = MixTest.Case.tmp_path(".mix")
+File.mkdir_p!(mix)
+System.put_env("MIX_HOME", mix)
+
 System.delete_env("XDG_DATA_HOME")
 System.delete_env("XDG_CONFIG_HOME")
 
 rebar = System.get_env("REBAR") || Path.expand("fixtures/rebar", __DIR__)
-File.cp!(rebar, Path.join(home, "rebar"))
+File.cp!(rebar, Path.join(mix, "rebar"))
 rebar = System.get_env("REBAR3") || Path.expand("fixtures/rebar3", __DIR__)
-File.cp!(rebar, Path.join(home, "rebar3"))
+File.cp!(rebar, Path.join(mix, "rebar3"))
 
 ## Copy fixtures to tmp
 
@@ -201,6 +218,8 @@ Enum.each(fixtures, fn fixture ->
 end)
 
 ## Generate Git repo fixtures
+System.cmd("git", ~w[config --global user.email "mix@example.com"])
+System.cmd("git", ~w[config --global user.name "mix-repo"])
 
 # Git repo
 target = Path.expand("fixtures/git_repo", __DIR__)
@@ -214,11 +233,12 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[-c core.hooksPath='' init])
-    System.cmd("git", ~w[config user.email "mix@example.com"])
-    System.cmd("git", ~w[config user.name "mix-repo"])
+    System.cmd("git", ~w[init])
     System.cmd("git", ~w[add .])
     System.cmd("git", ~w[commit -m "bad"])
+    System.cmd("git", ~w[checkout -q -b main])
+    System.cmd("git", ~w[symbolic-ref HEAD refs/heads/main])
+    System.cmd("git", ~w[branch -d master])
   end)
 
   File.write!(Path.join(target, "mix.exs"), """
@@ -305,9 +325,7 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[-c core.hooksPath='' init])
-    System.cmd("git", ~w[config user.email "mix@example.com"])
-    System.cmd("git", ~w[config user.name "mix-repo"])
+    System.cmd("git", ~w[init])
     System.cmd("git", ~w[add .])
     System.cmd("git", ~w[commit -m without-dep])
   end)
@@ -360,9 +378,7 @@ unless File.dir?(target) do
   """)
 
   File.cd!(target, fn ->
-    System.cmd("git", ~w[-c core.hooksPath='' init])
-    System.cmd("git", ~w[config user.email "mix@example.com"])
-    System.cmd("git", ~w[config user.name "mix-repo"])
+    System.cmd("git", ~w[init])
     System.cmd("git", ~w[add .])
     System.cmd("git", ~w[commit -m "ok"])
   end)

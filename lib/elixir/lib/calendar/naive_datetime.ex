@@ -78,6 +78,8 @@ defmodule NaiveDateTime do
           microsecond: Calendar.microsecond()
         }
 
+  @seconds_per_day 24 * 60 * 60
+
   @doc """
   Returns the current naive datetime in UTC.
 
@@ -243,6 +245,61 @@ defmodule NaiveDateTime do
   end
 
   @doc """
+  Builds a new ISO naive datetime.
+
+  Expects all values to be integers. Returns `naive_datetime`
+  if each entry fits its appropriate range, raises if
+  time or date is invalid.
+
+  ## Examples
+
+      iex> NaiveDateTime.new!(2000, 1, 1, 0, 0, 0)
+      ~N[2000-01-01 00:00:00]
+      iex> NaiveDateTime.new!(2000, 2, 29, 0, 0, 0)
+      ~N[2000-02-29 00:00:00]
+      iex> NaiveDateTime.new!(2000, 1, 1, 23, 59, 59, {0, 1})
+      ~N[2000-01-01 23:59:59.0]
+      iex> NaiveDateTime.new!(2000, 1, 1, 23, 59, 59, 999_999)
+      ~N[2000-01-01 23:59:59.999999]
+      iex> NaiveDateTime.new!(2000, 1, 1, 23, 59, 59, {0, 1}, Calendar.ISO)
+      ~N[2000-01-01 23:59:59.0]
+      iex> NaiveDateTime.new!(2000, 1, 1, 24, 59, 59, 999_999)
+      ** (ArgumentError) cannot build naive datetime, reason: :invalid_time
+
+  """
+  @doc since: "1.11.0"
+  @spec new!(
+          Calendar.year(),
+          Calendar.month(),
+          Calendar.day(),
+          Calendar.hour(),
+          Calendar.minute(),
+          Calendar.second(),
+          Calendar.microsecond() | non_neg_integer,
+          Calendar.calendar()
+        ) :: t
+  def new!(
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        microsecond \\ {0, 0},
+        calendar \\ Calendar.ISO
+      )
+
+  def new!(year, month, day, hour, minute, second, microsecond, calendar) do
+    case new(year, month, day, hour, minute, second, microsecond, calendar) do
+      {:ok, naive_datetime} ->
+        naive_datetime
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot build naive datetime, reason: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
   Builds a naive datetime from date and time structs.
 
   ## Examples
@@ -270,6 +327,24 @@ defmodule NaiveDateTime do
     }
 
     {:ok, naive_datetime}
+  end
+
+  @doc """
+  Builds a naive datetime from date and time structs.
+
+  ## Examples
+
+      iex> NaiveDateTime.new!(~D[2010-01-13], ~T[23:00:07.005])
+      ~N[2010-01-13 23:00:07.005]
+
+  """
+  @doc since: "1.11.0"
+  @spec new!(Date.t(), Time.t()) :: t
+  def new!(date, time)
+
+  def new!(%Date{calendar: calendar} = date, %Time{calendar: calendar} = time) do
+    {:ok, naive_datetime} = new(date, time)
+    naive_datetime
   end
 
   @doc """
@@ -770,6 +845,82 @@ defmodule NaiveDateTime do
   end
 
   @doc """
+  Converts a number of gregorian seconds to a `NaiveDateTime` struct.
+
+  ## Examples
+
+      iex> NaiveDateTime.from_gregorian_seconds(1)
+      ~N[0000-01-01 00:00:01]
+      iex> NaiveDateTime.from_gregorian_seconds(63_755_511_991, {5000, 3})
+      ~N[2020-05-01 00:26:31.005]
+      iex> NaiveDateTime.from_gregorian_seconds(-1)
+      ~N[-0001-12-31 23:59:59]
+
+  """
+  @doc since: "1.11.0"
+  @spec from_gregorian_seconds(integer(), Calendar.microsecond(), Calendar.calendar()) :: t
+  def from_gregorian_seconds(
+        seconds,
+        {microsecond, precision} \\ {0, 0},
+        calendar \\ Calendar.ISO
+      )
+      when is_integer(seconds) do
+    iso_days = Calendar.ISO.gregorian_seconds_to_iso_days(seconds, microsecond)
+
+    {year, month, day, hour, minute, second, {microsecond, _}} =
+      calendar.naive_datetime_from_iso_days(iso_days)
+
+    %NaiveDateTime{
+      calendar: calendar,
+      year: year,
+      month: month,
+      day: day,
+      hour: hour,
+      minute: minute,
+      second: second,
+      microsecond: {microsecond, precision}
+    }
+  end
+
+  @doc """
+  Converts a `NaiveDateTime` struct to a number of gregorian seconds and microseconds.
+
+  ## Examples
+
+      iex> NaiveDateTime.to_gregorian_seconds(~N[0000-01-01 00:00:01])
+      {1, 0}
+      iex> NaiveDateTime.to_gregorian_seconds(~N[2020-05-01 00:26:31.005])
+      {63_755_511_991, 5000}
+
+  """
+  @doc since: "1.11.0"
+  @spec to_gregorian_seconds(Calendar.naive_datetime()) :: {integer(), non_neg_integer()}
+  def to_gregorian_seconds(%{
+        calendar: calendar,
+        year: year,
+        month: month,
+        day: day,
+        hour: hour,
+        minute: minute,
+        second: second,
+        microsecond: {microsecond, precision}
+      }) do
+    {days, day_fraction} =
+      calendar.naive_datetime_to_iso_days(
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        {microsecond, precision}
+      )
+
+    seconds_in_day = seconds_from_day_fraction(day_fraction)
+    {days * @seconds_per_day + seconds_in_day, microsecond}
+  end
+
+  @doc """
   Compares two `NaiveDateTime` structs.
 
   Returns `:gt` if first is later than the second
@@ -912,6 +1063,12 @@ defmodule NaiveDateTime do
   end
 
   ## Helpers
+
+  defp seconds_from_day_fraction({parts_in_day, @seconds_per_day}),
+    do: parts_in_day
+
+  defp seconds_from_day_fraction({parts_in_day, parts_per_day}),
+    do: div(parts_in_day * @seconds_per_day, parts_per_day)
 
   # Keep it multiline for proper function clause errors.
   defp to_iso_days(%{

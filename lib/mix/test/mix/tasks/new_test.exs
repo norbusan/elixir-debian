@@ -55,6 +55,7 @@ defmodule Mix.Tasks.NewTest do
       assert_file("hello_world/lib/hello_world/application.ex", fn file ->
         assert file =~ "defmodule HelloWorld.Application do"
         assert file =~ "use Application"
+        assert file =~ "@impl true"
         assert file =~ "Supervisor.start_link(children, opts)"
       end)
 
@@ -226,7 +227,7 @@ defmodule Mix.Tasks.NewTest do
 
   defp assert_file(file, match) do
     cond do
-      Regex.regex?(match) ->
+      is_struct(match, Regex) ->
         assert_file(file, &assert(&1 =~ match))
 
       is_function(match, 1) ->

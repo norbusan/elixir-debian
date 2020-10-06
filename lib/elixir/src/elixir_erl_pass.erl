@@ -211,15 +211,21 @@ translate({Name, Meta, Args}, S) when is_atom(Name), is_list(Meta), is_list(Args
 
 %% Remote calls
 
-translate({{'.', _, [Left, Right]}, Meta, []}, S)
+translate({{'.', _, [Left, Right]}, Meta, []}, #elixir_erl{context=guard} = S)
     when is_tuple(Left), is_atom(Right), is_list(Meta) ->
   {TLeft, SL}  = translate(Left, S),
-  {Var, SV} = elixir_erl_var:build('_', SL),
-
   Ann = ?ann(Meta),
-  Generated = erl_anno:set_generated(true, Ann),
   TRight = {atom, Ann, Right},
+  {?remote(Ann, erlang, map_get, [TRight, TLeft]), SL};
+
+translate({{'.', _, [Left, Right]}, Meta, []}, S) when is_tuple(Left), is_atom(Right), is_list(Meta) ->
+  {TLeft, SL}  = translate(Left, S),
+  Ann = ?ann(Meta),
+  TRight = {atom, Ann, Right},
+
+  {Var, SV} = elixir_erl_var:build('_', SL),
   TVar = {var, Ann, Var},
+  Generated = erl_anno:set_generated(true, Ann),
   TError = {tuple, Ann, [{atom, Ann, badkey}, TRight, TVar]},
 
   {{'case', Generated, TLeft, [
@@ -447,7 +453,7 @@ translate_struct(Meta, Name, {'%{}', _, [{'|', _, [Update, Assocs]}]}, S) ->
     {clause, Generated, [Var], [], [?remote(Ann, erlang, error, [Error])]}
   ]}, TS};
 translate_struct(Meta, Name, {'%{}', _, Assocs}, S) ->
-  translate_map(Meta, Assocs ++ [{'__struct__', Name}], none, S).
+  translate_map(Meta, [{'__struct__', Name}] ++ Assocs, none, S).
 
 translate_map(Meta, [{'|', _Meta, [Update, Assocs]}], S) ->
   {TUpdate, SU} = translate(Update, S),
@@ -462,7 +468,7 @@ translate_map(Meta, Assocs, TUpdate, #elixir_erl{extra=Extra} = S) ->
   {TArgs, SA} = lists:mapfoldl(fun({Key, Value}, Acc0) ->
     {TKey, Acc1} = translate(Key, Acc0#elixir_erl{extra=map_key}),
     {TValue, Acc2} = translate(Value, Acc1#elixir_erl{extra=Extra}),
-    {{Op, ?ann(Meta), TKey, TValue}, Acc2}
+    {{Op, Ann, TKey, TValue}, Acc2}
   end, S, Assocs),
 
   build_map(Ann, TUpdate, TArgs, SA).

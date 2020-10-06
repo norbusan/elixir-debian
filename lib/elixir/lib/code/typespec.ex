@@ -217,7 +217,8 @@ defmodule Code.Typespec do
   end
 
   defp typespec_to_quoted({:user_type, line, name, args}) do
-    typespec_to_quoted({:type, line, name, args})
+    args = for arg <- args, do: typespec_to_quoted(arg)
+    {name, [line: line], args}
   end
 
   defp typespec_to_quoted({:type, line, :tuple, :any}) do
@@ -272,13 +273,13 @@ defmodule Code.Typespec do
           {{:optional, [], [typespec_to_quoted(k)]}, typespec_to_quoted(v)}
       end)
 
-    {struct, fields} = Keyword.pop(fields, :__struct__)
-    map = {:%{}, [line: line], fields}
+    case List.keytake(fields, :__struct__, 0) do
+      {{:__struct__, struct}, fields_pruned} when is_atom(struct) and struct != nil ->
+        map_pruned = {:%{}, [line: line], fields_pruned}
+        {:%, [line: line], [struct, map_pruned]}
 
-    if struct do
-      {:%, [line: line], [struct, map]}
-    else
-      map
+      _ ->
+        {:%{}, [line: line], fields}
     end
   end
 

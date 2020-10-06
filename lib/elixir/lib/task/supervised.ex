@@ -102,8 +102,8 @@ defmodule Task.Supervised do
           %{
             label: {Task.Supervisor, :terminating},
             report: %{
-              name: get_from(owner),
-              starter: self(),
+              name: self(),
+              starter: get_from(owner),
               function: fun,
               args: args,
               reason: {log_value(kind, value), __STACKTRACE__}
@@ -112,7 +112,8 @@ defmodule Task.Supervised do
           %{
             domain: [:otp, :elixir],
             error_logger: %{tag: :error_msg},
-            report_cb: &__MODULE__.format_report/1
+            report_cb: &__MODULE__.format_report/1,
+            callers: Process.get(:"$callers")
           }
         )
 
@@ -268,7 +269,7 @@ defmodule Task.Supervised do
     receive do
       # The task at position "position" replied with "value". We put the
       # response in the "waiting" map and do nothing, since we'll only act on
-      # this response when the replying task dies (we'll notice in the :down
+      # this response when the replying task dies (we'll see this in the :down
       # message).
       {{^monitor_ref, position}, reply} ->
         %{^position => {pid, :running}} = waiting

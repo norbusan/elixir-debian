@@ -600,7 +600,29 @@ defmodule EnumTest do
     assert Enum.min_max_by(%{}, fn x -> String.length(x) end, fn -> {:no_min, :no_max} end) ==
              {:no_min, :no_max}
 
+    assert Enum.min_max_by(["aaa", "a", "aa"], fn x -> String.length(x) end, &>/2) == {"aaa", "a"}
+
     assert_runs_enumeration_only_once(&Enum.min_max_by(&1, fn x -> x end, fn -> nil end))
+  end
+
+  test "min_max_by/4" do
+    users = [%{id: 1, date: ~D[2019-01-01]}, %{id: 2, date: ~D[2020-01-01]}]
+
+    assert Enum.min_max_by(users, & &1.date, Date) ==
+             {%{id: 1, date: ~D[2019-01-01]}, %{id: 2, date: ~D[2020-01-01]}}
+
+    assert Enum.min_max_by(["aaa", "a", "aa"], fn x -> String.length(x) end, &>/2, fn -> nil end) ==
+             {"aaa", "a"}
+
+    assert Enum.min_max_by([], fn x -> String.length(x) end, &>/2, fn -> {:no_min, :no_max} end) ==
+             {:no_min, :no_max}
+
+    assert Enum.min_max_by(%{}, fn x -> String.length(x) end, &>/2, fn -> {:no_min, :no_max} end) ==
+             {:no_min, :no_max}
+
+    assert_runs_enumeration_only_once(
+      &Enum.min_max_by(&1, fn x -> x end, fn a, b -> a > b end, fn -> nil end)
+    )
   end
 
   test "split_with/2" do
@@ -1919,7 +1941,6 @@ defmodule EnumTest.SideEffects do
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
-  import PathHelpers
 
   test "take/2 with side effects" do
     stream =
@@ -1933,8 +1954,9 @@ defmodule EnumTest.SideEffects do
            end) == "1\n"
   end
 
-  test "take/2 does not consume next without a need" do
-    path = tmp_path("oneliner.txt")
+  @tag :tmp_dir
+  test "take/2 does not consume next without a need", config do
+    path = Path.join(config.tmp_dir, "oneliner.txt")
     File.mkdir(Path.dirname(path))
 
     try do
@@ -1951,7 +1973,7 @@ defmodule EnumTest.SideEffects do
   end
 
   test "take/2 with no elements works as no-op" do
-    iterator = File.stream!(fixture_path("unknown.txt"))
+    iterator = File.stream!(PathHelpers.fixture_path("unknown.txt"))
 
     assert Enum.take(iterator, 0) == []
     assert Enum.take(iterator, 0) == []

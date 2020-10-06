@@ -45,6 +45,7 @@ defmodule Mix.Tasks.Run do
 
   ## Command-line options
 
+    * `--config` - loads the given configuration files
     * `--eval`, `-e` - evaluates the given code
     * `--require`, `-r` - executes the given pattern/file
     * `--parallel`, `-p` - makes all requires parallel
@@ -152,19 +153,17 @@ defmodule Mix.Tasks.Run do
   end
 
   defp process_config(opts) do
-    Enum.each(opts, fn
-      {:config, value} ->
-        # TODO: Remove on v2.0.
-        IO.warn(
-          "the --config flag is deprecated. If you need to handle multiple configurations, " <>
-            "it is preferable to dynamically import them in your config files"
-        )
+    for {:config, value} <- opts do
+      # TODO: Remove on v2.0.
+      IO.warn(
+        "the --config flag is deprecated. If you need to handle multiple configurations, " <>
+          "it is preferable to dynamically import them in your config files"
+      )
 
-        Mix.Task.run("loadconfig", [value])
+      Mix.Tasks.Loadconfig.load_compile(value)
+    end
 
-      _ ->
-        :ok
-    end)
+    :ok
   end
 
   defp process_load(opts, expr_evaluator) do

@@ -19,12 +19,6 @@ defmodule ExceptionTest do
              stacktrace
   end
 
-  test "exception?/1" do
-    assert Exception.exception?(%RuntimeError{})
-    refute Exception.exception?(%Regex{})
-    refute Exception.exception?({})
-  end
-
   test "message/1" do
     defmodule BadException do
       def message(exception) do
@@ -420,12 +414,12 @@ defmodule ExceptionTest do
       assert blame_message([], & &1.foo) ==
                "you attempted to apply :foo on []. If you are using apply/3, make sure " <>
                  "the module is an atom. If you are using the dot syntax, such as " <>
-                 "map.field or module.function, make sure the left side of the dot is an atom or a map"
+                 "map.field or module.function(), make sure the left side of the dot is an atom or a map"
 
       assert blame_message([], &apply(&1, :foo, [])) ==
                "you attempted to apply :foo on []. If you are using apply/3, make sure " <>
                  "the module is an atom. If you are using the dot syntax, such as " <>
-                 "map.field or module.function, make sure the left side of the dot is an atom or a map"
+                 "map.field or module.function(), make sure the left side of the dot is an atom or a map"
 
       assert blame_message([], &apply(Kernel, &1, [1, 2])) ==
                "you attempted to apply [] on module Kernel. Functions (the second argument of apply) must always be an atom"
@@ -470,7 +464,7 @@ defmodule ExceptionTest do
     test "annotates undefined function clause error with nil hints" do
       assert blame_message(nil, & &1.foo) ==
                "function nil.foo/0 is undefined. If you are using the dot syntax, " <>
-                 "such as map.field or module.function, make sure the left side of the dot is an atom or a map"
+                 "such as map.field or module.function(), make sure the left side of the dot is an atom or a map"
     end
 
     test "annotates key error with suggestions if keys are atoms" do

@@ -1,363 +1,410 @@
-# Changelog for Elixir v1.10
+# Changelog for Elixir v1.11
 
-## Support for Erlang/OTP 21+
+Over the last releases, the Elixir team has been focusing on the compiler, both in terms of catching more mistakes at compilation time and making it faster. Elixir v1.11 has made excellent progress on both fronts. This release also includes many other goodies, such as tighter Erlang integration, support for more guard expressions, built-in datetime formatting, and other calendar enhancements.
 
-Elixir v1.10 requires Erlang/OTP 21+, allowing Elixir to integrate with Erlang/OTP's new logger. Currently, this means that the logger level, logger metadata, as well as all log messages are now shared between Erlang and Elixir APIs.
+## Tighter Erlang integration
 
-We will continue improving the relationship between the logging systems in future releases. In particular, we plan to expose all log levels and runtime filtering functionalities available in Erlang directly into Elixir in the next Elixir version.
+Following Elixir v1.10, we have further integrated with Erlang's new logger by adding four new log levels: `notice`, `critical`, `alert`, and `emergency`, matching all log levels found in the Syslog standard. The `Logger` module now supports structured logging by passing maps and keyword lists to its various functions. It is also possible to specify the log level per module, via the `Logger.put_module_level/2` function. Log levels per application will be added in future releases.
 
-This release also adds two new guards, `is_struct/1` and `is_map_key/2`, thanks to the strict requirement on Erlang/OTP 21+.
+IEx also has been improved to show the documentation for Erlang modules directly from your Elixir terminal. This works with Erlang/OTP 23+ and requires Erlang modules to have been compiled with documentation chunks.
 
-## Releases improvements
+## Compiler checks: application boundaries
 
-Elixir v1.9 introduced releases as a mechanism to package self-contained applications. Elixir v1.10 further improves releases with bug fixes and new enhancements based on feedback we got from the community. The highlights are:
+Elixir v1.11 builds on top of the recently added compilation tracers to track application boundaries. From this release, Elixir will warn if you invoke a function from an existing module but this module does not belong to any of your listed dependencies.
 
-  * Allow the dual boot system of releases to be disabled on environments that are boot-time sensitive, such as embedded devices
+These two conditions may seem contradictory. After all, if a module is available, it must have come from a dependency. This is not true in two scenarios:
 
-  * Track and raise if compile-time configuration is set or changes at runtime (more in the next section)
+  * Modules from Elixir and Erlang/OTP are always available - even if their applications are not explicitly listed as a dependency
 
-  * Support for easily adding extra files to releases via overlays
+  * In an umbrella project, because all child applications are compiled within the same VM, you may have a module from a sibling project available, even if you don't depend on said sibling
 
-  * Allow `RELEASE_DISTRIBUTION` to be set to `none` in order to fully disable it
+This new compiler check makes sure that all modules that you invoke are listed as part of your dependencies, emitting a warning like below otherwise:
 
-  * Add a built-in `:tar` step that automatically packages releases
+```text
+:ssl.connect/2 defined in application :ssl is used by the current
+application but the current application does not directly depend
+on :ssl. To fix this, you must do one of:
 
-See the full CHANGELOG for more improvements.
+  1. If :ssl is part of Erlang/Elixir, you must include it under
+     :extra_applications inside "def application" in your mix.exs
 
-## Improvements to sort-based APIs in Enum
+  2. If :ssl is a dependency, make sure it is listed under "def deps"
+     in your mix.exs
 
-`Enum.sort/1` in Elixir by default sorts from lowest to highest:
-
-```elixir
-iex> Enum.sort(["banana", "apple", "pineapple"])
-["apple", "banana", "pineapple"]
+  3. In case you don't want to add a requirement to :ssl, you may
+     optionally skip this warning by adding [xref: [exclude: :ssl]
+     to your "def project" in mix.exs
 ```
 
-If you want to sort from highest to lowest, you need to call `Enum.sort/2` with a custom sorting function, such as `Enum.sort(collection, &>=/2)`, which is not immediately obvious to someone reading the code:
+This comes with extra benefits in umbrella projects, as it requires child applications to explicitly list their dependencies, completely rejecting cyclic dependencies between siblings.
 
-```elixir
-iex> Enum.sort(["banana", "apple", "pineapple"], &>=/2)
-["pineapple", "banana", "apple"]
+## Compiler checks: data constructors
+
+In Elixir v1.11, the compiler also tracks structs and maps fields across a function body. For example, imagine you wanted to write this code:
+
+    def drive?(%User{age: age}), do: age >= 18
+
+If there is either a typo on the `:age` field or the `:age` field was not yet defined, the compiler will fail accordingly. However, if you wrote this code:
+
+    def drive?(%User{} = user), do: user.age >= 18
+
+The compiler would not catch the missing field and an error would only be raised at runtime. With v1.11, Elixir will track the usage of all maps and struct fields within the same function, emitting warnings for cases like above:
+
+```text
+warning: undefined field `age` in expression:
+
+    # example.exs:7
+    user.age
+
+expected one of the following fields: name, address
+
+where "user" was given the type %User{} in:
+
+    # example.exs:7
+    %User{} = user
+
+Conflict found at
+  example.exs:7: Check.drive?/1
 ```
 
-Furthermore, comparison operators, such as `<=` and `>=`, perform structural sorting, instead of a semantic one. For example, using `>=` to sort dates descendingly won't yield the correct result:
+The compiler also checks binary constructors. Consider you have to send a string over the wire with length-based encoding, where the string is prefixed by its length, up to 4MBs. Your initial attempt may be this:
 
-```elixir
-iex> Enum.sort([~D[2019-12-31], ~D[2020-01-01]])
-[~D[2020-01-01], ~D[2019-12-31]]
+    def run_length(string) when is_binary(string) do
+      <<byte_size(string)::32, string>>
+    end
+
+However, the code above has a bug. Each segment given between `<<>>` must be an integer, unless specified otherwise. With Elixir v1.11, the compiler will let you know so:
+
+```text
+warning: incompatible types:
+
+    binary() !~ integer()
+
+in expression:
+
+    <<byte_size(string)::integer()-size(32), string>>
+
+where "string" was given the type integer() in:
+
+    # foo.exs:4
+    <<byte_size(string)::integer()-size(32), string>>
+
+where "string" was given the type binary() in:
+
+    # foo.exs:3
+    is_binary(string)
+
+HINT: all expressions given to binaries are assumed to be of type integer()
+unless said otherwise. For example, <<expr>> assumes "expr" is an integer.
+Pass a modifier, such as <<expr::float>> or <<expr::binary>>, to change the
+default behaviour.
+
+Conflict found at
+  foo.exs:4: Check.run_length/1
 ```
 
-To perform proper semantic comparison for dates, one would also need to pass a custom sorting function:
+Which can be fixed by adding `::binary` to the second component:
 
-```elixir
-iex> Enum.sort([~D[2019-12-31], ~D[2020-01-01]], &(Date.compare(&1, &2) != :lt))
-[~D[2019-12-31], ~D[2020-01-01]]
+    def run_length(string) when is_binary(string) do
+      <<byte_size(string)::32, string::binary>>
+    end
+
+While some of those warnings could be automatically fixed by the compiler, future versions will also perform those checks across functions and potentially across modules, where automatic fixes wouldn't be desired (nor possible).
+
+## Compilation time improvements
+
+Elixir v1.11 features many improvements to how the compiler tracks file dependencies, such that touching one file causes less files to be recompiled. In previous versions, Elixir tracked three types of dependencies:
+
+  * compile time dependencies - if A depends on B at compile time, such as by using a macro, whenever B changes, A is recompiled
+  * struct dependencies - if A depends on B's struct, whenever B's struct definition changed, A is recompiled
+  * runtime dependencies - if A depends on B at runtime, A is never recompiled
+
+However, because dependencies are transitive, if A depends on B at compile time and B depends on C at runtime, A would depend on C at compile time. Therefore, it is very important to reduce the amount of compile time dependencies.
+
+Elixir v1.11 replaces "struct dependencies" by "exports dependencies". In other words, if A depends on B, whenever B public's interface changes, A is recompiled. B's public interface is made by its struct definition and all of its public functions and macros.
+
+This change allows us to mark `import`s and `require`s as "exports dependencies" instead of "compile time" dependencies. This simplifies the dependency graph considerably. For example, [in the Hex.pm project](https://github.com/hexpm/hexpm), changing the `user.ex` file in Elixir v1.10 would emit this:
+
+```text
+$ touch lib/hexpm/accounts/user.ex && mix compile
+Compiling 90 files (.ex)
 ```
 
-Elixir v1.10 streamlines the sorting functions by introducing both `:asc` and `:desc` shortcuts:
+In Elixir v1.11, we now get:
 
-```elixir
-iex> Enum.sort(["banana", "apple", "pineapple"], :asc)
-["apple", "banana", "pineapple"]
-iex> Enum.sort(["banana", "apple", "pineapple"], :desc)
-["pineapple", "banana", "apple"]
+```text
+$ touch lib/hexpm/accounts/user.ex && mix compile
+Compiling 16 files (.ex)
 ```
 
-As well as adding the possibility to pass a module to perform semantic comparisons. For example, to sort dates, one now only needs to pass the `Date` module or even `{:desc, Date}` for descending semantical sort:
+To make things even better, Elixir v1.11 also introduces a more granular file tracking for path dependencies. In previous versions, a module from a path dependency would always be treated as a compile time dependency. This often meant that if you have an umbrella project, changing an application would cause many modules in sibling applications to recompile. Fortunately, Elixir v1.11 will tag modules from dependencies as exports if appropriate, yielding dramatic improvements to those using path dependencies.
 
-```elixir
-iex> Enum.sort([~D[2019-12-31], ~D[2020-01-01]], Date)
-[~D[2019-12-31], ~D[2020-01-01]]
-iex> Enum.sort([~D[2019-12-31], ~D[2020-01-01]], {:desc, Date})
-[~D[2020-01-01], ~D[2019-12-31]]
+To round up the list of compiler enhancements, the `--profile=time` option added in Elixir v1.10 now also includes the time to compile each individual file. For example, in the Plug project, one can now get:
+
+```text
+[profile] lib/plug/conn.ex compiled in 935ms
+[profile] lib/plug/ssl.ex compiled in 147ms (plus 744ms waiting)
+[profile] lib/plug/static.ex compiled in 238ms (plus 654ms waiting)
+[profile] lib/plug/csrf_protection.ex compiled in 237ms (plus 790ms waiting)
+[profile] lib/plug/debugger.ex compiled in 719ms (plus 947ms waiting)
+[profile] Finished compilation cycle of 60 modules in 1802ms
+[profile] Finished group pass check of 60 modules in 75ms
 ```
 
-These API improvements make the code more concise and readable and they have also been added to `Enum.sort_by`, `Enum.min_by`, `Enum.max_by`, and friends.
+While implementing those features, we have also made the `--long-compilation-threshold` flag more precise. In previous versions, `--long-compilation-threshold` would consider both the time a file spent to compile and the time spent waiting on other files. In Elixir v1.11, it considers only the compilation time. This means less false positives and you can now effectively get all files that take longer than 2s to compile by passing `--long-compilation-threshold 2`.
 
-## Tracking of compile-time configuration
+## `mix xref graph` improvements
 
-In Elixir, we organize our code in applications. Libraries, your dependencies, and your own project are all separate applications. All applications in Elixir also come with an application environment.
+To bring visibility to the compiler tracking improvements described in the previous section, we have also added new features to `mix xref`. `mix xref` is a task that describes cross-references between files in your projects. The `mix xref graph` subsection focuses on the dependency graph between them.
 
-The application environment is a key-value store that allows us to configure said application. While reading the application environment at runtime is the preferred approach, in some rare occasions you may want to use the application environment to configure the compilation of a certain project. This is often done by calling `Application.get_env/3` outside of a function:
+First we have made the existing `--label` flag to consider transitive dependencies. Using `--sink FILE` and `--label compile` can be a powerful combo to find out which files will change whenever the given `FILE` changes. For example, in the Hex.pm project, we get:
+
+```text
+$ mix xref graph --sink lib/hexpm/accounts/user.ex --label compile
+lib/hexpm/billing/hexpm.ex
+└── lib/hexpm/billing/billing.ex (compile)
+lib/hexpm/billing/local.ex
+└── lib/hexpm/billing/billing.ex (compile)
+lib/hexpm/emails/bamboo.ex
+├── lib/hexpm/accounts/email.ex (compile)
+└── lib/hexpm/accounts/user.ex (compile)
+lib/hexpm/emails/emails.ex
+└── lib/hexpm_web/views/email_view.ex (compile)
+lib/hexpm_web/controllers/api/docs_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/key_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/organization_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/organization_user_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/owner_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/package_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/release_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/repository_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/api/retirement_controller.ex
+└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
+lib/hexpm_web/controllers/blog_controller.ex
+└── lib/hexpm_web/views/blog_view.ex (compile)
+lib/hexpm_web/endpoint.ex
+├── lib/hexpm_web/plug_parser.ex (compile)
+└── lib/hexpm_web/session.ex (compile)
+```
+
+All the files at the root will recompile if `lib/hexpm/accounts/user.ex` changes. Their children describe the *why*. For example, the `repository_controller.ex` file will recompile if user changes because it has a compile time dependency on `auth_helpers.ex`, which depends on `user.ex`. This indirect compile time dependency is often the source of recompilations and Elixir v1.11 now makes it trivial to spot them, so they can be eventually addressed.
+
+Another improvement to `mix xref graph` is the addition of `--format cycles`, which will print all cycles in your compilation dependency graph. A `--min-cycle-size` flag can be used if you want to discard short cycles.
+
+## `config/runtime.exs` and `mix app.config`
+
+Elixir v1.9 introduced a new configuration file, specific to releases, called `config/releases.exs`. A release is a self-contained artifact with the Erlang VM, Elixir and your application, ready to run in production.
+
+The addition of `config/releases.exs` has been a very useful one but, unfortunately, it applies only to releases. Developers not using releases must use the `config/config.exs` file, which often loaded too early at compilation time. For any dynamic configuration, developers had to resort to third-party tools or workarounds to achieve the desired results.
+
+Elixir v1.11 addresses this issue by introducing a new configuration file, called `config/runtime.exs`. This new configuration file is loaded exactly before your application starts, when the code is already fully compiled. It is loaded in development, test, and production, regardless if you are using Mix or releases. Therefore it provides a unified API for runtime configuration in Elixir.
+
+`config/runtime.exs` works the same as any other configuration file. However, given `config/runtime.exs` is meant to run with or without Mix, developers must not use `Mix.env()` or `Mix.target()` in `config/runtime.exs`. Instead, they must use the new `config_env()` and `config_target()`, which have been added to the `Config` module.
+
+While `config/releases.exs` will continue to be supported, developers can migrate to `config/runtime.exs` without loss of functionality. For example, a `config/releases.exs` file such as this one
 
 ```elixir
-defmodule MyApp.DBClient do
-  @db_host Application.get_env(:my_app, :db_host, "db.local")
-  def start_link() do
-    SomeLib.DBClient.start_link(host: @db_host)
-  end
+# config/releases.exs
+import Config
+
+config :foo, ...
+config :bar, ...
+```
+
+could run as is as `config/runtime.exs`. However, given `config/runtime.exs` runs in all environments, you may want to restrict part of your configuration to the `:prod` environment:
+
+```elixir
+# config/runtime.exs
+import Config
+
+if config_env() == :prod do
+  config :foo, ...
+  config :bar, ...
 end
 ```
 
-This approach has one big limitation: if you change the value of the application environment after the code is compiled, the value used at runtime is not going to change! For example, if you are using `mix release` and your `config/releases.exs` has:
+If both files are available, releases will pick the now preferred `config/runtime.exs` instead of `config/releases.exs`.
 
-    config :my_app, :db_host, "db.production"
+To wrap it all up, `Mix` also includes a new task called `mix app.config`. This task loads all applications and configures them, without starting them. Whenever you write your own Mix tasks, you will typically want to invoke either `mix app.start` or `mix app.config` before running your own code. Which one is better depends if you want your applications running or only configured.
 
-Because `config/releases.exs` is read after the code is compiled, the new value will have no effect as the code was compiled to connect to "db.local".
+## Other improvements
 
-Of course, the obvious solution to this mismatch is to not read the application environment at compilation time in the first place, and instead move the code to inside a function:
+Elixir v1.11 adds the `is_struct/2`, `is_exception/1`, and `is_exception/2` guards. It also adds support for the `map.field` syntax in guards.
 
-```elixir
-defmodule MyApp.DBClient do
-  def start_link() do
-    SomeLib.DBClient.start_link(host: db_host())
-  end
-  defp db_host() do
-    Application.get_env(:my_app, :db_host, "db.local")
-  end
-end
-```
+The Calendar module ships with a new `Calendar.strftime/3` function, which provides datetime formatting based on the `strftime` format. The `Date` module got new functions for working with weeks and months, such as `Date.beginning_of_month/1` and `Date.end_of_week/2`. Finally, all calendar types got conversion functions from and to gregorian timestamps, such as `Date.from_gregorian_days/2` and `NaiveDateTime.to_gregorian_seconds/1`.
 
-While this is the preferred approach, there are still two scenarios we need to address:
+Mix also includes two new tasks: `mix app.config`, for application runtime configuration, and `mix test.coverage`, which generates aggregated coverage reports for umbrella projects and for test suites partitioned across processes.
 
-  1. Not everyone may be aware of this pitfall, so they will mistakenly read the application environemnt at compile-time, until they are bitten by this behaviour
-
-  2. In rare occasions, you trully need to read the application environment at compile-time, and you want to be warned when you try to configure at runtime something that is valid only at compilation time
-
-Elixir v1.10 aims to solve these two scenarios by introducing a `Application.compile_env/3` function. For example, to read the value at compile time, you can now do:
-
-```elixir
-@db_host Application.compile_env(:my_app, :db_host, "db.local")
-```
-
-By using `compile_env/3`, Elixir will store the values used during compilation and compare them with the runtime values whenever your system starts, raising an error in case they differ. This helps developers ensure they are running their production systems with the configuration they intend to.
-
-In future versions, we will deprecate the use `Application.get_env` at compile-time with a clear message pointing users to configuration best practices, effectively addressing the scenario where users read from the application environment at compile time unaware of its pitfalls.
-
-## Compiler tracing
-
-This release brings enhancements to the Elixir compiler and adds new capabilities for developers to listen to compilation events.
-
-In previous Elixir versions, Elixir would compile a database of cross references between modules (such as function calls, references, structs, etc) for each project in order to perform all kinds of checks, such as deprecations and undefined functions.
-
-Although this database was not public, developers would still use it to run their own checks against their projects. With time, developers would request more data to be included in the database, which was problematic as Elixir itself did not have a use for the additional data, and the database was not meant to be used externally in the first place.
-
-In Elixir v1.10, we have addressed these problems by introducing compiler tracing. The compiler tracing allows developers to listen to events as they are emitted by the compiler, so they can store all of the information they need - and only the information they need.
-
-Elixir itself is using the new compiler tracing to provide new functionality. One advantage of this approach is that developers can now disable undefined function warnings directly on the callsite. For example, imagine you have an optional dependency which may not be available in some cases. You can tell the compiler to skip warning on calls to optional modules with:
-
-    @compile {:no_warn_undefined, OptionalDependency}
-    defdelegate my_function_call(arg), to: OptionalDependency
-
-Previously, this information had to be added to the overall project configuration, which was far away from where the optional call effectively happened.
-
-## Other enhancements
-
-Elixir's calendar data types got many improvements, such as sigil support for third-party calendars, as well as the additions of `DateTime.now!/2`, `DateTime.shift_zone!/3`, and `NaiveDateTime.local_now/0`.
-
-There are many improvements related to Elixir's AST in this release too. First of all, `Code.string_to_quoted/2` has two new options, `:token_metadata` and `:literal_encoder`, that give more control over Elixir's parser. This information was already available to the Elixir code formatter and has now been made public. We have also extensively documented all of Elixir's AST metadata. These changes alongside compiler tracing means static analyzers and IDE integrations have a better foundation to analyze the source code.
-
-ExUnit, our test framework, ships two small but important improvements: `ExUnit.CaptureIO` can now be used by tests that run concurrently and we have added "pattern-matching diffing". To understand the last feature, take this code:
-
-```elixir
-assert %{"status" => 200, "body" => %{"key" => "foo"}} = json_payload
-```
-
-Now imagine that `json_payload` is a large JSON blob and the `"key"` inside the `"body"` did not have value of `"foo"`. In previous Elixir versions, if the assertion failed, Elixir would print the right side and let you up to your own devices to figure out what went wrong. In Elixir v1.10, we diff the data structure against the pattern so you can see exactly which parts of the data matched the pattern and which ones did not. Note ExUnit already performed diffing when comparing data types, this new version adds diffing when matching data against a pattern.
-
-## v1.10.3 (2020-04-25)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Code] Return `[{mod, bin}]` from `Code.compile_file/2`, `Code.require_file/2`, `Code.load_file/2`
-  * [Code] Make sure the formatter respects newlines before and after module attributes
-  * [Kernel.ParallelCompiler] Fix a bug where the parallel compiler would raise in long compilation cycles
-  * [Kernel.ParallelCompiler] Fix a bug where the parallel compiler would raise if some of the modules being compiled referred to a module that has been loaded directly to memory
-  * [Module] Fix accidental breaking change where bodiless clauses had their body value on `@on_definition` callbacks set to an empty list instead of `nil`
-  * [String] Undeprecate `String.normalize/2` normalize and fix infinite loop caused by certain invalid strings
-
-#### ExUnit
-
-  * [ExUnit.Assertions] Fix pattern matching diff when matching on pinned variables
-  * [ExUnit.Assertions] Fix pattern matching diff when matching variable struct names
-  * [ExUnit.Assertions] Fix pattern matching diff when matching on the binary concat operator (`<>`) and the left side is not a literal string
-  * [ExUnit.Assertions] Fix pattern matching diff when matching on pseudo-vars (`__MODULE__`, `__DIR__`, etc)
-
-#### Mix
-
-  * [mix release] Respect the `:path` option when creating a `:tar` file for releases
-
-## v1.10.2 (2020-02-26)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Macro] Fix a bug where `Macro.to_string/1` would emit invalid code for sigils
-  * [Task] Do not crash `async_stream` monitor if it receives spurious DOWN messages
-
-#### Logger
-
-  * [Logger] Fix a bug where the Logger formatter would fail when handling unknown metadata values
-
-#### Mix
-
-  * [mix compile] Do not write files to disk if `--warnings-as-errors` was given and warnings were emitted
-
-## v1.10.1 (2020-02-10)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Code] Do not emit invalid code when formatting `nil`, `false`, and `true` keys in maps
-  * [Kernel] Ensure `with` clauses properly unpack "implicit guards" (such as matching on the struct name)
-  * [Kernel] Do not warn if commas are used by themselves in `~w`/`~W` sigils
-  * [Kernel] Do not validate the `:line` option in quote (the validation has been moved to v1.11 to give users more time to update their code)
-  * [Module] Ensure the code verifier handles the `:erlang.size/1` guard properly
-
-#### Logger
-
-  * [Logger] Properly handle the `report_cb/2` option from Erlang
-  * [Logger] Fix truncation for multi-byte characters
-  * [Logger] Do not rebroadcast messages from remote nodes as this is now taken care by Erlang's logger
-
-#### ExUnit
-
-  * [ExUnit] Ensure `assert_receive` produces valid exception messages in case of errors
-
-#### Mix
-
-  * [mix release] Make sure the install command (Window specific) works on paths with spaces in the name
-  * [mix release] Allow using `remote` and `rpc` commands with `Application.compile_env/3`
-
-## v1.10.0 (2020-01-27)
+## v1.11.0 (2020-10-06)
 
 ### 1. Enhancements
 
+#### EEx
+
+  * [EEx] Track column information in EEx templates when enabled in the compiler
+  * [EEx] Show column information in EEx error messages
+  * [EEx] Support `:indentation` option when compiling EEx templates for proper column tracking
+
 #### Elixir
 
-  * [Application] Add `Application.compile_env/3` and `Application.compile_env!/2` for reading values at compilation time and tracking if they accidentally change during runtime
-  * [Calendar] Allow custom calendar representations in calendar sigils
-  * [Calendar] Add `c:Calendar.parse_time/1`, `c:Calendar.parse_date/1`, `c:Calendar.parse_naive_datetime/1` and `c:Calendar.parse_utc_datetime/1` callbacks to calendar behaviour
-  * [CLI] Add support for `NO_COLOR` environment variable
-  * [Code] Add `:token_metadata` and `:literal_encoder` support to `Code.string_to_quoted/2`
-  * [Code] Add compiler tracing to lift events done by the compiler
-  * [Code] Return `{:error, :unavailable}` in `Code.ensure_compiled/1` if module is in a deadlock
-  * [DateTime] Add `DateTime.now!/2` and `DateTime.shift_zone!/3`
-  * [Enum] Speed up getting one random element from enumerables
-  * [Enum] Add `Enum.frequencies/1`, `Enum.frequencies_by/2`, and `Enum.map_intersperse/2`
-  * [Enum] Allow a sorting function on `Enum.min/max/min_by/max_by`
-  * [Enum] Add `asc/desc` and `compare/1` support to `Enum.sort/2`
-  * [Exception] Add version alongside app names in stacktraces
-  * [Function] Add `Function.identity/1`
-  * [Kernel] Add `Kernel.is_struct/1` and `Kernel.is_map_key/2`
-  * [Kernel] Warn when function head comes immediately after the implementation instead of before the implementation
-  * [Kernel] Warn if duplicate key is found in struct declaration
-  * [Kernel] Print all undefined functions as warnings and then raise. This allows users to see all undefined calls at once, when it would otherwise require them to compile the code multiple times
-  * [Kernel] Allow file, line and context to be dynamically set on `quote`
-  * [Keyword] Add `Keyword.pop!/2` and `Keyword.pop_values/2`
-  * [Map] Add `Map.pop!/2`
-  * [MapSet] Optimize multiple operations
-  * [Module] Add `Module.has_attribute?/2`
-  * [Module] Add `@compile {:no_warn_undefined, mfa_or_module}` to turn off undefined function warnings
-  * [NaiveDateTime] Add `NaiveDateTime.local_now/0`
-  * [Record] Warn if duplicate key is found in record declaration
-  * [String] Update to Unicode 12.1
-  * [StringIO] Add `:encoding` option to StringIO and optimize `get_chars` operation
+  * [Access] Add `Access.at!/1`
+  * [Calendar] Add `Calendar.strftime/3` for datetime formatting
+  * [Calendar] Add linear integer representations to Calendar modules: `Date.from_gregorian_days/2`, `Date.to_gregorian_days/1`, `NaiveDateTime.from_gregorian_seconds/3`, `NaiveDateTime.to_gregorian_seconds/1`, `Time.from_seconds_after_midnight/1`, and `Time.to_seconds_after_midnight/1`
+  * [Calendar] Add `new!` to Date/Time/NaiveDateTime/DateTime (`new` has also been added to `DateTime` for completeness)
+  * [Calendar] Support custom starting day of the week in `Date.day_of_week/2`
+  * [Calendar] Add `Date.beginning_of_month/1` and `Date.end_of_month/1`
+  * [Calendar] Add `Date.beginning_of_week/2` and `Date.end_of_week/2`
+  * [Code] Add `:column` to `Code.string_to_quoted*/2`
+  * [Code] Add `Code.can_await_module_compilation?/0` to check if the parallel compiler is enabled and it can await for other modules to be compiled
+  * [Config] Support `config_env/0` and `config_target/0` in `config` files
+  * [Config] Allow `import_config` to be disabled for some configuration files
+  * [Enum] Allow a sorting function on `Enum.min_max_by/3,4`, including the new `compare/2` conventions
+  * [Kernel] Add `is_struct/2` guard
+  * [Kernel] Add `is_exception/1` and `is_exception/2` guards
+  * [Kernel] Support `map.field` syntax in guards
+  * [Kernel] Add `+++` and `---` with right associativity to the list of custom operators
+  * [Kernel] Warn if a variable that looks like a compiler variable (such as `__MODULE__`) is unused
+  * [Kernel.ParallelCompiler] Report individual file compilation times when `profile: :time` is given
+  * [Kernel.ParallelCompiler] Improve precision of `:long_compilation_threshold` so it takes only compilation times into account (and not waiting times)
+  * [Registry] Add `Registry.delete_meta/2`
+  * [Task] Add `Task.await_many/2`
 
 #### ExUnit
 
-  * [ExUnit.Assertions] Support diffs in pattern matching and in `assert_receive`
-  * [ExUnit.CaptureIO] Supports capturing named devices in asynchronous tests
+  * [ExUnit] Add support for coloring on Windows 10 consoles/shells
+  * [ExUnit] Add `ExUnit.fetch_test_supervisor/0`
+  * [ExUnit] Add `@tag :tmp_dir` support to ExUnit. The temporary directory is automatically created and pruned before each test
+  * [ExUnit] Add file and line to ExUnit's `--trace`
+  * [ExUnit.Assertion] Allow receive timeouts to be computed at runtime
+  * [ExUnit.Case] Add `register_test/6` to speed up compilation of custom tests
+  * [ExUnit.Doctest] Allow users to add tags to doctests
 
 #### IEx
 
-  * [IEx] Warn on circular file imports when loading default `.iex.exs`
-  * [IEx] Allow customization of the continuation prompt on IEx
+  * [IEx] Add support for coloring on Windows 10 consoles/shells
+  * [IEx.Helpers] Show docs from Erlang modules that have been compiled with the docs chunk
 
 #### Logger
 
-  * [Logger] Allow `start_options` to be configured on Logger's GenEvent
-  * [Logger] Integrate Elixir's Logger with Erlang/OTP 21+'s logger. This means setting up the logger level in Elixir will automatically change the logger level for Erlang and vice-versa
+  * [Logger] Add `notice`, `critical`, `alert`, and `emergency` log levels
+  * [Logger] Support structured logging by logging maps or keyword lists
+  * [Logger] Allow level to be set per module with `Logger.put_module_level/2`
+  * [Logger] Include `erl_level` in Logger's metadata
 
 #### Mix
 
-  * [mix compile] Add `--profile time` flag to profile compilation steps
-  * [mix deps.compile] Add `--skip-umbrella-children` flag. The new flag does not compile umbrella apps. This is useful for building caches in CD/CI pipelines
-  * [mix deps.unlock] Add `--check-unused` flag. The new flag raises if there are any unused dependencies in the lock file
-  * [mix release] Allow `RELEASE_DISTRIBUTION` to be set to `none`
-  * [mix release] Support overlays in `rel/overlays`
-  * [mix release] Allow configuration reboot to be disabled in releases
-  * [mix test] Add support for simple round-robin test partitioning across multiple machines
-  * [Mix.Project] Add `MIX_DEPS_PATH` environment variable for setting `:deps_path`
-  * [Mix.Project] Add `Mix.Project.deps_scms/1` that returns deps with their SCMs
-  * [Mix.Task] Add `Mix.Task.Compiler.after_compiler/2` callback, to simplify compilers that may need to run something at multiple steps
+  * [mix] Add `MIX_BUILD_ROOT` to config `_build` dir
+  * [mix] Introduce `MIX_XDG` as a simpler mechanism to opt-in to the XDG specification
+  * [mix] Allow requirements for a Mix task to be listed via the `@requirements` module attribute
+  * [mix] Allow optional dependencies to be defined in `:extra_applications` and `:applications`
+  * [mix app.config] Add new `mix app.config` task that compiles applications and loads runtime configuration
+  * [mix archive.install] Support `--repo` option on Hex packages
+  * [mix compile] Support the `__mix_recompile__?/0` callback for custom behaviour on when Mix should recompile a given module
+  * [mix compile.elixir] Mark modules for path dependencies as "Export dependencies" if they changed but their public interface is the same
+  * [mix compile.elixir] Track application boundaries in the Elixir compiler. If you invoke code from Erlang or Elixir standard libraries and you don't depend on the proper applications, a warning will be emitted. A warning will also be emitted if you invoke code from an umbrella sibling that you don't depend on - effectively forbidding cyclic dependencies between apps
+  * [mix deps] Sort the dependencies alphabetically before printing
+  * [mix deps] Use `origin/HEAD` as the default Git ref in dependencies
+  * [mix deps] Redact Git `username`/`password` in output log
+  * [mix deps] Support rebar3's `git_subdir` resource type
+  * [mix deps.compile] Allow local deps to be skipped on `mix deps.compile`
+  * [mix deps.unlock] Print which dependencies get unlocked when using the `--unused` flag
+  * [mix escript.install] Support `--repo` option on Hex packages
+  * [mix new] Add `@impl` to application generated by `mix new --sup`
+  * [mix release] Enable overriding `sys.config` location via `RELEASE_SYS_CONFIG` env var
+  * [mix release] Boot a release under configuration in interactive mode and then swap to embedded mode (if running on Erlang/OTP 23+)
+  * [mix release] Add `rel_templates_path` to configure the source of template files such as "env.sh.eex", "vm.args.eex" and "overlays"
+  * [mix release] Allow some chunks to be kept in the `:strip_beams` config
+  * [mix test] Allow `:ignore_modules` inside `:test_coverage` option
+  * [mix test.coverage] Add `mix test.coverage` that aggregates coverage results from umbrellas and OS partitioning
+  * [mix xref] Make the `--label` option for `mix xref graph` transitive by default and add `--only-direct` for only direct dependencies
+  * [mix xref] Add `--format cycles` support for `mix xref graph`
+  * [mix xref] Add support to `mix xref graph` for using `--source` and `--sink` at the same time
 
 ### 2. Bug fixes
 
 #### EEx
 
-  * [EEx] Ensure multiline do/end with no spaces compile under trim mode
+  * [EEx] Make trimming behaviour via the `:trim` option more consistent
 
 #### Elixir
 
-  * [Enum] Allow positive range slices on infinite streams given to `Enum.slice/2`
-  * [Kernel] Raise error on functions/guards without implementation
-  * [Kernel] Do not expand expressions inside interpolation twice
-  * [Keyword] Ensure keyword replace and update preserve order
-  * [Module] Raise instead of silently failing when performing a write module operation during after-compile
-  * [Module] Fix `@macrocallback` definitions with a `when` clause
-  * [Path] Fix `Path.absname/1` to correctly handle UNC paths on Windows
-  * [Stream] Close with correct accumulator in `Stream.resource/3` when called for a single-element list
-  * [Stream] Allow `Stream.cycle/1` to be double nested inside `Stream.cycle/1`
-  * [URI] Preserve slashes in URIs without authority
-  * [URI] Require a nil or an absolute path on URIs with host or authority
+  * [Application] Warn if non-atom keys are given to `put_env`, `get_env`, `fetch_env`, and `delete_env`
+  * [Code] Do not send language keyword through the `:static_atoms_encoder` in `Code.string_to_quoted`
+  * [Kernel] Validate values given to `:line` in quote to avoid emitting invalid ASTs
+  * [Kernel] Report the correct line number when raising inside a macro
+  * [Kernel] Fix an issue where `elixirc` would not accept paths with backslash (`\`) separators on Windows
+  * [Kernel] Properly parse `&//2` (i.e. the capture of the division operator)
+  * [Kernel] Raise `CompileError` when trying to define reserved types
+  * [Kernel] Improve compiler error message when using `|` in a `def` signature
+  * [Kernel] Improve error message when trying to use invalid list operators in guards
+  * [Kernel.SpecialForms] Add `|/2` to the list of special forms to avoid inconsistent behaviour on overrides
+  * [Keyword] Enforce keys to be atoms in `Keyword.keys/1`
+  * [Record] Keep lexical ordering when creating records
+  * [Registry] Do not crash when a process with key-value has been registered using `:via` and it fails to start on `init`
+  * [URI] `URI.decode_query/2` emits an empty string for parameters without values, according to [URL's living standard](https://url.spec.whatwg.org/#application/x-www-form-urlencoded) - note this behaviour is not specified in the spec implemented by the URI module, so the living standard was chosen
+  * [Version] Add defaults and enforce keys in `Version` struct
 
 #### ExUnit
 
-  * [ExUnit.Assertions] Fix `assert_receive` and `assert match?` to behave consistently compared `receive` and `match?` when given an invalid macro
+  * [ExUnit.CaptureIO] Fix race condition where a dead capture would still be considered as active
+  * [ExUnit.Diff] Do not crash when failing to eval/inspect struct
+  * [ExUnit.Diff] Properly diff numbers in respect to `==` and `===` operators
 
 #### IEx
 
-  * [IEx] Exit IEx session if the group leader exits
-  * [IEx] Allow `pry` to be used in non-tty terminals
+  * [IEx] Fix tokenizer emitting repeated warnings in the REPL
+  * [IEx] Ensure `--dot-iex` is preserved when restarting the evaluator and after shell respawn
+  * [IEx.Pry] Ensure `IEx.pry` can be triggered more than twice when invoked from the same process
 
 #### Mix
 
-  * [mix compile] Do not filter out warning for external files from diagnostics
-  * [Mix.Project] Ensure user given `:manager` to dependencies has higher precedence than the SCM one
-  * [Mix.Project] Recompile umbrella children when config files change and `mix compile` is called from the umbrella root
-  * [Mix.Task] Always recompile before running tasks from dependencies
-  * [Mix.Task] Ensure project's Logger config is used when running Mix tasks
+  * [mix cmd] Fix a bug where only the first --app option would be executed
+  * [mix compile] Fix an issue where new protocol implementations would not propagate when running `mix compile` from an umbrella root
+  * [mix deps.compile] Use `gmake` instead of `make` when compiling deps on NetBSD/DragonFlyBSD
+  * [mix release] Load `.app` from dependencies path when it is a project dependency
+  * [mix release] Always include "rel/overlays" in the list of overlays directories if available
+  * [mix release] Change `erts/bin/erl` binary mode to `0o755`
+  * [mix test] Compare to test coverage threshold inclusively
+
+#### Logger
+
+  * [Logger] Print metadata for all types that implement String.Chars
 
 ### 3. Soft-deprecations (no warnings emitted)
 
-#### Elixir
+### Elixir
 
-  * [Code] `compiler_options/0` is deprecated in favor of `compiler_option/1`
+  * [Exception] `Exception.exception?/1` is deprecated in favor of `Kernel.is_exception/1`
+  * [Regex] `Regex.regex?/1` is deprecated in favor of `Kernel.is_struct/2`
 
-#### Mix
+### Logger
 
-  * [Mix.Config] `Mix.Config.persist/1` has been deprecated. Instead of `Mix.Config.persist(config)` use `Application.put_all_env(config, persistent: true)` (`Application.put_all_env/2` was added in v1.9)
-  * [mix xref] `calls/0` is deprecated in favor of compiler tracer
-  * [mix xref] The `xref.exclude` option has been moved to `elixirc_options.no_warn_undefined` as the `xref` pass has been moved into the compiler
+  * [Logger] `warn` log level is deprecated in favor of `warning`
+
+### Mix
+
+  * [mix release] `config/releases.exs` is deprecated in favor of a more general purpose `config/runtime.exs`
 
 ### 4. Hard-deprecations
 
 #### Elixir
 
-  * [Code] `Code.load_file/2` has been deprecated in favor of `Code.require_file/2` or `Code.compile_file/2`
-  * [Code] `Code.loaded_files/0` and `Code.unload_file/1`  have been deprecated in favor of `Code.required_files/0` and `Code.unrequire_file/1` respectively
-  * [Code] `Code.ensure_compiled?/1` is deprecated in favor of `Code.ensure_compiled/1`
-  * [String] `String.normalize/2` has been deprecated in favor of `:unicode.characters_to_nfc_binary/1` or `:unicode.characters_to_nfd_binary/1` which ship as part of Erlang/OTP 20+
-  * [Supervisor] `Supervisor.Spec.supervise/2` has been deprecated in favor of the new Supervisor child specification
-  * [Supervisor] The `:simple_one_for_one` strategy in `Supervisor` has been deprecated in favor of `DynamicSupervisor`
-
-#### Logger
-
-  * [Logger] `:compile_time_purge_level` application environment configuration has been deprecated in favor of the more general `:compile_time_purge_matching` config
-  * [Logger] Deprecate logging non-chardata values
+  * [Supervisor] Deprecate `Supervisor.start_child/2` and `Supervisor.terminate_child/2` in favor of `DynamicSupervisor`
+  * [Supervisor.Spec] Deprecate `Supervisor.Spec.worker/3` and `Supervisor.Spec.supervisor/3` in favor of the new typespecs
+  * [System] Deprecate `System.stacktrace/0` in favor of `__STACKTRACE__`
 
 #### Mix
 
-  * [mix compile.xref] This check has been moved into the compiler and has no effect now
-  * [mix xref] `xref` now only tracks dependencies between modules and files, no longer between functions. See "Compilation tracers" to learn more about how to track this information directly
-  * [mix xref deprecations] This check has been moved into the compiler and has no effect now
-  * [mix xref unreachable] This check has been moved into the compiler and has no effect now
+  * [Mix.Project] Deprecate `Mix.Project.compile/2` in favor of `Mix.Task.run("compile", args)`
 
-## v1.9
+## v1.10
 
-The CHANGELOG for v1.9 releases can be found [in the v1.9 branch](https://github.com/elixir-lang/elixir/blob/v1.9/CHANGELOG.md).
+The CHANGELOG for v1.10 releases can be found [in the v1.10 branch](https://github.com/elixir-lang/elixir/blob/v1.10/CHANGELOG.md).

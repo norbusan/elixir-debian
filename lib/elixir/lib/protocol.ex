@@ -43,9 +43,13 @@ defmodule Protocol do
         def size(tuple), do: tuple_size(tuple)
       end
 
-  Notice we didn't implement it for lists as we don't have the
+  Note that we didn't implement it for lists as we don't have the
   `size` information on lists, rather its value needs to be
   computed with `length`.
+
+  The data structure you are implementing the protocol for
+  must be the first argument to all functions defined in the
+  protocol.
 
   It is possible to implement protocols for all Elixir types:
 

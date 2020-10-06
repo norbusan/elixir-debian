@@ -16,13 +16,14 @@ defmodule Regex do
       ~r/foo/iu
 
   Regular expressions created via sigils are pre-compiled and stored
-  in the `.beam` file. Notice this may be a problem if you are precompiling
+  in the `.beam` file. Note that this may be a problem if you are precompiling
   Elixir, see the "Precompilation" section for more information.
 
   A Regex is represented internally as the `Regex` struct. Therefore,
   `%Regex{}` can be used whenever there is a need to match on them.
-  Keep in mind it is not guaranteed two regular expressions from the
-  same source are equal, for example:
+  Keep in mind that all of the structs fields are private. There is
+  also not guarantee two regular expressions from the same source are
+  equal, for example:
 
       ~r/(?<foo>.)(?<bar>.)/ == ~r/(?<foo>.)(?<bar>.)/
 
@@ -37,9 +38,10 @@ defmodule Regex do
 
   The modifiers available when creating a Regex are:
 
-    * `unicode` (u) - enables Unicode specific patterns like `\p` and change
-      modifiers like `\w`, `\W`, `\s` and friends to also match on Unicode.
-      It expects valid Unicode strings to be given on match
+    * `unicode` (u) - enables Unicode specific patterns like `\p` and causes
+      character classes like `\w`, `\W`, `\s`, etc. to also match on Unicode
+      (see examples below in "Character classes"). It expects valid Unicode
+      strings to be given on match
 
     * `caseless` (i) - adds case insensitivity
 
@@ -125,6 +127,10 @@ defmodule Regex do
       false
       iex> String.match?("josé", ~r/^[[:lower:]]+$/u)
       true
+      iex> Regex.replace(~r/\s/, "Unicode\u00A0spaces", "-")
+      "Unicode spaces"
+      iex> Regex.replace(~r/\s/u, "Unicode\u00A0spaces", "-")
+      "Unicode-spaces"
 
   ## Precompilation
 
@@ -218,7 +224,7 @@ defmodule Regex do
   and recompiles the regex in case of version mismatch.
   """
   @doc since: "1.4.0"
-  @spec recompile(t) :: t
+  @spec recompile(t) :: {:ok, t} | {:error, any}
   def recompile(%Regex{} = regex) do
     version = version()
 
@@ -273,17 +279,9 @@ defmodule Regex do
   @doc """
   Returns `true` if the given `term` is a regex.
   Otherwise returns `false`.
-
-  ## Examples
-
-      iex> Regex.regex?(~r/foo/)
-      true
-
-      iex> Regex.regex?(0)
-      false
-
   """
-  @spec regex?(any) :: boolean
+  # TODO: Remove this on Elixir v1.15
+  @doc deprecated: "Use Kernel.is_struct/2 or pattern match on %Regex{} instead"
   def regex?(term)
   def regex?(%Regex{}), do: true
   def regex?(_), do: false
@@ -759,12 +757,12 @@ defmodule Regex do
     end
   end
 
-  defp get_index(_string, {pos, _len}) when pos < 0 do
+  defp get_index(_string, {pos, _length}) when pos < 0 do
     ""
   end
 
-  defp get_index(string, {pos, len}) do
-    <<_::size(pos)-binary, res::size(len)-binary, _::binary>> = string
+  defp get_index(string, {pos, length}) do
+    <<_::size(pos)-binary, res::size(length)-binary, _::binary>> = string
     res
   end
 

@@ -1,23 +1,21 @@
 defmodule ExUnit.DocTest do
   @moduledoc """
-  ExUnit.DocTest implements functionality similar to [Python's
-  doctest](https://docs.python.org/2/library/doctest.html).
+  Extract test cases from the documentation.
 
-  It allows us to generate tests from the code
-  examples in a module/function/macro's documentation.
-  To do this, invoke the `doctest/1` macro from within
-  your test case and ensure your code examples are written
-  according to the syntax and guidelines below.
+  Doctests allow us to generate tests from code examples found
+  in `@moduledoc` and `@doc` attributes. To do this, invoke the
+  `doctest/1` macro from within your test case and ensure your
+  code examples are written according to the syntax and guidelines
+  below.
 
   ## Syntax
 
   Every new test starts on a new line, with an `iex>` prefix.
-  Multiline expressions can be used by prefixing subsequent lines with either
-  `...>` (recommended) or `iex>`.
+  Multiline expressions can be used by prefixing subsequent lines
+  with either `...>` (recommended) or `iex>`.
 
   The expected result should start at the next line after the `iex>`
-  or `...>` line(s) and is terminated either by a newline, new
-  `iex>` prefix or the end of the string literal.
+  or `...>` line(s) and it is terminated either by a newline.
 
   ## Examples
 
@@ -130,15 +128,15 @@ defmodule ExUnit.DocTest do
 
   You can also showcase expressions raising an exception, for example:
 
-      iex(1)> String.to_atom((fn -> 1 end).())
-      ** (ArgumentError) argument error
+      iex(1)> raise "some error"
+      ** (RuntimeError) some error
 
-  What DocTest will be looking for is a line starting with `** (` and it
-  will parse it accordingly to extract the exception name and message.
-  At this moment, the exception parser would make the parser treat the next
-  line as a start of a completely new expression (if it is prefixed with `iex>`)
-  or a no-op line with documentation. Thus, multiline messages are not
-  supported.
+  Doctest will looking for a line starting with `** (` and it will parse it
+  accordingly to extract the exception name and message. The exception parser
+  will consider all following lines part of the exception message until there
+  is an empty line or there is a new expression prefixed with `iex>`.
+  Therefore, it is possible to match on multiline messages as long as there
+  are no empty lines on the message itself.
 
   ## When not to use doctest
 
@@ -183,9 +181,11 @@ defmodule ExUnit.DocTest do
 
     * `:import` - when `true`, one can test a function defined in the module
       without referring to the module name. However, this is not feasible when
-      there is a clash with a module like Kernel. In these cases, `:import`
+      there is a clash with a module like `Kernel`. In these cases, `:import`
       should be set to `false` and a full `Module.function` construct should be
       used.
+
+    * `:tags` - a list of tags to apply to all generated doctests.
 
   ## Examples
 
@@ -207,6 +207,10 @@ defmodule ExUnit.DocTest do
         file = ExUnit.DocTest.__file__(module)
 
         for {name, test} <- ExUnit.DocTest.__doctests__(module, opts) do
+          if tags = Keyword.get(opts, :tags) do
+            @tag tags
+          end
+
           @file file
           doc = ExUnit.Case.register_test(env, :doctest, name, [])
           def unquote(doc)(_), do: unquote(test)
@@ -487,7 +491,7 @@ defmodule ExUnit.DocTest do
   end
 
   defp extract_from_doc({{kind, _, _}, _, _, doc, _}, _module)
-       when kind not in [:function, :macro] or doc in [:none, :hidden],
+       when kind not in [:function, :macro, :type] or doc in [:none, :hidden],
        do: []
 
   defp extract_from_doc({{_, name, arity}, annotation, _, %{"en" => doc}, _}, module) do

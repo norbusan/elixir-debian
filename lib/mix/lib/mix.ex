@@ -116,8 +116,6 @@ defmodule Mix do
   is `:host` but it can be set via the `MIX_TARGET` environment variable.
   The target can be read via `Mix.target/0`.
 
-  This feature is considered experimental and may change in future releases.
-
   ## Aliases
 
   Aliases are shortcuts or tasks specific to the current project.
@@ -161,24 +159,28 @@ defmodule Mix do
       [all: [&hello/1, "deps.get --only #{Mix.env()}", "compile"]]
 
   In the example above, we have defined an alias named `mix all`,
-  that prints "Hello world", then fetches dependencies specific to the
-  current environment, and compiles the project.
+  that prints "Hello world", then fetches dependencies specific
+  to the current environment, and compiles the project.
 
-  Arguments given to the alias will be appended to the arguments
-  of the last task in the list, if the last task is a function
-  they will be given as a list of strings to the function.
-
-  Finally, aliases can also be used to augment existing tasks.
-  Let's suppose you want to augment `mix clean` to clean another
-  directory Mix does not know about:
+  Aliases can also be used to augment existing tasks. Let's suppose
+  you want to augment `mix clean` to clean another directory Mix does
+  not know about:
 
       [clean: ["clean", &clean_extra/1]]
 
   Where `&clean_extra/1` would be a function in your `mix.exs`
   with extra cleanup logic.
 
-  Aliases defined in the current project do not affect its dependencies and
-  aliases defined in dependencies are not accessible from the current project.
+  Arguments given to the alias will be appended to the arguments of
+  the last task in the list. Except when overriding an existing task.
+  In this case, the arguments will be given to the original task,
+  in order to preserve semantics. For example, in the `:clean` alias
+  above, the arguments given to the alias will be passed to "clean"
+  and not to `clean_extra/1`.
+
+  Aliases defined in the current project do not affect its dependencies
+  and aliases defined in dependencies are not accessible from the
+  current project.
 
   Aliases can be used very powerfully to also run Elixir scripts and
   shell commands, for example:
@@ -200,15 +202,15 @@ defmodule Mix do
         ]
       end
 
-  In the example above we have created the alias `some_alias` that will run the
-  task `mix hex.info`, then `mix run` to run an Elixir script, then `mix cmd` to
-  execute a command line shell script. This shows how powerful aliases mixed with
-  Mix tasks can be.
+  In the example above we have created the alias `some_alias` that will
+  run the task `mix hex.info`, then `mix run` to run an Elixir script,
+  then `mix cmd` to execute a command line shell script. This shows how
+  powerful aliases mixed with Mix tasks can be.
 
-  Mix tasks are designed to run only once. This prevents the same task to be
-  executed multiple times. For example, if there are several tasks depending on
-  `mix compile`, the code will be compiled once. Tasks can be executed again if
-  they are explicitly reenabled using `Mix.Task.reenable/1`:
+  Mix tasks are designed to run only once. This prevents the same task
+  to be executed multiple times. For example, if there are several tasks
+  depending on `mix compile`, the code will be compiled once. Tasks can
+  be executed again if they are explicitly reenabled using `Mix.Task.reenable/1`:
 
       another_alias: [
         "format --check-formatted priv/hello1.exs",
@@ -217,13 +219,14 @@ defmodule Mix do
         "format --check-formatted priv/hello2.exs"
       ]
 
-  The following tasks are automatically reenabled: `mix cmd`, `mix do`,
-  `mix loadconfig`, `mix profile.cprof`, `mix profile.eprof`, `mix profile.fprof`,
-  `mix run`, and `mix xref`.
+  Some tasks are automatically reenabled though, as they are expected to
+  be invoked multiple times. They are: `mix cmd`, `mix do`, `mix loadconfig`,
+  `mix profile.cprof`, `mix profile.eprof`, `mix profile.fprof`, `mix run`,
+  and `mix xref`.
 
-  It is worth mentioning that some tasks, such as in the case of the `format`
-  command in the example above, can accept multiple files so it could be rewritten
-  as:
+  It is worth mentioning that some tasks, such as in the case of the
+  `mix format` command in the example above, can accept multiple files so it
+  could be rewritten as:
 
       another_alias: ["format --check-formatted priv/hello1.exs priv/hello2.exs"]
 
@@ -234,22 +237,31 @@ defmodule Mix do
   Mix responds to the following variables:
 
     * `MIX_ARCHIVES` - specifies the directory into which the archives should be installed
+      (default: `~/.mix/archives`)
+    * `MIX_BUILD_ROOT` - sets the root directory where build artifacts
+      should be written to. For example, "_build". If `MIX_BUILD_PATH` is set, this
+      option is ignored.
     * `MIX_BUILD_PATH` - sets the project `Mix.Project.build_path/0` config. This option
       must always point to a subdirectory inside a temporary directory. For instance,
       never "/tmp" or "_build" but "_build/PROD" or "/tmp/PROD", as required by Mix
-    * `MIX_DEPS_PATH` - sets the project `Mix.Project.deps_path/0` config
+    * `MIX_DEPS_PATH` - sets the project `Mix.Project.deps_path/0` config (default: `deps`)
     * `MIX_DEBUG` - outputs debug information about each task before running it
     * `MIX_ENV` - specifies which environment should be used. See [Environments](#module-environments)
     * `MIX_TARGET` - specifies which target should be used. See [Targets](#module-targets)
     * `MIX_EXS` - changes the full path to the `mix.exs` file
     * `MIX_HOME` - path to Mix's home directory, stores configuration files and scripts used by Mix
+      (default: `~/.mix`)
     * `MIX_PATH` - appends extra code paths
     * `MIX_QUIET` - does not print information messages to the terminal
     * `MIX_REBAR` - path to rebar command that overrides the one Mix installs
+      (default: `~/.mix/rebar`)
     * `MIX_REBAR3` - path to rebar3 command that overrides the one Mix installs
-
-  Mix also falls back to the `XDG_DATA_HOME` and `XDG_CONFIG_HOME`
-  environment variables when storing its contents and configuration.
+      (default: `~/.mix/rebar3`)
+    * `MIX_XDG` - asks Mix to follow the [XDG Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html)
+      for its home directory and configuration files. This behaviour needs to
+      be opt-in due to backwards compatibility. `MIX_HOME` has higher preference
+      than `MIX_XDG`. If none of the variables are set, the default directory
+      `~/.mix` will be used
 
   Environment variables that are not meant to hold a value (and act basically as
   flags) should be set to either `1` or `true`, for example:
@@ -345,12 +357,21 @@ defmodule Mix do
   Returns the current shell.
 
   `shell/0` can be used as a wrapper for the current shell. It contains
-  conveniences for requesting information from the user, printing to the shell and so
-  forth. The Mix shell is swappable (see `shell/1`), allowing developers to use
-  a test shell that simply sends messages to the current process instead of
-  performing IO (see `Mix.Shell.Process`).
+  conveniences for requesting information from the user, printing to the
+  shell and so forth. The Mix shell is swappable (see `shell/1`), allowing
+  developers to use a test shell that simply sends messages to the current
+  process instead of performing IO (see `Mix.Shell.Process`).
 
   By default, this returns `Mix.Shell.IO`.
+
+  ## Examples
+
+      Mix.shell().info("Preparing to do something dangerous...")
+
+      if Mix.shell().yes?("Are you sure?") do
+        # do something dangerous
+      end
+
   """
   @spec shell() :: module
   def shell do
@@ -360,8 +381,31 @@ defmodule Mix do
   @doc """
   Sets the current shell.
 
-  After calling this function, `shell` becomes the shell that is returned by
-  `shell/0`.
+  As an argument you may pass `Mix.Shell.IO`, `Mix.Shell.Process`,
+  `Mix.Shell.Quiet`, or any module that implements the `Mix.Shell`
+  behaviour.
+
+  After calling this function, `shell` becomes the shell that is
+  returned by `shell/0`.
+
+  ## Examples
+
+      iex> Mix.shell(Mix.Shell.IO)
+      :ok
+
+  You can use `shell/0` and `shell/1` to temporarily switch shells,
+  for example, if you want to run a Mix Task that normally produces
+  a lot of output:
+
+      shell = Mix.shell()
+      Mix.shell(Mix.Shell.Quiet)
+
+      try do
+        Mix.Task.run("noisy.task")
+      after
+        Mix.shell(shell)
+      end
+
   """
   @spec shell(module) :: :ok
   def shell(shell) do

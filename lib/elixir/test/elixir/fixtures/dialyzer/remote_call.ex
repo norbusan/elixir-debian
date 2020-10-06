@@ -7,7 +7,7 @@ defmodule Dialyzer.RemoteCall do
 
     three when three < ~c(3.0.2) ->
       # regression introduced in 3.0 for map warnings fixed in 3.0.2
-      @dialyzer {:no_match, [map_var: 0, mod_var: 0, mod_var: 1]}
+      @dialyzer {:no_match, [map_var: 0, mod_var: 0]}
 
     _ ->
       :ok
@@ -24,10 +24,6 @@ defmodule Dialyzer.RemoteCall do
 
   def mod_var() do
     module = Hello
-    module.fun
-  end
-
-  def mod_var(module) when is_atom(module) or is_atom(elem(module, 0)) do
-    module.fun
+    module.fun()
   end
 end

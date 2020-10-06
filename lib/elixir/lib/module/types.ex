@@ -1,69 +1,75 @@
 defmodule Module.Types do
   @moduledoc false
 
+  defmodule Error do
+    defexception [:message]
+  end
+
   import Module.Types.Helpers
-  alias Module.Types.{Expr, Pattern}
+  alias Module.Types.{Expr, Pattern, Unify}
 
-  @doc """
-  Infer function definitions' types.
-  """
-  def infer_definitions(file, module, defs) do
-    clauses = infer_signatures(file, module, defs)
-    infer_bodies(clauses)
-  end
+  @doc false
+  def warnings(module, file, defs, no_warn_undefined, cache) do
+    stack = stack()
 
-  defp infer_signatures(file, module, defs) do
-    Enum.map(defs, fn {{fun, _arity} = function, kind, meta, clauses} ->
-      stack = head_stack()
-      context = head_context(file, module, function)
+    Enum.flat_map(defs, fn {{fun, arity} = function, kind, meta, clauses} ->
+      context = context(with_file_meta(meta, file), module, function, no_warn_undefined, cache)
 
-      clauses =
-        Enum.map(clauses, fn {_meta, params, guards, body} ->
-          def_expr = {kind, meta, [guards_to_expr(guards, {fun, [], params})]}
-          stack = push_expr_stack(def_expr, stack)
+      Enum.flat_map(clauses, fn {_meta, args, guards, body} ->
+        def_expr = {kind, meta, [guards_to_expr(guards, {fun, [], args})]}
 
-          case of_head(params, guards, stack, context) do
-            {:ok, _signature, context} -> {:ok, {context, body}}
-            {:error, reason} -> {:error, reason}
-          end
-        end)
+        try do
+          warnings_from_clause(args, guards, body, def_expr, stack, context)
+        rescue
+          e ->
+            def_expr = {kind, meta, [guards_to_expr(guards, {fun, [], args}), [do: body]]}
 
-      {function, clauses}
+            error =
+              Error.exception("""
+              found error while checking types for #{Exception.format_mfa(module, fun, arity)}
+
+              #{Macro.to_string(def_expr)}
+
+              Please report this bug: https://github.com/elixir-lang/elixir/issues
+
+              #{Exception.format_banner(:error, e, __STACKTRACE__)}\
+              """)
+
+            reraise error, __STACKTRACE__
+        end
+      end)
     end)
   end
 
-  defp infer_bodies(clauses) do
-    Enum.map(clauses, fn {function, clauses} ->
-      errors =
-        Enum.flat_map(clauses, fn
-          {:ok, {head_context, body}} ->
-            stack = body_stack()
-            context = body_context(head_context)
+  defp with_file_meta(meta, file) do
+    case Keyword.fetch(meta, :file) do
+      {:ok, {meta_file, _}} -> meta_file
+      :error -> file
+    end
+  end
 
-            case Expr.of_expr(body, stack, context) do
-              {:ok, _type, _context} -> []
-              {:error, reason} -> [reason]
-            end
+  defp guards_to_expr([], left) do
+    left
+  end
 
-          {:error, reason} ->
-            [reason]
-        end)
+  defp guards_to_expr([guard | guards], left) do
+    guards_to_expr(guards, {:when, [], [left, guard]})
+  end
 
-      {function, errors}
-    end)
+  defp warnings_from_clause(args, guards, body, def_expr, stack, context) do
+    head_stack = Unify.push_expr_stack(def_expr, stack)
+
+    with {:ok, _types, context} <- Pattern.of_head(args, guards, head_stack, context),
+         {:ok, _type, context} <- Expr.of_expr(body, stack, context) do
+      context.warnings
+    else
+      {:error, {type, error, context}} ->
+        [error_to_warning(type, error, context) | context.warnings]
+    end
   end
 
   @doc false
-  def of_head(params, guards, stack, context) do
-    with {:ok, types, context} <-
-           map_reduce_ok(params, context, &Pattern.of_pattern(&1, stack, &2)),
-         # TODO: Check that of_guard/3 returns boolean() | :fail
-         {:ok, _, context} <- Pattern.of_guard(guards_to_or(guards), stack, context),
-         do: {:ok, lift_types(types, context), context}
-  end
-
-  @doc false
-  def head_context(file, module, function) do
+  def context(file, module, function, no_warn_undefined, cache) do
     %{
       # File of module
       file: file,
@@ -71,6 +77,10 @@ defmodule Module.Types do
       module: module,
       # Current function
       function: function,
+      # List of calls to not warn on as undefined
+      no_warn_undefined: no_warn_undefined,
+      # A list of cached modules received from the parallel compiler
+      cache: cache,
       # Expression variable to type variable
       vars: %{},
       # Type variable to expression variable
@@ -85,18 +95,23 @@ defmodule Module.Types do
       # Track if a variable was infered from a type guard function such is_tuple/1
       # or a guard function that fails such as elem/2, possible values are:
       # `:guarded` when `is_tuple(x)`
+      # `:guarded` when `is_tuple and elem(x, 0)`
       # `:fail` when `elem(x, 0)`
-      # `:guarded_fail` when `is_tuple and elem(x, 0)`
-      guard_sources: %{}
+      guard_sources: %{},
+      # A list with all warnings from the running the code
+      warnings: []
     }
   end
 
   @doc false
-  def head_stack() do
+  def stack() do
     %{
-      # Stack of expression we have recursed through during inference,
+      # Stack of variables we have refined during unification,
+      # used for creating relevant traces
+      unify_stack: [],
+      # Last expression we have recursed through during inference,
       # used for tracing
-      expr_stack: [],
+      last_expr: nil,
       # When false do not add a trace when a type variable is refined,
       # useful when merging contexts where the variables already have traces
       trace: true,
@@ -105,47 +120,11 @@ defmodule Module.Types do
       type_guards_enabled?: true,
       # Context used to determine if unification is bi-directional, :expr
       # is directional, :pattern is bi-directional
-      context: :pattern
+      context: nil
     }
   end
 
-  @doc false
-  def body_context(head_context) do
-    %{
-      # File of module
-      file: head_context.file,
-      # Module of definitions
-      module: head_context.module,
-      # Current function
-      function: head_context.function,
-      # Expression variable to type variable
-      vars: head_context.vars,
-      # Type variable to expression variable
-      types_to_vars: head_context.types_to_vars,
-      # Type variable to type
-      types: head_context.types,
-      # Trace of all variables that have been refined to a type,
-      # including the type they were refined to, why, and where
-      traces: head_context.traces,
-      # Counter to give type variables unique names
-      counter: head_context.counter
-    }
-  end
-
-  @doc false
-  def body_stack() do
-    %{
-      # Stack of expression we have recursed through during inference,
-      # used for tracing
-      expr_stack: [],
-      # When false do not add a trace when a type variable is refined,
-      # useful when merging contexts where the variables already have traces
-      trace: true,
-      # Context used to determine if unification is bi-directional, :expr
-      # is directional, :pattern is bi-directional
-      context: :expr
-    }
-  end
+  ## VARIABLE LIFTING
 
   @doc """
   Lifts type variables to their infered types from the context.
@@ -161,7 +140,9 @@ defmodule Module.Types do
     types
   end
 
-  @doc false
+  @doc """
+  Lifts a single type to its infered type from the context.
+  """
   def lift_type(type, context) do
     context = %{
       types: context.types,
@@ -172,28 +153,6 @@ defmodule Module.Types do
     {type, _context} = do_lift_type(type, context)
     type
   end
-
-  ## GUARDS
-
-  # TODO: Remove this and let multiple when be treated as multiple clauses,
-  #       meaning they will be intersection types
-  defp guards_to_or([]) do
-    []
-  end
-
-  defp guards_to_or(guards) do
-    Enum.reduce(guards, fn guard, acc -> {{:., [], [:erlang, :orelse]}, [], [guard, acc]} end)
-  end
-
-  defp guards_to_expr([], left) do
-    left
-  end
-
-  defp guards_to_expr([guard | guards], left) do
-    guards_to_expr(guards, {:when, [], [left, guard]})
-  end
-
-  ## VARIABLE LIFTING
 
   # Lift type variable to its infered (hopefully concrete) types from the context
   defp do_lift_type({:var, var}, context) do
@@ -220,17 +179,17 @@ defmodule Module.Types do
     end
   end
 
-  defp do_lift_type({:tuple, types}, context) do
+  defp do_lift_type({:tuple, n, types}, context) do
     {types, context} = Enum.map_reduce(types, context, &do_lift_type/2)
-    {{:tuple, types}, context}
+    {{:tuple, n, types}, context}
   end
 
   defp do_lift_type({:map, pairs}, context) do
     {pairs, context} =
-      Enum.map_reduce(pairs, context, fn {key, value}, context ->
+      Enum.map_reduce(pairs, context, fn {kind, key, value}, context ->
         {key, context} = do_lift_type(key, context)
         {value, context} = do_lift_type(value, context)
-        {{key, value}, context}
+        {{kind, key, value}, context}
       end)
 
     {{:map, pairs}, context}
@@ -254,54 +213,158 @@ defmodule Module.Types do
     {type, context}
   end
 
-  ## ERROR FORMATTING
+  ## ERROR TO WARNING
 
-  def format_warning({:unable_unify, left, right, expr, traces}) do
-    [
-      "incompatible types:\n\n    ",
-      format_type(left),
-      " !~ ",
-      format_type(right),
-      "\n\n",
-      format_expr(expr),
-      format_traces(traces),
-      "Conflict found at"
-    ]
+  # Collect relevant information from context and traces to report error
+  def error_to_warning(:unable_unify, {left, right, stack}, context) do
+    {fun, arity} = context.function
+    line = get_meta(stack.last_expr)[:line]
+    location = {context.file, line, {context.module, fun, arity}}
+
+    traces = type_traces(stack, context)
+    traces = tag_traces(traces, context)
+
+    error = {:unable_unify, left, right, {location, stack.last_expr, traces}}
+    {Module.Types, error, location}
   end
 
-  defp format_expr(nil) do
-    []
+  # Collect relevant traces from context.traces using stack.unify_stack
+  defp type_traces(stack, context) do
+    # TODO: Do we need the unify_stack or is enough to only get the last variable
+    #       in the stack since we get related variables anyway?
+    stack =
+      stack.unify_stack
+      |> Enum.uniq()
+      |> Enum.flat_map(&[&1 | related_variables(&1, context.types)])
+      |> Enum.uniq()
+
+    Enum.flat_map(stack, fn var_index ->
+      with %{^var_index => traces} <- context.traces,
+           %{^var_index => expr_var} <- context.types_to_vars do
+        Enum.map(traces, &{expr_var, &1})
+      else
+        _other -> []
+      end
+    end)
   end
 
-  defp format_expr(expr) do
-    [
-      "in expression:\n\n    ",
-      expr_to_string(expr),
-      "\n\n"
-    ]
+  defp related_variables(var, types) do
+    Enum.flat_map(types, fn
+      {related_var, {:var, ^var}} ->
+        [related_var | related_variables(related_var, types)]
+
+      _ ->
+        []
+    end)
   end
 
-  defp format_traces([]) do
-    []
+  # Tag if trace is for a concrete type or type variable
+  defp tag_traces(traces, context) do
+    Enum.flat_map(traces, fn {var, {type, expr, location}} ->
+      with {:var, var_index} <- type,
+           %{^var_index => expr_var} <- context.types_to_vars do
+        [{var, {:var, expr_var, expr, location}}]
+      else
+        _ -> [{var, {:type, type, expr, location}}]
+      end
+    end)
   end
 
-  defp format_traces(traces) do
-    Enum.map(traces, fn
-      {var, {:type, type, expr, location}} ->
+  ## FORMAT WARNINGS
+
+  def format_warning({:unable_unify, left, right, {location, expr, traces}}) do
+    cond do
+      map_type?(left) and map_type?(right) and match?({:ok, _, _}, missing_field(left, right)) ->
+        {:ok, atom, known_atoms} = missing_field(left, right)
+
+        # Drop the last trace which is the expression map.foo
+        traces = Enum.drop(traces, 1)
+        {traces, hints} = format_traces(traces, true)
+
         [
+          "undefined field \"#{atom}\" ",
+          format_expr(expr, location),
+          "expected one of the following fields: ",
+          Enum.map_join(Enum.sort(known_atoms), ", ", & &1),
+          "\n\n",
+          traces,
+          format_message_hints(hints),
+          "Conflict found at"
+        ]
+
+      true ->
+        simplify_left? = simplify_type?(left, right)
+        simplify_right? = simplify_type?(right, left)
+
+        {traces, hints} = format_traces(traces, simplify_left? or simplify_right?)
+
+        [
+          "incompatible types:\n\n    ",
+          Unify.format_type(left, simplify_left?),
+          " !~ ",
+          Unify.format_type(right, simplify_right?),
+          "\n\n",
+          format_expr(expr, location),
+          traces,
+          format_message_hints(hints),
+          "Conflict found at"
+        ]
+    end
+  end
+
+  defp missing_field(
+         {:map, [{:required, {:atom, atom} = type, _}, {:optional, :dynamic, :dynamic}]},
+         {:map, fields}
+       ) do
+    matched_missing_field(fields, type, atom)
+  end
+
+  defp missing_field(
+         {:map, fields},
+         {:map, [{:required, {:atom, atom} = type, _}, {:optional, :dynamic, :dynamic}]}
+       ) do
+    matched_missing_field(fields, type, atom)
+  end
+
+  defp missing_field(_, _), do: :error
+
+  defp matched_missing_field(fields, type, atom) do
+    if List.keymember?(fields, type, 1) do
+      :error
+    else
+      known_atoms = for {_, {:atom, atom}, _} <- fields, do: atom
+      {:ok, atom, known_atoms}
+    end
+  end
+
+  defp format_traces([], _simplify?) do
+    {[], []}
+  end
+
+  defp format_traces(traces, simplify?) do
+    traces
+    |> Enum.reverse()
+    |> Enum.map_reduce([], fn
+      {var, {:type, type, expr, location}}, hints ->
+        {hint, hints} = format_type_hint(type, expr, hints)
+
+        trace = [
           "where \"",
           Macro.to_string(var),
           "\" was given the type ",
-          Module.Types.format_type(type),
+          Unify.format_type(type, simplify?),
+          hint,
           " in:\n\n    # ",
           format_location(location),
           "    ",
-          expr_to_string(expr),
+          indent(expr_to_string(expr)),
           "\n\n"
         ]
 
-      {var1, {:var, var2, expr, location}} ->
-        [
+        {trace, hints}
+
+      {var1, {:var, var2, expr, location}}, hints ->
+        trace = [
           "where \"",
           Macro.to_string(var1),
           "\" was given the same type as \"",
@@ -309,10 +372,16 @@ defmodule Module.Types do
           "\" in:\n\n    # ",
           format_location(location),
           "    ",
-          expr_to_string(expr),
+          indent(expr_to_string(expr)),
           "\n\n"
         ]
+
+        {trace, hints}
     end)
+  end
+
+  defp format_location({file, line, _mfa}) do
+    format_location({file, line})
   end
 
   defp format_location({file, line}) do
@@ -321,45 +390,24 @@ defmodule Module.Types do
     [file, ?:, line, ?\n]
   end
 
-  @doc false
-  def format_type({:union, types}) do
-    "#{Enum.map_join(types, " | ", &format_type/1)}"
+  defp simplify_type?(type, other) do
+    map_type?(type) and not map_type?(other)
   end
 
-  def format_type({:tuple, types}) do
-    "{#{Enum.map_join(types, ", ", &format_type/1)}}"
+  ## EXPRESSION FORMATTING
+
+  defp format_expr(nil, _location) do
+    []
   end
 
-  def format_type({:list, type}) do
-    "[#{format_type(type)}]"
-  end
-
-  def format_type({:map, pairs}) do
-    case List.keytake(pairs, :__struct__, 0) do
-      {{:__struct__, struct}, pairs} ->
-        "%#{inspect(struct)}{#{format_map_pairs(pairs)}}"
-
-      nil ->
-        "%{#{format_map_pairs(pairs)}}"
-    end
-  end
-
-  def format_type({:atom, literal}) do
-    inspect(literal)
-  end
-
-  def format_type(atom) when is_atom(atom) do
-    "#{atom}()"
-  end
-
-  def format_type({:var, index}) do
-    "var#{index}"
-  end
-
-  defp format_map_pairs(pairs) do
-    Enum.map_join(pairs, ", ", fn {left, right} ->
-      "#{format_type(left)} => #{format_type(right)}"
-    end)
+  defp format_expr(expr, location) do
+    [
+      "in expression:\n\n    # ",
+      format_location(location),
+      "    ",
+      indent(expr_to_string(expr)),
+      "\n\n"
+    ]
   end
 
   @doc false
@@ -371,17 +419,109 @@ defmodule Module.Types do
 
   defp reverse_rewrite(guard) do
     Macro.prewalk(guard, fn
-      {:., _, [:erlang, :orelse]} -> :or
-      {:., _, [:erlang, :andalso]} -> :and
-      {{:., _, [mod, fun]}, _, args} -> erl_to_ex(mod, fun, args)
+      {{:., _, [mod, fun]}, meta, args} -> erl_to_ex(mod, fun, args, meta)
       other -> other
     end)
   end
 
-  defp erl_to_ex(mod, fun, args) do
+  defp erl_to_ex(mod, fun, args, meta) do
     case :elixir_rewrite.erl_to_ex(mod, fun, args) do
-      {Kernel, fun, args} -> {fun, [], args}
-      {mod, fun, args} -> {{:., [], [mod, fun]}, [], args}
+      {Kernel, fun, args} -> {fun, meta, args}
+      {mod, fun, args} -> {{:., [], [mod, fun]}, meta, args}
     end
   end
+
+  ## Hints
+
+  defp format_message_hints(hints) do
+    hints |> Enum.uniq() |> Enum.reverse() |> Enum.map(&format_message_hint/1)
+  end
+
+  defp format_message_hint(:inferred_dot) do
+    """
+    HINT: "var.field" (without parentheses) implies "var" is a map() while \
+    "var.fun()" (with parentheses) implies "var" is an atom()
+
+    """
+  end
+
+  defp format_message_hint(:inferred_bitstring_spec) do
+    """
+    HINT: all expressions given to binaries are assumed to be of type \
+    integer() unless said otherwise. For example, <<expr>> assumes "expr" \
+    is an integer. Pass a modifier, such as <<expr::float>> or <<expr::binary>>, \
+    to change the default behaviour.
+
+    """
+  end
+
+  defp format_type_hint(type, expr, hints) do
+    case format_type_hint(type, expr) do
+      {message, hint} -> {message, [hint | hints]}
+      :error -> {[], hints}
+    end
+  end
+
+  defp format_type_hint(type, expr) do
+    cond do
+      dynamic_map_dot?(type, expr) ->
+        {" (due to calling var.field)", :inferred_dot}
+
+      dynamic_remote_call?(type, expr) ->
+        {" (due to calling var.fun())", :inferred_dot}
+
+      inferred_bitstring_spec?(type, expr) ->
+        {[], :inferred_bitstring_spec}
+
+      true ->
+        :error
+    end
+  end
+
+  defp dynamic_map_dot?(type, expr) do
+    with true <- map_type?(type),
+         {{:., _meta1, [_map, _field]}, meta2, []} <- expr,
+         true <- Keyword.get(meta2, :no_parens, false) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp dynamic_remote_call?(type, expr) do
+    with true <- atom_type?(type),
+         {{:., _meta1, [_module, _field]}, meta2, []} <- expr,
+         false <- Keyword.get(meta2, :no_parens, false) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp inferred_bitstring_spec?(type, expr) do
+    with true <- integer_type?(type),
+         {:<<>>, _, args} <- expr,
+         true <- Enum.any?(args, &match?({:"::", [{:inferred_bitstring_spec, true} | _], _}, &1)) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  ## Formatting helpers
+
+  defp indent(string) do
+    String.replace(string, "\n", "    \n")
+  end
+
+  defp map_type?({:map, _}), do: true
+  defp map_type?(_other), do: false
+
+  defp atom_type?(:atom), do: true
+  defp atom_type?({:atom, _}), do: false
+  defp atom_type?({:union, union}), do: Enum.all?(union, &atom_type?/1)
+  defp atom_type?(_other), do: false
+
+  defp integer_type?(:integer), do: true
+  defp integer_type?(_other), do: false
 end

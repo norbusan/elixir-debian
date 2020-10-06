@@ -93,7 +93,7 @@ defmodule Kernel do
   ### Protocols
 
   Protocols add polymorphic dispatch to Elixir. They are contracts
-  implementable by data types. See `defprotocol/2` for more information on
+  implementable by data types. See `Protocol` for more information on
   protocols. Elixir provides the following protocols in the standard library:
 
     * `Collectable` - collects data into a data type
@@ -127,19 +127,19 @@ defmodule Kernel do
   Elixir documentation also includes supporting documents under the
   "Pages" section. Those are:
 
-    * [Compatibility and Deprecations](compatibility-and-deprecations.html) - lists
+    * [Compatibility and Deprecations](compatibility-and-deprecations.md) - lists
       compatibility between every Elixir version and Erlang/OTP, release schema;
       lists all deprecated functions, when they were deprecated and alternatives
-    * [Library Guidelines](library-guidelines.html) - general guidelines, anti-patterns,
+    * [Library Guidelines](library-guidelines.md) - general guidelines, anti-patterns,
       and rules for those writing libraries
-    * [Naming Conventions](naming-conventions.html) - naming conventions for Elixir code
-    * [Operators](operators.html) - lists all Elixir operators and their precedence
-    * [Patterns and Guards](patterns-and-guards.html) - an introduction to patterns,
+    * [Naming Conventions](naming-conventions.md) - naming conventions for Elixir code
+    * [Operators](operators.md) - lists all Elixir operators and their precedences
+    * [Patterns and Guards](patterns-and-guards.md) - an introduction to patterns,
       guards, and extensions
-    * [Syntax Reference](syntax-reference.html) - the language syntax reference
-    * [Typespecs](typespecs.html)- types and function specifications, including list of types
-    * [Unicode Syntax](unicode-syntax.html) - outlines Elixir support for Unicode
-    * [Writing Documentation](writing-documentation.html) - guidelines for writing
+    * [Syntax Reference](syntax-reference.md) - the language syntax reference
+    * [Typespecs](typespecs.md)- types and function specifications, including list of types
+    * [Unicode Syntax](unicode-syntax.md) - outlines Elixir support for Unicode
+    * [Writing Documentation](writing-documentation.md) - guidelines for writing
       documentation in Elixir
 
   ## Guards
@@ -156,7 +156,7 @@ defmodule Kernel do
   or equal to 16. Guards also support joining multiple conditions with
   `and` and `or`. The whole guard is true if all guard expressions will
   evaluate to `true`. A more complete introduction to guards is available
-  [in the "Patterns and Guards" page](patterns-and-guards.html).
+  [in the "Patterns and Guards" page](patterns-and-guards.md).
 
   ## Inlining
 
@@ -1193,7 +1193,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic addition.
+  Arithmetic addition operator.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1213,7 +1213,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic subtraction.
+  Arithmetic subtraction operator.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1233,7 +1233,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic unary plus.
+  Arithmetic positive unary operator.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1251,7 +1251,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic unary minus.
+  Arithmetic negative unary operator.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1271,7 +1271,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic multiplication.
+  Arithmetic multiplication operator.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1291,7 +1291,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Arithmetic division.
+  Arithmetic division operator.
 
   The result is always a float. Use `div/2` and `rem/2` if you want
   an integer division or the remainder.
@@ -1322,7 +1322,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Concatenates a proper list and a term, returning a list.
+  List concatenation operator. Concatenates a proper list and a term, returning a list.
 
   The complexity of `a ++ b` is proportional to `length(a)`, so avoid repeatedly
   appending to lists of arbitrary length, for example, `list ++ [element]`.
@@ -1360,13 +1360,19 @@ defmodule Kernel do
   end
 
   @doc """
-  Removes the first occurrence of an element on the left list
+  List subtraction operator. Removes the first occurrence of an element on the left list
   for each element on the right.
 
-  The complexity of `a -- b` is proportional to `length(a) * length(b)`,
-  meaning that it will be very slow if both `a` and `b` are long lists.
-  In such cases, consider converting each list to a `MapSet` and using
-  `MapSet.difference/2`.
+  Before Erlang/OTP 22, the complexity of `a -- b` was proportional to
+  `length(a) * length(b)`, meaning that it would be very slow if
+  both `a` and `b` were long lists. In such cases, consider
+  converting each list to a `MapSet` and using `MapSet.difference/2`.
+
+  As of Erlang/OTP 22, this operation is significantly faster even if both
+  lists are very long, and using `--/2` is usually faster and uses less
+  memory than using the `MapSet`-based alternative mentioned above.
+  See also the [Erlang efficiency
+  guide](https://erlang.org/doc/efficiency_guide/retired_myths.html).
 
   Inlined by the compiler.
 
@@ -1378,6 +1384,16 @@ defmodule Kernel do
       iex> [1, 2, 3, 2, 1] -- [1, 2, 2]
       [3, 1]
 
+  The `--/2` operator is right associative, meaning:
+
+      iex> [1, 2, 3] -- [2] -- [3]
+      [1, 3]
+
+  As it is equivalent to:
+
+      iex> [1, 2, 3] -- ([2] -- [3])
+      [1, 3]
+
   """
   @spec list -- list :: list
   def left -- right do
@@ -1385,9 +1401,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Boolean not.
+  Strictly boolean "not" operator.
 
-  `arg` must be a boolean; if it's not, an `ArgumentError` exception is raised.
+  `value` must be a boolean; if it's not, an `ArgumentError` exception is raised.
 
   Allowed in guard tests. Inlined by the compiler.
 
@@ -1405,7 +1421,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if left is less than right.
+  Less-than operator.
+
+  Returns `true` if `left` is less than `right`.
 
   All terms in Elixir can be compared with each other.
 
@@ -1424,7 +1442,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if left is more than right.
+  Greater-than operator.
+
+  Returns `true` if `left` is more than `right`.
 
   All terms in Elixir can be compared with each other.
 
@@ -1443,7 +1463,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if left is less than or equal to right.
+  Less-than or equal to operator.
+
+  Returns `true` if `left` is less than or equal to `right`.
 
   All terms in Elixir can be compared with each other.
 
@@ -1462,7 +1484,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if left is more than or equal to right.
+  Greater-than or equal to operator.
+
+  Returns `true` if `left` is more than or equal to `right`.
 
   All terms in Elixir can be compared with each other.
 
@@ -1481,7 +1505,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns `true` if the two terms are equal.
+  Equal to operator. Returns `true` if the two terms are equal.
 
   This operator considers 1 and 1.0 to be equal. For stricter
   semantics, use `===/2` instead.
@@ -1506,6 +1530,8 @@ defmodule Kernel do
   end
 
   @doc """
+  Not equal to operator.
+
   Returns `true` if the two terms are not equal.
 
   This operator considers 1 and 1.0 to be equal. For match
@@ -1531,6 +1557,8 @@ defmodule Kernel do
   end
 
   @doc """
+  Strictly equal to operator.
+
   Returns `true` if the two terms are exactly equal.
 
   The terms are only considered to be exactly equal if they
@@ -1558,7 +1586,10 @@ defmodule Kernel do
   end
 
   @doc """
+  Strictly not equal to operator.
+
   Returns `true` if the two terms are not exactly equal.
+  See `===/2` for a definition of what is considered "exactly equal".
 
   All terms in Elixir can be compared with each other.
 
@@ -1629,7 +1660,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Boolean or.
+  Strictly boolean "or" operator.
 
   If `left` is `true`, returns `true`; otherwise returns `right`.
 
@@ -1643,8 +1674,12 @@ defmodule Kernel do
 
       iex> true or false
       true
+
       iex> false or 42
       42
+
+      iex> 42 or false
+      ** (BadBooleanError) expected a boolean on left-side of "or", got: 42
 
   """
   @doc guard: true
@@ -1657,7 +1692,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Boolean and.
+  Strictly boolean "and" operator.
 
   If `left` is `false`, returns `false`; otherwise returns `right`.
 
@@ -1670,8 +1705,12 @@ defmodule Kernel do
 
       iex> true and false
       false
+
       iex> true and "yay!"
       "yay!"
+
+      iex> "yay!" and true
+      ** (BadBooleanError) expected a boolean on left-side of "and", got: "yay!"
 
   """
   @doc guard: true
@@ -1696,9 +1735,9 @@ defmodule Kernel do
   end
 
   @doc """
-  Boolean not.
+  Boolean "not" operator.
 
-  Receives any argument (not just booleans) and returns `true` if the argument
+  Receives any value (not just booleans) and returns `true` if `value`
   is `false` or `nil`; returns `false` otherwise.
 
   Not allowed in guard clauses.
@@ -1741,7 +1780,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Concatenates two binaries.
+  Binary concatenation operator. Concatenates two binaries.
 
   ## Examples
 
@@ -1911,7 +1950,7 @@ defmodule Kernel do
 
   Works like `raise/1` but does not generate a new stacktrace.
 
-  Notice that `__STACKTRACE__` can be used inside catch/rescue
+  Note that `__STACKTRACE__` can be used inside catch/rescue
   to retrieve the current stacktrace.
 
   ## Examples
@@ -1983,11 +2022,12 @@ defmodule Kernel do
   end
 
   @doc """
-  Matches the term on the `left` against the regular expression or string on the
-  `right`.
+  Text-based match operator. Matches the term on the `left`
+  against the regular expression or string on the `right`.
 
-  Returns `true` if `left` matches `right` (if it's a regular expression)
-  or contains `right` (if it's a string).
+  If `right` is a regular expression, returns `true` if `left` matches right.
+
+  If `right` is a string, returns `true` if `left` contains `right`.
 
   ## Examples
 
@@ -1997,11 +2037,17 @@ defmodule Kernel do
       iex> "abcd" =~ ~r/e/
       false
 
+      iex> "abcd" =~ ~r//
+      true
+
       iex> "abcd" =~ "bc"
       true
 
       iex> "abcd" =~ "ad"
       false
+
+      iex> "abcd" =~ "abcd"
+      true
 
       iex> "abcd" =~ ""
       true
@@ -2251,6 +2297,134 @@ defmodule Kernel do
   end
 
   @doc """
+  Returns true if `term` is a struct of `name`; otherwise returns `false`.
+
+  Allowed in guard tests.
+
+  ## Examples
+
+      iex> is_struct(URI.parse("/"), URI)
+      true
+
+      iex> is_struct(URI.parse("/"), Macro.Env)
+      false
+
+  """
+  @doc since: "1.11.0", guard: true
+  defmacro is_struct(term, name) do
+    case __CALLER__.context do
+      nil ->
+        quote do
+          case unquote(name) do
+            name when is_atom(name) ->
+              case unquote(term) do
+                %{__struct__: ^name} -> true
+                _ -> false
+              end
+
+            _ ->
+              raise ArgumentError
+          end
+        end
+
+      :match ->
+        invalid_match!(:is_struct)
+
+      :guard ->
+        quote do
+          is_map(unquote(term)) and
+            (is_atom(unquote(name)) or :fail) and
+            :erlang.is_map_key(:__struct__, unquote(term)) and
+            :erlang.map_get(:__struct__, unquote(term)) == unquote(name)
+        end
+    end
+  end
+
+  @doc """
+  Returns true if `term` is an exception; otherwise returns `false`.
+
+  Allowed in guard tests.
+
+  ## Examples
+
+      iex> is_exception(%RuntimeError{})
+      true
+
+      iex> is_exception(%{})
+      false
+
+  """
+  @doc since: "1.11.0", guard: true
+  defmacro is_exception(term) do
+    case __CALLER__.context do
+      nil ->
+        quote do
+          case unquote(term) do
+            %_{__exception__: true} -> true
+            _ -> false
+          end
+        end
+
+      :match ->
+        invalid_match!(:is_exception)
+
+      :guard ->
+        quote do
+          is_map(unquote(term)) and :erlang.is_map_key(:__struct__, unquote(term)) and
+            is_atom(:erlang.map_get(:__struct__, unquote(term))) and
+            :erlang.is_map_key(:__exception__, unquote(term)) and
+            :erlang.map_get(:__exception__, unquote(term)) == true
+        end
+    end
+  end
+
+  @doc """
+  Returns true if `term` is an exception of `name`; otherwise returns `false`.
+
+  Allowed in guard tests.
+
+  ## Examples
+
+      iex> is_exception(%RuntimeError{}, RuntimeError)
+      true
+
+      iex> is_exception(%RuntimeError{}, Macro.Env)
+      false
+
+  """
+  @doc since: "1.11.0", guard: true
+  defmacro is_exception(term, name) do
+    case __CALLER__.context do
+      nil ->
+        quote do
+          case unquote(name) do
+            name when is_atom(name) ->
+              case unquote(term) do
+                %{__struct__: ^name, __exception__: true} -> true
+                _ -> false
+              end
+
+            _ ->
+              raise ArgumentError
+          end
+        end
+
+      :match ->
+        invalid_match!(:is_exception)
+
+      :guard ->
+        quote do
+          is_map(unquote(term)) and
+            (is_atom(unquote(name)) or :fail) and
+            :erlang.is_map_key(:__struct__, unquote(term)) and
+            :erlang.map_get(:__struct__, unquote(term)) == unquote(name) and
+            :erlang.is_map_key(:__exception__, unquote(term)) and
+            :erlang.map_get(:__exception__, unquote(term)) == true
+        end
+    end
+  end
+
+  @doc """
   Gets a value from a nested structure.
 
   Uses the `Access` module to traverse the structures
@@ -2336,6 +2510,12 @@ defmodule Kernel do
   according to the given `keys`, unless the `key` is a
   function. If the key is a function, it will be invoked
   as specified in `get_and_update_in/3`.
+
+  `data` is a nested structure (that is, a map, keyword
+  list, or struct that implements the `Access` behaviour).
+  The `fun` argument receives the value of `key` (or `nil`
+  if `key` is not present) and the result replaces the value
+  in the structure.
 
   ## Examples
 
@@ -2882,7 +3062,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Reads and writes attributes of the current module.
+  Module attribute unary operator. Reads and writes attributes in the current module.
 
   The canonical example for attributes is annotating that a module
   implements an OTP behaviour, such as `GenServer`:
@@ -2906,7 +3086,7 @@ defmodule Kernel do
   will be available at compile-time. Custom attributes may be configured to
   behave closer to Erlang by using `Module.register_attribute/3`.
 
-  Finally, notice that attributes can also be read inside functions:
+  Finally, note that attributes can also be read inside functions:
 
       defmodule MyServer do
         @my_data 11
@@ -3243,7 +3423,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Returns a range with the specified `first` and `last` integers.
+  Range creation operator. Returns a range with the specified `first` and `last` integers.
 
   If last is larger than first, the range will be increasing from
   first to last. If first is larger than last, the range will be
@@ -3298,6 +3478,8 @@ defmodule Kernel do
   end
 
   @doc """
+  Boolean "and" operator.
+
   Provides a short-circuit operator that evaluates and returns
   the second expression only if the first one evaluates to a truthy value
   (neither `false` nor `nil`). Returns the first expression
@@ -3337,6 +3519,8 @@ defmodule Kernel do
   end
 
   @doc """
+  Boolean "or" operator.
+
   Provides a short-circuit operator that evaluates and returns the second
   expression only if the first one does not evaluate to a truthy value (that is,
   it is either `nil` or `false`). Returns the first expression otherwise.
@@ -3516,7 +3700,7 @@ defmodule Kernel do
   end
 
   @doc """
-  Checks if the element on the left-hand side is a member of the
+  Membership operator. Checks if the element on the left-hand side is a member of the
   collection on the right-hand side.
 
   ## Examples
@@ -3572,7 +3756,7 @@ defmodule Kernel do
   """
   @doc guard: true
   defmacro left in right do
-    in_module? = __CALLER__.context == nil
+    in_body? = __CALLER__.context == nil
 
     expand =
       case bootstrapped?(Macro) do
@@ -3581,7 +3765,7 @@ defmodule Kernel do
       end
 
     case expand.(right) do
-      [] when not in_module? ->
+      [] when not in_body? ->
         false
 
       [] ->
@@ -3590,28 +3774,28 @@ defmodule Kernel do
           false
         end
 
-      [head | tail] = list when not in_module? ->
-        in_var(in_module?, left, &in_list(&1, head, tail, expand, list, in_module?))
+      [head | tail] = list when not in_body? ->
+        in_list(left, head, tail, expand, list, in_body?)
 
-      [_ | _] = list when in_module? ->
+      [_ | _] = list when in_body? ->
         case ensure_evaled(list, {0, []}, expand) do
           {[head | tail], {_, []}} ->
-            in_var(in_module?, left, &in_list(&1, head, tail, expand, list, in_module?))
+            in_var(in_body?, left, &in_list(&1, head, tail, expand, list, in_body?))
 
           {[head | tail], {_, vars_values}} ->
             {vars, values} = :lists.unzip(:lists.reverse(vars_values))
-            is_in_list = &in_list(&1, head, tail, expand, list, in_module?)
+            is_in_list = &in_list(&1, head, tail, expand, list, in_body?)
 
             quote do
               {unquote_splicing(vars)} = {unquote_splicing(values)}
-              unquote(in_var(in_module?, left, is_in_list))
+              unquote(in_var(in_body?, left, is_in_list))
             end
         end
 
       {:%{}, _meta, [__struct__: Elixir.Range, first: first, last: last]} ->
-        in_var(in_module?, left, &in_range(&1, expand.(first), expand.(last)))
+        in_var(in_body?, left, &in_range(&1, expand.(first), expand.(last)))
 
-      right when in_module? ->
+      right when in_body? ->
         quote(do: Elixir.Enum.member?(unquote(right), unquote(left)))
 
       %{__struct__: Elixir.Range, first: _, last: _} ->
@@ -3720,18 +3904,12 @@ defmodule Kernel do
     end
   end
 
-  defp in_list(left, head, tail, expand, right, in_module?) do
-    [head | tail] =
-      :lists.foldl(
-        &[comp(left, &1, expand, right, in_module?) | &2],
-        [],
-        [head | tail]
-      )
-
-    :lists.foldl(&quote(do: :erlang.orelse(unquote(&1), unquote(&2))), head, tail)
+  defp in_list(left, head, tail, expand, right, in_body?) do
+    [head | tail] = :lists.map(&comp(left, &1, expand, right, in_body?), [head | tail])
+    :lists.foldl(&quote(do: :erlang.orelse(unquote(&2), unquote(&1))), head, tail)
   end
 
-  defp comp(left, {:|, _, [head, tail]}, expand, right, in_module?) do
+  defp comp(left, {:|, _, [head, tail]}, expand, right, in_body?) do
     case expand.(tail) do
       [] ->
         quote(do: :erlang."=:="(unquote(left), unquote(head)))
@@ -3740,11 +3918,11 @@ defmodule Kernel do
         quote do
           :erlang.orelse(
             :erlang."=:="(unquote(left), unquote(head)),
-            unquote(in_list(left, tail_head, tail, expand, right, in_module?))
+            unquote(in_list(left, tail_head, tail, expand, right, in_body?))
           )
         end
 
-      tail when in_module? ->
+      tail when in_body? ->
         quote do
           :erlang.orelse(
             :erlang."=:="(unquote(left), unquote(head)),
@@ -3757,7 +3935,7 @@ defmodule Kernel do
     end
   end
 
-  defp comp(left, right, _expand, _right, _in_module?) do
+  defp comp(left, right, _expand, _right, _in_body?) do
     quote(do: :erlang."=:="(unquote(left), unquote(right)))
   end
 
@@ -3780,13 +3958,20 @@ defmodule Kernel do
   end
 
   @doc """
-  When used inside quoting, marks that the given variable should
-  not be hygienized.
+  Marks that the given variable should not be hygienized.
 
-  The argument can be either a variable unquoted or in standard tuple form
-  `{name, meta, context}`.
+  This macro expects a variable and it is typically invoked
+  inside `Kernel.SpecialForms.quote/2` to mark that a variable
+  should not be hygienized. See `Kernel.SpecialForms.quote/2`
+  for more information.
 
-  Check `Kernel.SpecialForms.quote/2` for more information.
+  ## Examples
+
+      iex> Kernel.var!(example) = 1
+      1
+      iex> Kernel.var!(example)
+      1
+
   """
   defmacro var!(var, context \\ nil)
 
@@ -4087,20 +4272,20 @@ defmodule Kernel do
   ## `rescue`/`catch`/`after`/`else`
 
   Function bodies support `rescue`, `catch`, `after`, and `else` as `Kernel.SpecialForms.try/1`
-  does. For example, the following two functions are equivalent:
+  does (known as "implicit try"). For example, the following two functions are equivalent:
 
-      def format(value) do
+      def convert(number) do
         try do
-          format!(value)
-        catch
-          :exit, reason -> {:error, reason}
+          String.to_integer(number)
+        rescue
+          e in ArgumentError -> {:error, e.message}
         end
       end
 
-      def format(value) do
-        format!(value)
-      catch
-        :exit, reason -> {:error, reason}
+      def convert(number) do
+        String.to_integer(number)
+      rescue
+        e in ArgumentError -> {:error, e.message}
       end
 
   """
@@ -4723,8 +4908,8 @@ defmodule Kernel do
 
   ## Examples
 
-  For example, in order to write test cases using the `ExUnit` framework
-  provided with Elixir, a developer should `use` the `ExUnit.Case` module:
+  For example, to write test cases using the `ExUnit` framework provided
+  with Elixir, a developer should `use` the `ExUnit.Case` module:
 
       defmodule AssertionTest do
         use ExUnit.Case, async: true
@@ -4734,8 +4919,11 @@ defmodule Kernel do
         end
       end
 
-  In this example, `ExUnit.Case.__using__/1` is called with the keyword list
-  `[async: true]` as its argument; `use/2` translates to:
+  In this example, Elixir will call the `__using__/1` macro in the
+  `ExUnit.Case` module with the keyword list `[async: true]` as its
+  argument.
+
+  In other words, `use/2` translates to:
 
       defmodule AssertionTest do
         require ExUnit.Case
@@ -4746,7 +4934,7 @@ defmodule Kernel do
         end
       end
 
-  `ExUnit.Case` will then define the `__using__/1` macro:
+  where `ExUnit.Case` defines the `__using__/1` macro:
 
       defmodule ExUnit.Case do
         defmacro __using__(opts) do
@@ -4880,6 +5068,18 @@ defmodule Kernel do
   """
   defmacro defdelegate(funs, opts) do
     funs = Macro.escape(funs, unquote: true)
+
+    # don't add compile-time dependency on :to
+    opts =
+      with true <- is_list(opts),
+           {:ok, target} <- Keyword.fetch(opts, :to),
+           {:__aliases__, _, _} <- target do
+        target = Macro.expand(target, %{__CALLER__ | function: {:__info__, 1}})
+        Keyword.replace!(opts, :to, target)
+      else
+        _ ->
+          opts
+      end
 
     quote bind_quoted: [funs: funs, opts: opts] do
       target =
@@ -5480,9 +5680,12 @@ defmodule Kernel do
   end
 
   @doc false
-  # TODO: Remove on v2.0 (also hard-coded in elixir_dispatch)
-  @deprecated "Use Kernel.to_charlist/1 instead"
   defmacro to_char_list(arg) do
+    IO.warn(
+      "Kernel.to_char_list/1 is deprecated, use Kernel.to_charlist/1 instead",
+      Macro.Env.stacktrace(__CALLER__)
+    )
+
     quote(do: Kernel.to_charlist(unquote(arg)))
   end
 end

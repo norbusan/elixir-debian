@@ -98,7 +98,6 @@ defmodule ModuleTest do
     contents =
       quote do
         @after_compile __MODULE__
-
         @foo 42
 
         def __after_compile__(%Macro.Env{module: module}, bin) when is_binary(bin) do
@@ -151,13 +150,10 @@ defmodule ModuleTest do
   end
 
   def __on_definition__(env, kind, name, args, guards, expr) do
-    Process.put(env.module, :called)
+    Process.put(env.module, {args, guards, expr})
     assert env.module == ModuleTest.OnDefinition
     assert kind == :def
     assert name == :hello
-    assert [{:foo, _, _}, {:bar, _, _}] = args
-    assert [] = guards
-    assert [do: {:+, _, [{:foo, _, nil}, {:bar, _, nil}]}] = expr
     assert Module.defines?(env.module, {:hello, 2})
   end
 
@@ -165,12 +161,17 @@ defmodule ModuleTest do
     defmodule OnDefinition do
       @on_definition ModuleTest
 
+      def hello(foo, bar)
+
+      assert {[{:foo, _, _}, {:bar, _, _}], [], nil} = Process.get(ModuleTest.OnDefinition)
+
       def hello(foo, bar) do
         foo + bar
       end
-    end
 
-    assert Process.get(ModuleTest.OnDefinition) == :called
+      assert {[{:foo, _, _}, {:bar, _, _}], [], [do: {:+, _, [{:foo, _, nil}, {:bar, _, nil}]}]} =
+               Process.get(ModuleTest.OnDefinition)
+    end
   end
 
   defmacro __before_compile__(_) do
@@ -342,6 +343,19 @@ defmodule ModuleTest do
     end
   end
 
+  @compile {:no_warn_undefined, ModuleTracersSample}
+
+  test "create with propagated tracers" do
+    contents =
+      quote do
+        def world, do: true
+      end
+
+    env = %{__ENV__ | tracers: [:invalid]}
+    {:module, ModuleTracersSample, _, _} = Module.create(ModuleTracersSample, contents, env)
+    assert ModuleTracersSample.world()
+  end
+
   @compile {:no_warn_undefined, ModuleHygiene}
 
   test "create with aliases/var hygiene" do
@@ -442,17 +456,26 @@ defmodule ModuleTest do
 
   test "definitions in" do
     in_module do
-      def foo(1, 2, 3), do: 4
+      defp bar(), do: :ok
+      def foo(1, 2, 3), do: bar()
 
-      assert Module.definitions_in(__MODULE__) == [foo: 3]
+      defmacrop macro_bar(), do: 4
+      defmacro macro_foo(1, 2, 3), do: macro_bar()
+
+      assert Module.definitions_in(__MODULE__) |> Enum.sort() ==
+               [{:bar, 0}, {:foo, 3}, {:macro_bar, 0}, {:macro_foo, 3}]
+
       assert Module.definitions_in(__MODULE__, :def) == [foo: 3]
-      assert Module.definitions_in(__MODULE__, :defp) == []
+      assert Module.definitions_in(__MODULE__, :defp) == [bar: 0]
+      assert Module.definitions_in(__MODULE__, :defmacro) == [macro_foo: 3]
+      assert Module.definitions_in(__MODULE__, :defmacrop) == [macro_bar: 0]
 
       defoverridable foo: 3
 
-      assert Module.definitions_in(__MODULE__) == []
+      assert Module.definitions_in(__MODULE__) |> Enum.sort() ==
+               [{:bar, 0}, {:macro_bar, 0}, {:macro_foo, 3}]
+
       assert Module.definitions_in(__MODULE__, :def) == []
-      assert Module.definitions_in(__MODULE__, :defp) == []
     end
   end
 
