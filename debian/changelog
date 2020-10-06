@@ -1,3 +1,18 @@
+elixir-lang (1.10.4.dfsg-1~np1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * New upstream release.
+
+ -- Norbert Preining <norbert@preining.info>  Sun, 05 Jul 2020 08:40:01 +0900
+
+elixir-lang (1.10.3.dfsg-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Remove dependency of the elixir binary package on erlang-pcre-<version>,
+    because it isn't necessary anymore (closes: #963043).
+
+ -- Sergei Golovan <sgolovan@debian.org>  Thu, 18 Jun 2020 18:22:53 +0300
+
 elixir-lang (1.10.3.dfsg-1) unstable; urgency=medium
 
   * New upstream release (closes: #959701, #959160, #959988).
