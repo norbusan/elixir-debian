@@ -39,16 +39,24 @@ defmodule Mix.Tasks.Xref do
 
     * `--exclude` - paths to exclude
 
-    * `--label` - only shows relationships with the given label
-      The labels are "compile", "struct" and "runtime"
+    * `--label` - only shows relationships with the given label.
+      By default, it keeps all labels that are transitive.
+      The labels are "compile", "export" and "runtime". See
+      "Dependencies types" section below
 
     * `--only-nodes` - only shows the node names (no edges)
+
+    * `--only-direct` - the `--label` option will restrict itself
+      to only direct dependencies instead of transitive ones
 
     * `--source` - displays all files that the given source file
       references (directly or indirectly)
 
     * `--sink` - displays all files that reference the given file
       (directly or indirectly)
+
+    * `--min-cycle-size` - controls the minimum cycle size on formats
+      like `stats` and `cycles`
 
     * `--format` - can be set to one of:
 
@@ -61,6 +69,8 @@ defmodule Mix.Tasks.Xref do
 
       * `stats` - prints general statistics about the graph;
 
+      * `cycles` - prints all cycles in the graph;
+
       * `dot` - produces a DOT graph description in `xref_graph.dot` in the
         current directory. Warning: this will override any previously generated file
 
@@ -69,17 +79,76 @@ defmodule Mix.Tasks.Xref do
   those options with `--label` and `--only-nodes` to get all files that exhibit a certain
   property, for example:
 
-      # To get all files that depend on lib/foo.ex
-      mix xref graph --sink lib/foo.ex --only-nodes
+      # To get the tree that depend on lib/foo.ex at compile time
+      mix xref graph --label compile --sink lib/foo.ex
 
       # To get all files that depend on lib/foo.ex at compile time
       mix xref graph --label compile --sink lib/foo.ex --only-nodes
+
+      # To get all paths between two files
+      mix xref graph --source lib/foo.ex --sink lib/bar.ex
 
       # To show general statistics about the graph
       mix xref graph --format stats
 
       # To limit statistics only to certain labels
       mix xref graph --format stats --label compile
+
+  #### Understanding the printed graph
+
+  When `mix xref graph` runs, it will print a tree of the following
+  format:
+
+      lib/a.ex
+      `-- lib/b.ex (compile)
+          `-- lib/c.ex
+
+  This tree means that `lib/a.ex` depends on `lib/b.ex` at compile
+  time which then depends on `lib/c.ex` at runtime. This is often
+  problematic because if `lib/c.ex` changes, `lib/a.ex` also has to
+  recompile due to this indirect compile time dependency.
+
+  This interpretation is the same regardless if `--source` or `--sink`
+  flags are used. For example, if we use the `--sink lib/c.ex` flag,
+  we would see the same tree:
+
+      lib/a.ex
+      `-- lib/b.ex (compile)
+          `-- lib/c.ex
+
+  If the `--label compile` flag is given with `--sink`, then `lib/c.ex`
+  won't be shown, because no module has a compile time dependency on
+  `lib/c.ex` but `lib/a.ex` still has an indirect compile time dependency
+  on `lib/c.ex` via `lib/b.ex`:
+
+      lib/a.ex
+      `-- lib/b.ex (compile)
+
+  Therefore, using a combination of `--sink` with `--label` is useful to
+  find all files that will change once the sink changes, alongside the
+  transitive dependencies that will cause said recompilations.
+
+  #### Dependencies types
+
+  ELixir tracks three types of dependencies between modules: compile,
+  exports, and runtime. If a module has a compile time dependency on
+  another module, the caller module has to be recompiled whenever the
+  callee changes. Compile-time dependencies are typically added when
+  using macros or when invoking functions in the module body (outside
+  of functions).
+
+  Exports dependencies are compile time dependencies on the module API,
+  namely structs and its public definitions. For example, if you import
+  a module but only use its functions, it is an export dependency. If
+  you use a struct, it is an export dependency too. Export dependencies
+  are only recompiled if the module API changes. Note, however, that compile
+  time dependencies have higher precedence than exports. Therefore if
+  you import a module and use its macros, it is a compile time dependency.
+
+  Runtime dependencies are added whenever you invoke another module
+  inside a function. Modules with runtime dependencies do not have
+  to be compiled when the callee changes, unless there is a transitive
+  compile or export time dependency between them.
 
   ## Shared options
 
@@ -110,19 +179,16 @@ defmodule Mix.Tasks.Xref do
     include_siblings: :boolean,
     label: :string,
     only_nodes: :boolean,
+    only_direct: :boolean,
     sink: :string,
-    source: :string
+    source: :string,
+    min_cycle_size: :integer
   ]
 
   @impl true
   def run(args) do
     {opts, args} = OptionParser.parse!(args, strict: @switches)
-    Mix.Task.run("loadpaths")
-
-    if Keyword.get(opts, :compile, true) do
-      Mix.Task.run("compile")
-    end
-
+    Mix.Task.run("compile", args)
     Mix.Task.reenable("xref")
 
     case args do
@@ -292,8 +358,12 @@ defmodule Mix.Tasks.Xref do
   end
 
   defp graph(opts) do
-    write_graph(file_references(opts), excluded(opts), opts)
+    filter = label_filter(opts[:label])
 
+    {direct_filter, transitive_filter} =
+      if opts[:only_direct], do: {filter, :all}, else: {:all, filter}
+
+    write_graph(file_references(direct_filter, opts), transitive_filter, opts)
     :ok
   end
 
@@ -309,7 +379,7 @@ defmodule Mix.Tasks.Xref do
   defp reference(module, source) do
     cond do
       module in source(source, :compile_references) -> "compile"
-      module in source(source, :struct_references) -> "struct"
+      module in source(source, :export_references) -> "export"
       module in source(source, :runtime_references) -> "runtime"
       true -> nil
     end
@@ -320,18 +390,16 @@ defmodule Mix.Tasks.Xref do
   defp excluded(opts) do
     opts
     |> Keyword.get_values(:exclude)
-    |> Enum.flat_map(&[{&1, nil}, {&1, :compile}, {&1, :struct}])
+    |> Enum.flat_map(&[{&1, nil}, {&1, :compile}, {&1, :export}])
   end
 
   defp label_filter(nil), do: :all
   defp label_filter("compile"), do: :compile
-  defp label_filter("struct"), do: :struct
+  defp label_filter("export"), do: :export
   defp label_filter("runtime"), do: nil
   defp label_filter(other), do: Mix.raise("unknown --label #{other}")
 
-  defp file_references(opts) do
-    filter = label_filter(opts[:label])
-
+  defp file_references(filter, opts) do
     module_sources =
       for manifest_path <- manifests(opts),
           {manifest_modules, manifest_sources} = read_manifest(manifest_path),
@@ -345,7 +413,7 @@ defmodule Mix.Tasks.Xref do
     Map.new(module_sources, fn {current, source} ->
       source(
         runtime_references: runtime,
-        struct_references: structs,
+        export_references: exports,
         compile_references: compile,
         source: file
       ) = source
@@ -353,15 +421,15 @@ defmodule Mix.Tasks.Xref do
       compile_references =
         modules_to_nodes(compile, :compile, current, source, module_sources, all_modules, filter)
 
-      struct_references =
-        modules_to_nodes(structs, :struct, current, source, module_sources, all_modules, filter)
+      export_references =
+        modules_to_nodes(exports, :export, current, source, module_sources, all_modules, filter)
 
       runtime_references =
         modules_to_nodes(runtime, nil, current, source, module_sources, all_modules, filter)
 
       references =
         runtime_references
-        |> Map.merge(struct_references)
+        |> Map.merge(export_references)
         |> Map.merge(compile_references)
         |> Enum.to_list()
 
@@ -382,46 +450,52 @@ defmodule Mix.Tasks.Xref do
         into: %{}
   end
 
-  defp write_graph(file_references, excluded, opts) do
-    {root, file_references} =
-      case {opts[:source], opts[:sink]} do
-        {nil, nil} ->
-          {Enum.map(file_references, &{elem(&1, 0), nil}) -- excluded, file_references}
+  defp write_graph(file_references, filter, opts) do
+    excluded = excluded(opts)
+    source = opts[:source]
+    sink = opts[:sink]
 
-        {source, nil} ->
-          if file_references[source] do
-            {Map.get(file_references, source, []), file_references}
-          else
-            Mix.raise("Source could not be found: #{source}")
-          end
+    if source && is_nil(file_references[source]) do
+      Mix.raise("Source could not be found: #{source}")
+    end
 
-        {nil, sink} ->
-          if file_references[sink] do
-            file_references = filter_for_sink(file_references, sink)
+    if sink && is_nil(file_references[sink]) do
+      Mix.raise("Sink could not be found: #{sink}")
+    end
 
-            roots =
-              file_references
-              |> Map.delete(sink)
-              |> Enum.map(&{elem(&1, 0), nil})
+    file_references =
+      if sink = opts[:sink] do
+        filter_for_sink(file_references, sink, filter)
+      else
+        filter_for_source(file_references, filter)
+      end
 
-            {roots -- excluded, file_references}
-          else
-            Mix.raise("Sink could not be found: #{sink}")
-          end
-
-        {_, _} ->
-          Mix.raise("mix xref graph expects only one of --source and --sink")
+    roots =
+      if source = opts[:source] do
+        %{source => nil}
+      else
+        file_references
+        |> Map.delete(opts[:sink])
+        |> Enum.map(&{elem(&1, 0), nil})
+        |> Kernel.--(excluded)
+        |> Map.new()
       end
 
     callback = fn {file, type} ->
       children = if opts[:only_nodes], do: [], else: Map.get(file_references, file, [])
       type = type && "(#{type})"
-      {{file, type}, children -- excluded}
+      {{file, type}, Enum.sort(children -- excluded)}
     end
 
     case opts[:format] do
       "dot" ->
-        Mix.Utils.write_dot_graph!("xref_graph.dot", "xref graph", root, callback, opts)
+        Mix.Utils.write_dot_graph!(
+          "xref_graph.dot",
+          "xref graph",
+          Enum.sort(roots),
+          callback,
+          opts
+        )
 
         """
         Generated "xref_graph.dot" in the current directory. To generate a PNG:
@@ -434,79 +508,170 @@ defmodule Mix.Tasks.Xref do
         |> Mix.shell().info()
 
       "stats" ->
-        stats(file_references)
+        print_stats(file_references, opts)
+
+      "cycles" ->
+        print_cycles(file_references, opts)
 
       _ ->
-        Mix.Utils.print_tree(root, callback, opts)
+        Mix.Utils.print_tree(Enum.sort(roots), callback, opts)
     end
   end
 
-  defp filter_for_sink(file_references, sink) do
-    file_references
-    |> invert_references()
-    |> apply_filter_for_sink([{sink, nil}], %{})
-    |> invert_references()
+  defp filter_for_source(file_references, :all), do: file_references
+
+  defp filter_for_source(file_references, filter) do
+    Enum.reduce(file_references, %{}, fn {key, _}, acc ->
+      {children, _} = filter_for_source(file_references, key, %{}, %{}, filter)
+      Map.put(acc, key, children |> Map.delete(key) |> Map.to_list())
+    end)
   end
 
-  defp apply_filter_for_sink(file_references, new_nodes, acc) do
+  defp filter_for_source(references, key, acc, seen, filter) do
+    nodes = references[key]
+
+    if is_nil(nodes) || seen[key] do
+      {acc, seen}
+    else
+      seen = Map.put(seen, key, true)
+
+      Enum.reduce(nodes, {acc, seen}, fn {child_key, type}, {acc, seen} ->
+        if type == filter do
+          {Map.put(acc, child_key, type), Map.put(seen, child_key, true)}
+        else
+          filter_for_source(references, child_key, acc, seen, filter)
+        end
+      end)
+    end
+  end
+
+  defp filter_for_sink(file_references, sink, filter) do
+    fun = if filter == :all, do: fn _ -> true end, else: fn type -> type == filter end
+
+    file_references
+    |> invert_references(fn _ -> true end)
+    |> depends_on_sink([{sink, nil}], %{})
+    |> invert_references(fun)
+  end
+
+  defp depends_on_sink(file_references, new_nodes, acc) do
     Enum.reduce(new_nodes, acc, fn {new_node_name, _type}, acc ->
       new_nodes = file_references[new_node_name]
 
       if acc[new_node_name] || !new_nodes do
         acc
       else
-        apply_filter_for_sink(file_references, new_nodes, Map.put(acc, new_node_name, new_nodes))
+        depends_on_sink(file_references, new_nodes, Map.put(acc, new_node_name, new_nodes))
       end
     end)
   end
 
-  defp invert_references(file_references) do
+  defp invert_references(file_references, fun) do
     Enum.reduce(file_references, %{}, fn {file, references}, acc ->
       Enum.reduce(references, acc, fn {reference, type}, acc ->
-        Map.update(acc, reference, [{file, type}], &[{file, type} | &1])
+        if fun.(type) do
+          Map.update(acc, reference, [{file, type}], &[{file, type} | &1])
+        else
+          acc
+        end
       end)
     end)
   end
 
-  defp stats(references) do
-    shell = Mix.shell()
+  defp print_stats(references, opts) do
+    with_digraph(references, fn graph ->
+      shell = Mix.shell()
 
-    counters =
-      Enum.reduce(references, %{compile: 0, struct: 0, nil: 0}, fn {_, deps}, acc ->
-        Enum.reduce(deps, acc, fn {_, value}, acc ->
-          Map.update!(acc, value, &(&1 + 1))
+      counters =
+        Enum.reduce(references, %{compile: 0, export: 0, nil: 0}, fn {_, deps}, acc ->
+          Enum.reduce(deps, acc, fn {_, value}, acc ->
+            Map.update!(acc, value, &(&1 + 1))
+          end)
         end)
-      end)
 
-    shell.info("Tracked files: #{map_size(references)} (nodes)")
-    shell.info("Compile dependencies: #{counters.compile} (edges)")
-    shell.info("Structs dependencies: #{counters.struct} (edges)")
-    shell.info("Runtime dependencies: #{counters.nil} (edges)")
+      shell.info("Tracked files: #{map_size(references)} (nodes)")
+      shell.info("Compile dependencies: #{counters.compile} (edges)")
+      shell.info("Exports dependencies: #{counters.export} (edges)")
+      shell.info("Runtime dependencies: #{counters.nil} (edges)")
+      shell.info("Cycles: #{length(cycles(graph, opts))}")
 
-    outgoing =
-      references
-      |> Enum.map(fn {file, deps} -> {length(deps), file} end)
-      |> Enum.sort()
-      |> Enum.take(-10)
-      |> Enum.reverse()
+      outgoing =
+        references
+        |> Enum.map(fn {file, _} -> {:digraph.out_degree(graph, file), file} end)
+        |> Enum.sort(:desc)
+        |> Enum.take(10)
 
-    shell.info("\nTop #{length(outgoing)} files with most outgoing dependencies:")
-    for {count, file} <- outgoing, do: shell.info("  * #{file} (#{count})")
+      shell.info("\nTop #{length(outgoing)} files with most outgoing dependencies:")
+      for {count, file} <- outgoing, do: shell.info("  * #{file} (#{count})")
 
-    incoming =
-      references
-      |> Enum.reduce(%{}, fn {_, deps}, acc ->
-        Enum.reduce(deps, acc, fn {file, _}, acc ->
-          Map.update(acc, file, 1, &(&1 + 1))
-        end)
-      end)
-      |> Enum.map(fn {file, count} -> {count, file} end)
-      |> Enum.sort()
-      |> Enum.take(-10)
-      |> Enum.reverse()
+      incoming =
+        references
+        |> Enum.map(fn {file, _} -> {:digraph.in_degree(graph, file), file} end)
+        |> Enum.sort(:desc)
+        |> Enum.take(10)
 
-    shell.info("\nTop #{length(incoming)} files with most incoming dependencies:")
-    for {count, file} <- incoming, do: shell.info("  * #{file} (#{count})")
+      shell.info("\nTop #{length(incoming)} files with most incoming dependencies:")
+      for {count, file} <- incoming, do: shell.info("  * #{file} (#{count})")
+    end)
+  end
+
+  defp with_digraph(references, callback) do
+    graph = :digraph.new()
+
+    try do
+      for {file, _} <- references do
+        :digraph.add_vertex(graph, file)
+      end
+
+      for {file, deps} <- references, {dep, label} <- deps do
+        :digraph.add_edge(graph, file, dep, label)
+      end
+
+      callback.(graph)
+    after
+      :digraph.delete(graph)
+    end
+  end
+
+  defp cycles(graph, opts) do
+    cycles =
+      graph
+      |> :digraph_utils.cyclic_strong_components()
+      |> Enum.reduce([], &inner_cycles(graph, &1, &2))
+      |> Enum.map(&{length(&1), &1})
+
+    if min = opts[:min_cycle_size], do: Enum.filter(cycles, &(elem(&1, 0) > min)), else: cycles
+  end
+
+  defp inner_cycles(_graph, [], acc), do: acc
+
+  defp inner_cycles(graph, [v | vertices], acc) do
+    cycle = :digraph.get_cycle(graph, v)
+    inner_cycles(graph, vertices -- cycle, [cycle | acc])
+  end
+
+  defp print_cycles(references, opts) do
+    with_digraph(references, fn graph ->
+      shell = Mix.shell()
+
+      case graph |> cycles(opts) |> Enum.sort(:desc) do
+        [] ->
+          shell.info("No cycles found")
+
+        cycles ->
+          shell.info("#{length(cycles)} cycles found. Showing them in decreasing size:\n")
+
+          for {length, cycle} <- cycles do
+            shell.info("Cycle of length #{length}:\n")
+
+            for node <- cycle do
+              shell.info("    " <> node)
+            end
+
+            shell.info("")
+          end
+      end
+    end)
   end
 
   ## Helpers

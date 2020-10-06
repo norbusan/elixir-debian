@@ -1,4 +1,5 @@
 defmodule Module.Types.Helpers do
+  # AST and enumeration helpers.
   @moduledoc false
 
   @doc """
@@ -19,14 +20,10 @@ defmodule Module.Types.Helpers do
   def var_name({_name, meta, _context}), do: Keyword.fetch!(meta, :version)
 
   @doc """
-  Push expression to stack.
-
-  The expression stack is used to give the context where a type variable
-  was refined when show a type conflict error.
+  Returns the AST metadata.
   """
-  def push_expr_stack(expr, stack) do
-    %{stack | expr_stack: [expr | stack.expr_stack]}
-  end
+  def get_meta({_, meta, _}), do: meta
+  def get_meta(_other), do: []
 
   @doc """
   Like `Enum.reduce/3` but only continues while `fun` returns `{:ok, acc}`
@@ -40,10 +37,6 @@ defmodule Module.Types.Helpers do
     case fun.(head, acc) do
       {:ok, acc} ->
         do_reduce_ok(tail, acc, fun)
-
-      result when elem(result, 0) == :ok ->
-        result = Tuple.delete_at(result, 0)
-        do_reduce_ok(tail, result, fun)
 
       {:error, reason} ->
         {:error, reason}
@@ -81,16 +74,25 @@ defmodule Module.Types.Helpers do
       {:ok, elem} ->
         do_map_ok(tail, [elem | acc], fun)
 
-      result when elem(result, 0) == :ok ->
-        result = Tuple.delete_at(result, 0)
-        do_map_ok(tail, [result | acc], fun)
-
       {:error, reason} ->
         {:error, reason}
     end
   end
 
   defp do_map_ok([], acc, _fun), do: {:ok, Enum.reverse(acc)}
+
+  @doc """
+  Like `Enum.each/2` but only continues while `fun` returns `:ok`
+  and stops on `{:error, reason}`.
+  """
+  def each_ok([head | tail], fun) do
+    case fun.(head) do
+      :ok -> each_ok(tail, fun)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def each_ok([], _fun), do: :ok
 
   @doc """
   Like `Enum.map_reduce/3` but only continues while `fun` returns `{:ok, elem, acc}`
@@ -112,6 +114,23 @@ defmodule Module.Types.Helpers do
 
   defp do_map_reduce_ok([], {list, acc}, _fun), do: {:ok, Enum.reverse(list), acc}
 
+  def flat_map_reduce_ok(list, acc, fun) do
+    do_flat_map_reduce_ok(list, {[], acc}, fun)
+  end
+
+  defp do_flat_map_reduce_ok([head | tail], {list, acc}, fun) do
+    case fun.(head, acc) do
+      {:ok, elems, acc} ->
+        do_flat_map_reduce_ok(tail, {[elems | list], acc}, fun)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp do_flat_map_reduce_ok([], {list, acc}, _fun),
+    do: {:ok, Enum.reverse(Enum.concat(list)), acc}
+
   @doc """
   Given a list of `[{:ok, term()} | {:error, term()}]` it returns a list of
   errors `{:error, [term()]}` in case of at least one error or `{:ok, [term()]}`
@@ -122,5 +141,15 @@ defmodule Module.Types.Helpers do
       {oks, []} -> {:ok, Enum.map(oks, fn {:ok, ok} -> ok end)}
       {_oks, errors} -> {:error, Enum.map(errors, fn {:error, error} -> error end)}
     end
+  end
+
+  # TODO: Remove this and let multiple when be treated as multiple clauses,
+  #       meaning they will be intersection types
+  def guards_to_or([]) do
+    []
+  end
+
+  def guards_to_or(guards) do
+    Enum.reduce(guards, fn guard, acc -> {{:., [], [:erlang, :orelse]}, [], [guard, acc]} end)
   end
 end

@@ -104,6 +104,7 @@ The following literals are also supported in typespecs:
                                                   ## Maps
           | %{}                                   # empty map
           | %{key: value_type}                    # map with required key :key of value_type
+          | %{key_type => value_type}             # map with required pairs of key_type and value_type
           | %{required(key_type) => value_type}   # map with required pairs of key_type and value_type
           | %{optional(key_type) => value_type}   # map with optional pairs of key_type and value_type
           | %SomeStruct{}                         # struct with all fields of any type
@@ -162,7 +163,7 @@ A map value does not belong to this type if it contains a key that is not in the
 If you want to denote that keys that were not previously defined in the map are allowed,
 it is common to end a map type with `optional(any) => any`.
 
-Notice that the syntactic representation of `map()` is `%{optional(any) => any}`, not `%{}`. The notation `%{}` specifies the singleton type for the empty map.
+Note that the syntactic representation of `map()` is `%{optional(any) => any}`, not `%{}`. The notation `%{}` specifies the singleton type for the empty map.
 
 ### User-defined types
 
@@ -259,7 +260,7 @@ Elixir's standard library contains a few frequently used behaviours such as `Gen
 
 ### Inspecting behaviours
 
-The `@callback` and `@optional_callback` attributes are used to create a `behaviour_info/1` function available on the defining module. This function can be used to retrieve the callbacks and optional callbacks defined by that module.
+The `@callback` and `@optional_callbacks` attributes are used to create a `behaviour_info/1` function available on the defining module. This function can be used to retrieve the callbacks and optional callbacks defined by that module.
 
 For example, for the `MyBehaviour` module defined in "Optional callbacks" above:
 

@@ -2,9 +2,10 @@ PREFIX ?= /usr/local
 TEST_FILES ?= "*_test.exs"
 SHARE_PREFIX ?= $(PREFIX)/share
 MAN_PREFIX ?= $(SHARE_PREFIX)/man
-CANONICAL := v1.10/ # master/ or vMAJOR.MINOR/
-ELIXIRC := bin/elixirc --verbose --ignore-module-conflict $(ELIXIRC_OPTS)
-ERLC := erlc -I lib/elixir/include $(ERLC_OPTS)
+CANONICAL := v1.11/
+ELIXIRC := bin/elixirc --ignore-module-conflict $(ELIXIRC_OPTS)
+ERLC := erlc -I lib/elixir/include
+ERL_MAKE := if [ -n "$(ERLC_OPTS)" ]; then ERL_COMPILER_OPTIONS=$(ERLC_OPTS) erl -make; else erl -make; fi
 ERL := erl -I lib/elixir/include -noshell -pa lib/elixir/ebin
 GENERATE_APP := $(CURDIR)/lib/elixir/generate_app.escript
 VERSION := $(strip $(shell cat VERSION))
@@ -74,7 +75,7 @@ compile: erlang $(APP) elixir
 
 erlang: $(PARSER)
 	$(Q) if [ ! -f $(APP) ]; then $(call CHECK_ERLANG_RELEASE); fi
-	$(Q) cd lib/elixir && mkdir -p ebin && erl -make
+	$(Q) cd lib/elixir && mkdir -p ebin && $(ERL_MAKE)
 
 $(PARSER): lib/elixir/src/elixir_parser.yrl
 	$(Q) erlc -o $@ +'{verbose,true}' +'{report,true}' $<
@@ -145,12 +146,12 @@ check_reproducible: compile
 	$(Q) mv lib/mix/ebin/* lib/mix/tmp/ebin_reproducible/
 	SOURCE_DATE_EPOCH=$(call READ_SOURCE_DATE_EPOCH) $(MAKE) compile
 	$(Q) echo "Diffing..."
-	$(Q) diff -r lib/elixir/ebin/ lib/elixir/tmp/ebin_reproducible/
-	$(Q) diff -r lib/eex/ebin/ lib/eex/tmp/ebin_reproducible/
-	$(Q) diff -r lib/ex_unit/ebin/ lib/ex_unit/tmp/ebin_reproducible/
-	$(Q) diff -r lib/iex/ebin/ lib/iex/tmp/ebin_reproducible/
-	$(Q) diff -r lib/logger/ebin/ lib/logger/tmp/ebin_reproducible/
-	$(Q) diff -r lib/mix/ebin/ lib/mix/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/elixir/ebin/ lib/elixir/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/eex/ebin/ lib/eex/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/ex_unit/ebin/ lib/ex_unit/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/iex/ebin/ lib/iex/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/logger/ebin/ lib/logger/tmp/ebin_reproducible/
+	$(Q) bin/elixir lib/elixir/diff.exs lib/mix/ebin/ lib/mix/tmp/ebin_reproducible/
 	$(Q) echo "Builds are reproducible"
 
 clean:
@@ -294,7 +295,7 @@ PLT = .elixir.plt
 
 $(PLT):
 	@ echo "==> Building PLT with Elixir's dependencies..."
-	$(Q) dialyzer --output_plt $(PLT) --build_plt --apps erts kernel stdlib compiler syntax_tools parsetools tools ssl inets
+	$(Q) dialyzer --output_plt $(PLT) --build_plt --apps erts kernel stdlib compiler syntax_tools parsetools tools ssl inets crypto runtime_tools ftp tftp mnesia public_key asn1 hipe sasl
 
 clean_plt:
 	$(Q) rm -f $(PLT)

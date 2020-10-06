@@ -312,9 +312,14 @@ defmodule System do
   """
   @spec user_home() :: String.t() | nil
   def user_home do
-    {:ok, [[home] | _]} = :init.get_argument(:home)
-    encoding = :file.native_name_encoding()
-    :unicode.characters_to_binary(home, encoding, encoding)
+    case :init.get_argument(:home) do
+      {:ok, [[home] | _]} ->
+        encoding = :file.native_name_encoding()
+        :unicode.characters_to_binary(home, encoding, encoding)
+
+      _ ->
+        nil
+    end
   end
 
   @doc """
@@ -393,8 +398,9 @@ defmodule System do
   @doc """
   Registers a program exit handler function.
 
-  Registers a function that will be invoked at the end of program execution.
-  Useful for invoking a hook in "script" mode.
+  Registers a function that will be invoked at the end of an Elixir script.
+  A script is typically started via the command line via the `elixir` and
+  `mix` executables.
 
   The handler always executes in a different process from the one it was
   registered in. As a consequence, any resources managed by the calling process
@@ -402,6 +408,9 @@ defmodule System do
   function is invoked.
 
   The function must receive the exit status code as an argument.
+
+  If the VM terminates programmatically, via `System.stop/1` or `System.halt/1`,
+  the `at_exit/1` callbacks are not executed.
   """
   @spec at_exit((non_neg_integer -> any)) :: :ok
   def at_exit(fun) when is_function(fun, 1) do
@@ -582,15 +591,20 @@ defmodule System do
   `__STACKTRACE__/0` inside a rescue/catch. If you want to support
   earlier Elixir versions, move `System.stacktrace/0` inside a rescue/catch.
 
+  Starting from Erlang/OTP 23, this function will always return an empty list.
+
   Note that the Erlang VM (and therefore this function) does not
   return the current stacktrace but rather the stacktrace of the
   latest exception. To retrieve the stacktrace of the current process,
   use `Process.info(self(), :current_stacktrace)` instead.
   """
-  # TODO: Fully deprecate it on Elixir v1.11 via @deprecated
-  # It is currently partially deprecated in elixir_dispatch.erl
-  def stacktrace do
-    apply(:erlang, :get_stacktrace, [])
+  # TODO: Once Erlang/OTP 23 is required, remove conditional, and update @doc accordingly.
+  # The warning is emitted by the compiler - so a @doc annotation is enough
+  @doc deprecated: "Use __STACKTRACE__ instead"
+  if function_exported?(:erlang, :get_stacktrace, 0) do
+    def stacktrace, do: apply(:erlang, :get_stacktrace, [])
+  else
+    def stacktrace, do: []
   end
 
   @doc """
@@ -623,6 +637,7 @@ defmodule System do
       System.halt(:abort)
 
   """
+  @spec halt() :: no_return
   @spec halt(non_neg_integer | binary | :abort) :: no_return
   def halt(status \\ 0)
 
@@ -738,7 +753,12 @@ defmodule System do
 
     * `:into` - injects the result into the given collectable, defaults to `""`
     * `:cd` - the directory to run the command in
-    * `:env` - an enumerable of tuples containing environment key-value as binary
+    * `:env` - an enumerable of tuples containing environment key-value as
+      binary. The child process inherits all environment variables from its
+      parent process, the Elixir application, except those overwritten or
+      cleared using this option. Specify a value of `nil` to clear (unset) an
+      environment variable, which is useful for preventing credentials passed
+      to the application from leaking into child processes.
     * `:arg0` - sets the command arg0
     * `:stderr_to_stdout` - redirects stderr to stdout when `true`
     * `:parallelism` - when `true`, the VM will schedule port tasks to improve
@@ -968,6 +988,7 @@ defmodule System do
   Inlined by the compiler.
   """
   @spec os_time() :: integer
+  @doc since: "1.3.0"
   def os_time do
     :os.system_time()
   end
@@ -979,6 +1000,7 @@ defmodule System do
   with no limitation and is not monotonic.
   """
   @spec os_time(time_unit) :: integer
+  @doc since: "1.3.0"
   def os_time(unit) do
     :os.system_time(normalize_time_unit(unit))
   end
@@ -987,6 +1009,7 @@ defmodule System do
   Returns the Erlang/OTP release number.
   """
   @spec otp_release :: String.t()
+  @doc since: "1.3.0"
   def otp_release do
     :erlang.list_to_binary(:erlang.system_info(:otp_release))
   end
@@ -995,6 +1018,7 @@ defmodule System do
   Returns the number of schedulers in the VM.
   """
   @spec schedulers :: pos_integer
+  @doc since: "1.3.0"
   def schedulers do
     :erlang.system_info(:schedulers)
   end
@@ -1003,6 +1027,7 @@ defmodule System do
   Returns the number of schedulers online in the VM.
   """
   @spec schedulers_online :: pos_integer
+  @doc since: "1.3.0"
   def schedulers_online do
     :erlang.system_info(:schedulers_online)
   end
@@ -1071,15 +1096,12 @@ defmodule System do
   end
 
   defp warn(unit, replacement_unit) do
-    {:current_stacktrace, stacktrace} = Process.info(self(), :current_stacktrace)
-    stacktrace = Enum.drop(stacktrace, 3)
-
-    :elixir_config.warn({System, unit}, stacktrace) &&
-      IO.warn(
-        "deprecated time unit: #{inspect(unit)}. A time unit should be " <>
-          ":second, :millisecond, :microsecond, :nanosecond, or a positive integer",
-        stacktrace
-      )
+    IO.warn_once(
+      {__MODULE__, unit},
+      "deprecated time unit: #{inspect(unit)}. A time unit should be " <>
+        ":second, :millisecond, :microsecond, :nanosecond, or a positive integer",
+      _stacktrace_drop_levels = 4
+    )
 
     replacement_unit
   end

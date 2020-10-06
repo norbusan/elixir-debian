@@ -6,7 +6,7 @@ This page describes the semantics of patterns and guards, where they are all all
 
 ## Patterns
 
-Patterns in Elixir are made of variables, literals, and data-structure specific syntax. One of the most used constructs to perform pattern matching is the match operator (`=`):
+Patterns in Elixir are made of variables, literals, and data-structure specific syntax. One of the most used constructs to perform pattern matching is the match operator ([`=`](`=/2`)):
 
 ```iex
 iex> x = 1
@@ -83,7 +83,7 @@ Atoms and numbers (integers and floats) can appear in patterns and they are alwa
 
 ```iex
 iex> :atom = :atom
-:atotm
+:atom
 iex> :atom = :another_atom
 ** (MatchError) no match of right hand side value: :another_atom
 ```
@@ -156,7 +156,7 @@ iex> [head | tail] = []
 ** (MatchError) no match of right hand side value: []
 ```
 
-Given charlists are represented as a list of integers, one can also perform prefix matches on charlists using the list concatenation operator (`++`):
+Given charlists are represented as a list of integers, one can also perform prefix matches on charlists using the list concatenation operator ([`++`](`++/2`)):
 
 ```elixir
 iex> 'hello ' ++ world = 'hello world'
@@ -207,7 +207,7 @@ Finally, note map keys in patterns must always be literals or previously bound v
 
 ### Binaries
 
-Binaries may appear in patterns using the double less-than/greater-than syntax (`<<>>`). A binary in a pattern can match multiple segments at the same, each with different type, size, and unit:
+Binaries may appear in patterns using the double less-than/greater-than syntax ([`<<>>`](`<<>>/1`)). A binary in a pattern can match multiple segments at the same, each with different type, size, and unit:
 
 ```iex
 iex> <<val::unit(8)-size(2)-integer>> = <<123, 56>>
@@ -216,9 +216,9 @@ iex> val
 31544
 ```
 
-See the documentation for `<<>>` for a complete definition of pattern matching for binaries.
+See the documentation for [`<<>>`](`<<>>/1`) for a complete definition of pattern matching for binaries.
 
-Finally, remember that strings in Elixir are UTF-8 encoded binaries. This means that, similar to charlists, prefix matches on strings are also possible with the binary concatenation operator (`<>`):
+Finally, remember that strings in Elixir are UTF-8 encoded binaries. This means that, similar to charlists, prefix matches on strings are also possible with the binary concatenation operator ([`<>`](`<>/2`)):
 
 ```elixir
 iex> "hello " <> world = "hello world"
@@ -231,7 +231,7 @@ Suffix matches (`hello <> " world"`) are not valid patterns.
 
 ## Guards
 
-Guards are a way to augment pattern matching with more complex checks. They are allowed in a predefined set of constructs where pattern matching is allowed, such as function definitions, case clauses, and ohers.
+Guards are a way to augment pattern matching with more complex checks. They are allowed in a predefined set of constructs where pattern matching is allowed, such as function definitions, case clauses, and others.
 
 Not all expressions are allowed in guard clauses, but only a handful of them. This is a deliberate choice. This way, Elixir (and Erlang) can make sure that nothing bad happens while executing guards and no mutations happen anywhere. It also allows the compiler to optimize the code related to guards efficiently.
 
@@ -282,7 +282,7 @@ not_nil_head?(["some_value", "another_value"])
 Even though the head of the list is not `nil`, the first clause for `not_nil_head?/1` fails because the expression does not evaluate to `true`, but to `"some_value"`, therefore triggering the second clause which returns `false`. To make the guard behave correctly, you must ensure that the guard evaluates to `true`, like so:
 
 ```elixir
-def not_nil_head?(term) when head != nil, do: true
+def not_nil_head?([head | _]) when head != nil, do: true
 def not_nil_head?(_), do: false
 
 not_nil_head?(["some_value", "another_value"])
@@ -309,7 +309,7 @@ iex> case "hello" do
 ...>   _anything_else ->
 ...>     :failed
 ...> end
-:worked
+:failed
 ```
 
 In many cases, we can take advantage of this. In the code above, we used `tuple_size/1` to both check that the given value is a tuple *and* check its size (instead of using `is_tuple(something) and tuple_size(something) == 2`).
@@ -380,13 +380,7 @@ Check.empty?({})
 
 ## Where patterns and guards can be used
 
-In the examples above, we have used the match operator (`=`) and function clauses to showcase patterns and guards respectively. Here is the list of the built-in constructs in Elixir that support patterns and guards.
-
-  * the match operator (`=`) (exceptionally does not support guards):
-
-    ```elixir
-    {:ok, binary} = File.read("some/file")
-    ```
+In the examples above, we have used the match operator ([`=`](`=/2`)) and function clauses to showcase patterns and guards respectively. Here is the list of the built-in constructs in Elixir that support patterns and guards.
 
   * `match?/2`:
 
@@ -430,7 +424,15 @@ In the examples above, we have used the match operator (`=`) and function clause
 
   * [`try`](`try/1`) supports patterns and guards on `catch` and `else`
 
+  * [`receive`](`receive/1`) supports patterns and guards to match on the received messages.
+
   * custom guards can also be defined with `defguard/1` and `defguardp/1`. A custom guard can only be defined based on existing guards.
+
+Note that the match operator ([`=`](`=/2`)) does *not* support guards:
+
+```elixir
+{:ok, binary} = File.read("some/file")
+```
 
 ## Custom patterns and guards expressions
 

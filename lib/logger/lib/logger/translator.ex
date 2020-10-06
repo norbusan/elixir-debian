@@ -385,11 +385,11 @@ defmodule Logger.Translator do
     dictionary = crashed[:dictionary]
     reason = Exception.normalize(kind, reason, stack)
 
-    case Keyword.get(dictionary, :logger_metadata, {true, []}) do
-      {false, _} ->
+    case Keyword.get(dictionary, :logger_enabled, true) do
+      false ->
         :skip
 
-      {true, _user_metadata} ->
+      true ->
         user_metadata = Keyword.get(dictionary, :"$logger_metadata$", %{}) |> Map.to_list()
 
         msg =
@@ -550,7 +550,7 @@ defmodule Logger.Translator do
     # If this is already an exception (even an ErlangError), we format it as an
     # exception. Otherwise, we try to normalize it, and if it's normalized as an
     # ErlangError we instead format it as an exit.
-    if Exception.exception?(reason) do
+    if is_exception(reason) do
       {[?\n | Exception.format_banner(:error, reason, stacktrace)], reason}
     else
       case Exception.normalize(:error, reason, stacktrace) do

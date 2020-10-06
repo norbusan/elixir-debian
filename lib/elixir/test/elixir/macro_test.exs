@@ -90,7 +90,7 @@ defmodule MacroTest do
     end
 
     test "with alias or no arguments remote unquote" do
-      contents = quote(unquote: false, do: Kernel.unquote(:self))
+      contents = quote(unquote: false, do: Kernel.unquote(:self)())
       assert eval_escaped(contents) == quote(do: Kernel.self())
 
       contents = quote(unquote: false, do: x.unquote(Foo))
@@ -651,6 +651,7 @@ defmodule MacroTest do
       assert Macro.to_string(quote(do: [1, 2 | 3])) == "[1, 2 | 3]"
       assert Macro.to_string(quote(do: [h | t] = [1, 2, 3])) == "[h | t] = [1, 2, 3]"
       assert Macro.to_string(quote(do: (x ++ y) ++ z)) == "(x ++ y) ++ z"
+      assert Macro.to_string(quote(do: (x +++ y) +++ z)) == "(x +++ y) +++ z"
     end
 
     test "unary operators" do

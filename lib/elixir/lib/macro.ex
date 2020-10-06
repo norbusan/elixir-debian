@@ -14,7 +14,7 @@ defmodule Macro do
         end
 
         def fun_inspect(value) do
-          IO.inpect(value)
+          IO.inspect(value)
           value
         end
       end
@@ -32,7 +32,7 @@ defmodule Macro do
       #=> 1
 
   So far they behave the same, as we are passing an integer as argument.
-  But what happens when we pass an expresion:
+  But what happens when we pass an expression:
 
       macro_inspect(1 + 2)
       #=> {:+, [line: 3], [1, 2]}
@@ -173,6 +173,7 @@ defmodule Macro do
     * `:end_of_expression` - denotes when the end of expression effectively
       happens. Available for all expressions except the last one inside a
       `__block__` (when `:token_metadata` is true)
+    * `:indentation` - indentation of a sigil heredoc
 
   The following metadata keys are private:
 
@@ -532,7 +533,7 @@ defmodule Macro do
       As an example, `ExUnit` stores the AST of every assertion, so when
       an assertion fails we can show code snippets to users. Without this
       option, each time the test module is compiled, we get a different
-      MD5 of the module byte code, because the AST contains metadata,
+      MD5 of the module bytecode, because the AST contains metadata,
       such as counters, specific to the compilation environment. By pruning
       the metadata, we ensure that the module is deterministic and reduce
       the amount of data `ExUnit` needs to keep around.
@@ -575,7 +576,7 @@ defmodule Macro do
 
   This is useful when a struct needs to be expanded at
   compilation time and the struct being expanded may or may
-  not have been compiled. This function is even capable of
+  not have been compiled. This function is also capable of
   expanding structs defined under the module being compiled.
 
   It will raise `CompileError` if the struct is not available.
@@ -895,13 +896,13 @@ defmodule Macro do
   end
 
   # All other calls
-  def to_string({target, meta, []} = ast, fun) do
-    target = call_to_string(target, fun)
+  def to_string({{:., _, [left, _]} = target, meta, []} = ast, fun) do
+    to_string = call_to_string(target, fun)
 
-    if meta[:no_parens] do
-      fun.(ast, target)
+    if is_tuple(left) && meta[:no_parens] do
+      fun.(ast, to_string)
     else
-      fun.(ast, target <> "()")
+      fun.(ast, to_string <> "()")
     end
   end
 
@@ -962,10 +963,14 @@ defmodule Macro do
     Kernel.inspect(value, limit: :infinity, printable_limit: :infinity)
   end
 
-  defp bitpart_to_string({:"::", _, [left, right]} = ast, fun) do
+  defp bitpart_to_string({:"::", meta, [left, right]} = ast, fun) do
     result =
-      op_to_string(left, fun, :"::", :left) <>
-        "::" <> bitmods_to_string(right, fun, :"::", :right)
+      if meta[:inferred_bitstring_spec] do
+        to_string(left, fun)
+      else
+        op_to_string(left, fun, :"::", :left) <>
+          "::" <> bitmods_to_string(right, fun, :"::", :right)
+      end
 
     fun.(ast, result)
   end

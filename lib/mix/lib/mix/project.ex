@@ -381,6 +381,19 @@ defmodule Mix.Project do
   end
 
   @doc """
+  Returns all dependencies app names.
+
+  The order they are returned is guaranteed to be sorted
+  for proper dependency resolution. For example, if A
+  depends on B, then B will listed before A.
+  """
+  @doc since: "1.11.0"
+  @spec deps_apps() :: [atom()]
+  def deps_apps() do
+    Mix.Dep.cached() |> Enum.map(& &1.app)
+  end
+
+  @doc """
   Returns the SCMs of all dependencies as a map.
 
   See `Mix.SCM` module documentation to learn more about SCMs.
@@ -468,6 +481,16 @@ defmodule Mix.Project do
   Clears the dependency for the current environment.
 
   Useful when dependencies need to be reloaded due to change of global state.
+
+  For example, Nerves uses this function to force all dependencies to be
+  reloaded after it updates the system environment. It goes roughly like
+  this:
+
+    1. Nerves fetches all dependencies and looks for the system specific deps
+    2. Once the system specific dep is found, it loads it alongside env vars
+    3. Nerves then clears the cache, forcing dependencies to be loaded again
+    4. Dependencies are loaded again, now with an updated env environment
+
   """
   @doc since: "1.7.0"
   @spec clear_deps_cache() :: :ok
@@ -503,7 +526,7 @@ defmodule Mix.Project do
   end
 
   defp env_path(config) do
-    dir = config[:build_path] || "_build"
+    dir = System.get_env("MIX_BUILD_ROOT") || config[:build_path] || "_build"
     subdir = build_target() <> build_per_environment(config)
     Path.expand(dir <> "/" <> subdir)
   end
@@ -630,10 +653,8 @@ defmodule Mix.Project do
     end
   end
 
-  @doc """
-  Compiles the given project.
-  """
-  @spec compile([term], keyword) :: term
+  @doc false
+  @deprecated "Use Mix.Task.run(\"compile\", args) instead"
   def compile(args, _config \\ []) do
     Mix.Task.run("compile", args)
   end

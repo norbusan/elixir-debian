@@ -15,6 +15,35 @@ defmodule Mix.Tasks.Compile.Elixir do
   Note it is important to recompile a file's dependencies as
   there are often compile time dependencies between them.
 
+  ## `__mix_recompile__?/0`
+
+  A module may export a `__mix_recompile__?/0` function that can
+  cause the module to be recompiled using custom rules. For example,
+  `@external_resource` already adds a compile-time dependency on an
+  external file, however to depend on a _dynamic_ list of files we
+  can do:
+
+      defmodule MyModule do
+        paths = Path.wildcard("*.txt")
+        paths_hash = :erlang.md5(paths)
+
+        for path <- paths do
+          @external_resource path
+        end
+
+        def __mix_recompile__?() do
+          Path.wildcard("*.txt") |> :erlang.md5() != unquote(paths_hash)
+        end
+      end
+
+  Compiler calls `__mix_recompile__?/0` for every module being
+  compiled (or previously compiled) and thus it is very important
+  to do there as little work as possible to not slow down the
+  compilation.
+
+  If module has `@compile {:autoload, false}`, `__mix_recompile__?/0` will
+  not be used.
+
   ## Command line options
 
     * `--verbose` - prints each file being compiled
@@ -39,6 +68,10 @@ defmodule Mix.Tasks.Compile.Elixir do
       See `Code.put_compiler_option/2` for a complete list of options. These
       options are often overridable from the command line using the switches
       above.
+
+    * `[xref: [exclude: ...]]` - a list of `module` or `{module, function, arity}`
+      that should not be warned on in case on undefined modules or undefined
+      application warnings.
 
   """
 
@@ -91,7 +124,6 @@ defmodule Mix.Tasks.Compile.Elixir do
     Mix.Compilers.Elixir.clean(manifest(), dest)
   end
 
-  # TODO: Deprecate project[:xref][:exclude] in v1.14
   defp xref_exclude_opts(opts, project) do
     exclude = List.wrap(project[:xref][:exclude])
 

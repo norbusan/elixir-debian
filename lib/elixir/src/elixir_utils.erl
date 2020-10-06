@@ -27,9 +27,9 @@ guard_op('orelse', 2) ->
 guard_op(Op, Arity) ->
   try erl_internal:op_type(Op, Arity) of
     arith -> true;
-    list  -> true;
     comp  -> true;
     bool  -> true;
+    list  -> false;
     send  -> false
   catch
     _:_ -> false
@@ -186,7 +186,7 @@ returns_boolean({{'.', _, [erlang, Fun]}, _, [_]}) when
   Fun == is_tuple;  Fun == is_map;      Fun == is_process_alive -> true;
 
 returns_boolean({{'.', _, [erlang, Fun]}, _, [_, _]}) when
-  Fun == is_function; Fun == is_record -> true;
+  Fun == is_map_key; Fun == is_function; Fun == is_record -> true;
 
 returns_boolean({{'.', _, [erlang, Fun]}, _, [_, _, _]}) when
   Fun == function_exported; Fun == is_record -> true;

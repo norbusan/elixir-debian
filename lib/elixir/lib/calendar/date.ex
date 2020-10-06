@@ -88,20 +88,20 @@ defmodule Date do
 
   """
   @doc since: "1.5.0"
-  @spec range(Date.t(), Date.t()) :: Date.Range.t()
-  def range(%Date{calendar: calendar} = first, %Date{calendar: calendar} = last) do
+  @spec range(Calendar.date(), Calendar.date()) :: Date.Range.t()
+  def range(%{calendar: calendar} = first, %{calendar: calendar} = last) do
     {first_days, _} = to_iso_days(first)
     {last_days, _} = to_iso_days(last)
 
     %Date.Range{
-      first: first,
-      last: last,
+      first: %Date{calendar: calendar, year: first.year, month: first.month, day: first.day},
+      last: %Date{calendar: calendar, year: last.year, month: last.month, day: last.day},
       first_in_iso_days: first_days,
       last_in_iso_days: last_days
     }
   end
 
-  def range(%Date{}, %Date{}) do
+  def range(%{calendar: _, year: _, month: _, day: _}, %{calendar: _, year: _, month: _, day: _}) do
     raise ArgumentError, "both dates must have matching calendars"
   end
 
@@ -221,6 +221,33 @@ defmodule Date do
       {:ok, %Date{year: year, month: month, day: day, calendar: calendar}}
     else
       {:error, :invalid_date}
+    end
+  end
+
+  @doc """
+  Builds a new ISO date.
+
+  Expects all values to be integers. Returns `date` if each
+  entry fits its appropriate range, raises if the date is invalid.
+
+  ## Examples
+
+      iex> Date.new!(2000, 1, 1)
+      ~D[2000-01-01]
+      iex> Date.new!(2000, 13, 1)
+      ** (ArgumentError) cannot build date, reason: :invalid_date
+      iex> Date.new!(2000, 2, 29)
+      ~D[2000-02-29]
+  """
+  @doc since: "1.11.0"
+  @spec new!(Calendar.year(), Calendar.month(), Calendar.day(), Calendar.calendar()) :: t
+  def new!(year, month, day, calendar \\ Calendar.ISO) do
+    case new(year, month, day, calendar) do
+      {:ok, value} ->
+        value
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot build date, reason: #{inspect(reason)}"
     end
   end
 
@@ -396,6 +423,45 @@ defmodule Date do
         raise ArgumentError,
               "cannot convert #{inspect(tuple)} to date, reason: #{inspect(reason)}"
     end
+  end
+
+  @doc """
+  Converts a number of gregorian days to a `Date` struct.
+
+  ## Examples
+
+      iex> Date.from_gregorian_days(1)
+      ~D[0000-01-02]
+      iex> Date.from_gregorian_days(730_485)
+      ~D[2000-01-01]
+      iex> Date.from_gregorian_days(-1)
+      ~D[-0001-12-31]
+
+  """
+  @doc since: "1.11.0"
+  @spec from_gregorian_days(integer(), Calendar.calendar()) :: t
+  def from_gregorian_days(days, calendar \\ Calendar.ISO) when is_integer(days) do
+    from_iso_days({days, 0}, calendar)
+  end
+
+  @doc """
+  Converts a `date` struct to a number of gregorian days.
+
+  ## Examples
+
+      iex> Date.to_gregorian_days(~D[0000-01-02])
+      1
+      iex> Date.to_gregorian_days(~D[2000-01-01])
+      730_485
+      iex> Date.to_gregorian_days(~N[2000-01-01 00:00:00])
+      730_485
+
+  """
+  @doc since: "1.11.0"
+  @spec to_gregorian_days(Calendar.date()) :: integer()
+  def to_gregorian_days(date) do
+    {days, _} = to_iso_days(date)
+    days
   end
 
   @doc """
@@ -618,6 +684,11 @@ defmodule Date do
   calendar (the default), it is an integer from 1 to 7, where
   1 is Monday and 7 is Sunday.
 
+  An optional `starting_on` value may be supplied, which
+  configures the weekday the week starts on. The default value
+  for it is `:default`, which translates to `:monday` for the
+  built-in ISO calendar. Any other weekday may be given to.
+
   ## Examples
 
       iex> Date.day_of_week(~D[2016-10-31])
@@ -629,13 +700,131 @@ defmodule Date do
       iex> Date.day_of_week(~D[-0015-10-30])
       3
 
+      iex> Date.day_of_week(~D[2016-10-31], :sunday)
+      2
+      iex> Date.day_of_week(~D[2016-11-01], :sunday)
+      3
+      iex> Date.day_of_week(~N[2016-11-01 01:23:45], :sunday)
+      3
+      iex> Date.day_of_week(~D[-0015-10-30], :sunday)
+      4
+
   """
   @doc since: "1.4.0"
-  @spec day_of_week(Calendar.date()) :: Calendar.day()
-  def day_of_week(date)
+  @spec day_of_week(Calendar.date(), starting_on :: :default | atom) :: Calendar.day_of_week()
+  def day_of_week(date, starting_on \\ :default)
 
-  def day_of_week(%{calendar: calendar, year: year, month: month, day: day}) do
-    calendar.day_of_week(year, month, day)
+  def day_of_week(%{calendar: calendar, year: year, month: month, day: day}, starting_on) do
+    {day_of_week, _first, _last} = calendar.day_of_week(year, month, day, starting_on)
+    day_of_week
+  end
+
+  @doc """
+  Calculates a date that is the first day of the week for the given `date`.
+
+  If the day is already the first day of the week, it returns the
+  day itself. For the built-in ISO calendar, the week starts on Monday.
+  A weekday rather than `:default` can be given as `starting_on`.
+
+  ## Examples
+
+      iex> Date.beginning_of_week(~D[2020-07-11])
+      ~D[2020-07-06]
+      iex> Date.beginning_of_week(~D[2020-07-06])
+      ~D[2020-07-06]
+      iex> Date.beginning_of_week(~D[2020-07-11], :sunday)
+      ~D[2020-07-05]
+      iex> Date.beginning_of_week(~D[2020-07-11], :saturday)
+      ~D[2020-07-11]
+      iex> Date.beginning_of_week(~N[2020-07-11 01:23:45])
+      ~D[2020-07-06]
+
+  """
+  @doc since: "1.11.0"
+  @spec beginning_of_week(Calendar.date(), starting_on :: :default | atom) :: Date.t()
+  def beginning_of_week(date, starting_on \\ :default)
+
+  def beginning_of_week(%{calendar: Calendar.ISO} = date, starting_on) do
+    %{year: year, month: month, day: day} = date
+    iso_days = Calendar.ISO.date_to_iso_days(year, month, day)
+
+    {year, month, day} =
+      case Calendar.ISO.iso_days_to_day_of_week(iso_days, starting_on) do
+        1 ->
+          {year, month, day}
+
+        day_of_week ->
+          Calendar.ISO.date_from_iso_days(iso_days - day_of_week + 1)
+      end
+
+    %Date{calendar: Calendar.ISO, year: year, month: month, day: day}
+  end
+
+  def beginning_of_week(%{calendar: calendar} = date, starting_on) do
+    %{year: year, month: month, day: day} = date
+
+    case calendar.day_of_week(year, month, day, starting_on) do
+      {day_of_week, day_of_week, _} ->
+        %Date{calendar: calendar, year: year, month: month, day: day}
+
+      {day_of_week, first_day_of_week, _} ->
+        add(date, -(day_of_week - first_day_of_week))
+    end
+  end
+
+  @doc """
+  Calculates a date that is the last day of the week for the given `date`.
+
+  If the day is already the last day of the week, it returns the
+  day itself. For the built-in ISO calendar, the week ends on Sunday.
+  A weekday rather than `:default` can be given as `starting_on`.
+
+  ## Examples
+
+      iex> Date.end_of_week(~D[2020-07-11])
+      ~D[2020-07-12]
+      iex> Date.end_of_week(~D[2020-07-05])
+      ~D[2020-07-05]
+      iex> Date.end_of_week(~D[2020-07-06], :sunday)
+      ~D[2020-07-11]
+      iex> Date.end_of_week(~D[2020-07-06], :sunday)
+      ~D[2020-07-11]
+      iex> Date.end_of_week(~D[2020-07-06], :saturday)
+      ~D[2020-07-10]
+      iex> Date.end_of_week(~N[2020-07-11 01:23:45])
+      ~D[2020-07-12]
+
+  """
+  @doc since: "1.11.0"
+  @spec end_of_week(Calendar.date(), starting_on :: :default | atom) :: Date.t()
+  def end_of_week(date, starting_on \\ :default)
+
+  def end_of_week(%{calendar: Calendar.ISO} = date, starting_on) do
+    %{year: year, month: month, day: day} = date
+    iso_days = Calendar.ISO.date_to_iso_days(year, month, day)
+
+    {year, month, day} =
+      case Calendar.ISO.iso_days_to_day_of_week(iso_days, starting_on) do
+        7 ->
+          {year, month, day}
+
+        day_of_week ->
+          Calendar.ISO.date_from_iso_days(iso_days + 7 - day_of_week)
+      end
+
+    %Date{calendar: Calendar.ISO, year: year, month: month, day: day}
+  end
+
+  def end_of_week(%{calendar: calendar} = date, starting_on) do
+    %{year: year, month: month, day: day} = date
+
+    case calendar.day_of_week(year, month, day, starting_on) do
+      {day_of_week, _, day_of_week} ->
+        %Date{calendar: calendar, year: year, month: month, day: day}
+
+      {day_of_week, _, last_day_of_week} ->
+        add(date, last_day_of_week - day_of_week)
+    end
   end
 
   @doc """
@@ -737,6 +926,45 @@ defmodule Date do
 
   def day_of_era(%{calendar: calendar, year: year, month: month, day: day}) do
     calendar.day_of_era(year, month, day)
+  end
+
+  @doc """
+  Calculates a date that is the first day of the month for the given `date`.
+
+  ## Examples
+
+      iex> Date.beginning_of_month(~D[2000-01-31])
+      ~D[2000-01-01]
+      iex> Date.beginning_of_month(~D[2000-01-01])
+      ~D[2000-01-01]
+      iex> Date.beginning_of_month(~N[2000-01-31 01:23:45])
+      ~D[2000-01-01]
+
+  """
+  @doc since: "1.11.0"
+  @spec beginning_of_month(Calendar.date()) :: t()
+  def beginning_of_month(%{year: year, month: month, calendar: calendar}) do
+    %Date{year: year, month: month, day: 1, calendar: calendar}
+  end
+
+  @doc """
+  Calculates a date that is the last day of the month for the given `date`.
+
+  ## Examples
+
+      iex> Date.end_of_month(~D[2000-01-01])
+      ~D[2000-01-31]
+      iex> Date.end_of_month(~D[2000-01-31])
+      ~D[2000-01-31]
+      iex> Date.end_of_month(~N[2000-01-01 01:23:45])
+      ~D[2000-01-31]
+
+  """
+  @doc since: "1.11.0"
+  @spec end_of_month(Calendar.date()) :: t()
+  def end_of_month(%{year: year, month: month, calendar: calendar} = date) do
+    day = Date.days_in_month(date)
+    %Date{year: year, month: month, day: day, calendar: calendar}
   end
 
   ## Helpers

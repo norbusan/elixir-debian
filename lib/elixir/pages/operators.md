@@ -13,7 +13,7 @@ Operator                                                                        
 `+` `-` `!` `^` `not` `~~~`                                                              | Unary
 `*` `/`                                                                                  | Left to right
 `+` `-`                                                                                  | Left to right
-`++` `--` `..` `<>`                                                                      | Right to left
+`++` `--` `..` `<>` `+++` `---`                                                          | Right to left
 `^^^`                                                                                    | Left to right
 `in` `not in`                                                                            | Left to right
 `\|>` `<<<` `>>>` `<<~` `~>>` `<~` `~>` `<~>` `<\|>`                                     | Left to right
@@ -29,18 +29,55 @@ Operator                                                                        
 `when`                                                                                   | Right to left
 `<-` `\\`                                                                                | Left to right
 
+## General operators
+
+Elixir provides the following built-in operators that are defined as functions that can be overridden:
+
+  * [`+`](`+/1`) and [`-`](`-/1`) - unary positive/negative
+  * [`+`](`+/2`), [`-`](`-/2`), [`*`](`*/2`), and [`/`](`//2`) - basic arithmetic operations
+  * [`++`](`++/2`) and [`--`](`--/2`) - list concatenation and subtraction
+  * [`and`](`and/2`) and [`&&`](`&&/2`) - strict and relaxed boolean "and"
+  * [`or`](`or/2`) and [`||`](`||/2`) - strict and relaxed boolean "or"
+  * [`not`](`not/1`) and [`!`](`!/1`) - strict and relaxed boolean "not"
+  * [`in`](`in/2`) and [`not in`](`in/2`) - membership
+  * [`@`](`@/1`) - module attribute
+  * [`..`](`../2`) - range creation
+  * [`<>`](`<>/2`) - binary concatenation
+  * [`|>`](`|>/2`) - pipeline
+  * [`=~`](`=~/2`) - text-based match
+
+Many of those can be used in guards; consult the [list of allowed guard functions and operators](patterns-and-guards.md#list-of-allowed-functions-and-operators).
+
+Additionally, there are a few other operators that Elixir parses but doesn't actually use.
+See [Custom and overridden operators](#custom-and-overridden-operators) below for a list and for guidelines about their use.
+
+Some other operators are special forms and cannot be overridden:
+
+  * [`^`](`^/1`) - pin operator
+  * [`.`](`./2`) - dot operator
+  * [`=`](`=/2`) - match operator
+  * [`&`](`&/1`) - capture operator
+  * [`::`](`Kernel.SpecialForms.::/2`) - type operator
+
+Finally, these operators appear in the precedence table above but are only meaningful within certain constructs:
+
+  * `=>` - see [`%{}`](`%{}/1`)
+  * `when` - see [Guards](patterns-and-guards.md#guards)
+  * `<-` - see [`for`](`for/1`) and [`with`](`with/1`)
+  * `\\` - see [Default arguments](Kernel.html#def/2-default-arguments)
+
 ## Comparison operators
 
-Elixir provides the following built-in comparison operators:
+Elixir provides the following built-in comparison operators (all of which can be used in guards):
 
-  * [`==`](`==/2`) - equality
-  * [`===`](`===/2`) - strict equality
-  * [`!=`](`!=/2`) - inequality
-  * [`!==`](`!==/2`) - strict inequality
-  * [`<`](`</2`) - less than
-  * [`>`](`>/2`) - greater than
-  * [`<=`](`<=/2`) - less than or equal
-  * [`>=`](`>=/2`) - greater than or equal
+  * [`==`](`==/2`) - equal to
+  * [`===`](`===/2`) - strictly equal to
+  * [`!=`](`!=/2`) - inequal to
+  * [`!==`](`!==/2`) - strictly inequal to
+  * [`<`](`</2`) - less-than
+  * [`>`](`>/2`) - greater-than
+  * [`<=`](`<=/2`) - less-than or equal to
+  * [`>=`](`>=/2`) - greater-than or equal to
 
 The only difference between [`==`](`==/2`) and [`===`](`===/2`) is that [`===`](`===/2`) is strict when it comes to comparing integers and floats:
 
@@ -76,6 +113,7 @@ The collection types are compared using the following rules:
 * Maps are compared by size, then by keys in ascending term order, then by values in key order. In the specific case of maps' key ordering, integers are always considered to be less than floats.
 * Lists are compared element by element.
 * Bitstrings are compared byte by byte, incomplete bytes are compared bit by bit.
+* Atoms are compared using their string value, codepoint by codepoint.
 
 ## Custom and overridden operators
 
@@ -107,7 +145,6 @@ iex> 1 <~ 2
 
 The following is a table of all the operators that Elixir is capable of parsing, but that are not used by default:
 
-  * `|`
   * `|||`
   * `&&&`
   * `<<<`
@@ -119,6 +156,8 @@ The following is a table of all the operators that Elixir is capable of parsing,
   * `<~>`
   * `<|>`
   * `^^^`
+  * `+++`
+  * `---`
   * `~~~`
 
 The following operators are used by the `Bitwise` module when imported: [`&&&`](`Bitwise.&&&/2`), [`^^^`](`Bitwise.^^^/2`), [`<<<`](`Bitwise.<<</2`), [`>>>`](`Bitwise.>>>/2`), [`|||`](`Bitwise.|||/2`), [`~~~`](`Bitwise.~~~/1`). See the documentation for `Bitwise` for more information.

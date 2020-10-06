@@ -77,7 +77,7 @@ compile(Module, Block, Vars, Env) when is_atom(Module) ->
   MaybeLexEnv =
     case Function of
       nil -> ResetEnv#{module := Module, current_vars := {Read, false}};
-      _   -> ResetEnv#{lexical_tracker := nil, function := nil, module := Module, current_vars := {Read, false}}
+      _   -> ResetEnv#{lexical_tracker := nil, tracers := [], function := nil, module := Module, current_vars := {Read, false}}
     end,
 
   case MaybeLexEnv of
@@ -125,6 +125,7 @@ compile(Line, Module, Block, Vars, E) ->
     validate_on_load_attribute(OnLoadAttribute, AllDefinitions, File, Line),
 
     ModuleMap = #{
+      struct => get_struct(DataSet),
       module => Module,
       line => Line,
       file => File,
@@ -331,10 +332,10 @@ build(Line, File, Module) ->
 
 eval_form(Line, Module, DataBag, Block, Vars, E) ->
   {Value, EE} = elixir_compiler:eval_forms(Block, Vars, E),
-  elixir_overridable:store_not_overriden(Module),
+  elixir_overridable:store_not_overridden(Module),
   EV = elixir_env:linify({Line, elixir_env:reset_vars(EE)}),
   EC = eval_callbacks(Line, DataBag, before_compile, [EV], EV),
-  elixir_overridable:store_not_overriden(Module),
+  elixir_overridable:store_not_overridden(Module),
   {Value, EC}.
 
 eval_callbacks(Line, DataBag, Name, Args, E) ->
@@ -387,6 +388,17 @@ warn_unused_attributes(File, DataSet, DataBag, PersistedAttrs) ->
   Query = [{{Attr, '_', '$1'}, [{is_integer, '$1'}], [[Attr, '$1']]} || Attr <- Attrs],
   [elixir_errors:form_warn([{line, Line}], File, ?MODULE, {unused_attribute, Key})
    || [Key, Line] <- ets:select(DataSet, Query)].
+
+get_struct(Set) ->
+  case ets:lookup(Set, struct) of
+    [] -> nil;
+    [{_, Struct, _}] ->
+      case ets:lookup(Set, enforce_keys) of
+        [] -> {Struct, []};
+        [{_, EnforceKeys, _}] when is_list(EnforceKeys) -> {Struct, EnforceKeys};
+        [{_, EnforceKeys, _}] -> {Struct, [EnforceKeys]}
+      end
+  end.
 
 get_deprecated(Bag) ->
   lists:usort(bag_lookup_element(Bag, deprecated, 2)).

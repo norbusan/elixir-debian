@@ -50,8 +50,10 @@ defmodule Mix.Tasks.Escript.Install do
     * `--app` - specifies a custom app name to be used for building the escript
       from Git, GitHub, or Hex
 
-    * `--organization` - specifies an organization to use if fetching the package
-      from a private Hex repository
+    * `--organization` - set this for Hex private packages belonging to an
+      organization
+
+    * `--repo` - set this for self-hosted Hex instances, defaults to `hexpm`
 
   """
 
@@ -66,6 +68,7 @@ defmodule Mix.Tasks.Escript.Install do
     submodules: :boolean,
     app: :string,
     organization: :string,
+    repo: :string,
     timeout: :integer
   ]
 

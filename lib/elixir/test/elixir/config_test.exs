@@ -7,9 +7,10 @@ defmodule ConfigTest do
   import Config
   import PathHelpers
 
-  setup do
+  setup config do
+    Process.put({Config, :opts}, {config[:env], config[:target]})
     Process.put({Config, :config}, [])
-    Process.put({Config, :files}, [])
+    Process.put({Config, :imports}, config[:imports] || [])
     :ok
   end
 
@@ -18,7 +19,7 @@ defmodule ConfigTest do
   end
 
   defp files do
-    Process.get({Config, :files})
+    Process.get({Config, :imports})
   end
 
   test "config/2" do
@@ -63,10 +64,39 @@ defmodule ConfigTest do
     assert config() == [app: [{Repo, other: :value, key: :other}]]
   end
 
+  @tag env: :dev
+  test "config_env/0" do
+    assert config_env() == :dev
+  end
+
+  test "config_env/0 raises if no env is set" do
+    assert_raise RuntimeError, "no :env key was given to this configuration file", fn ->
+      config_env()
+    end
+  end
+
+  @tag target: :host
+  test "config_target/0" do
+    assert config_target() == :host
+  end
+
+  test "config_target/0 raises if no env is set" do
+    assert_raise RuntimeError, "no :target key was given to this configuration file", fn ->
+      config_target()
+    end
+  end
+
   test "import_config/1" do
     import_config fixture_path("configs/good_config.exs")
     assert config() == [my_app: [key: :value]]
     assert files() == [fixture_path("configs/good_config.exs")]
+  end
+
+  @tag imports: :disabled
+  test "import_config/1 raises when disabled" do
+    assert_raise RuntimeError,
+                 ~r"import_config/1 is not enabled for this configuration file",
+                 fn -> import_config fixture_path("configs/good_config.exs") end
   end
 
   test "import_config/1 raises for recursive import" do
@@ -82,7 +112,7 @@ defmodule ConfigTest do
   end
 
   test "import_config/1 with bad path" do
-    assert_raise Code.LoadError, ~r"could not load .*/configs/unknown.exs", fn ->
+    assert_raise File.Error, ~r"could not read file .*/configs/unknown.exs", fn ->
       import_config fixture_path("configs/unknown.exs")
     end
   end

@@ -3,7 +3,7 @@ defmodule Registry do
   A local, decentralized and scalable key-value process storage.
 
   It allows developers to lookup one or more processes with a given key.
-  If the registry has `:unique` keys, a key points to 0 or 1 processes.
+  If the registry has `:unique` keys, a key points to 0 or 1 process.
   If the registry allows `:duplicate` keys, a single key may point to any
   number of processes. In both cases, different keys could identify the
   same process.
@@ -204,7 +204,7 @@ defmodule Registry do
   @type guards :: [guard]
 
   @typedoc "A pattern used to representing the output format part of a match spec"
-  @type body :: [atom | tuple]
+  @type body :: [term]
 
   @typedoc "A full match spec used when selecting objects in the registry"
   @type spec :: [{match_pattern, guards, body}]
@@ -261,9 +261,8 @@ defmodule Registry do
   end
 
   @doc false
-  def unregister_name({registry, key}) do
-    unregister(registry, key)
-  end
+  def unregister_name({registry, key}), do: unregister(registry, key)
+  def unregister_name({registry, key, _value}), do: unregister(registry, key)
 
   ## Registry API
 
@@ -784,7 +783,8 @@ defmodule Registry do
   end
 
   @doc """
-  Unregister entries for a given key matching a pattern.
+  Unregisters entries for keys matching a pattern associated to the current
+  process in `registry`.
 
   ## Examples
 
@@ -922,7 +922,7 @@ defmodule Registry do
     key_ets = key_ets || key_ets!(registry, key_partition)
     {pid_server, pid_ets} = pid_ets || pid_ets!(registry, pid_partition)
 
-    # Notice we write first to the pid_ets table because it will
+    # Note that we write first to the pid_ets table because it will
     # always be able to do the cleanup. If we register first to the
     # key one and the process crashes, the key will stay there forever.
     Process.link(pid_server)
@@ -958,7 +958,7 @@ defmodule Registry do
     if :ets.insert_new(key_ets, entry) do
       :ok
     else
-      # Notice we have to call register_key recursively
+      # Note that we have to call register_key recursively
       # because we are always at odds of a race condition.
       case :ets.lookup(key_ets, key) do
         [{^key, {pid, _}} = current] ->
@@ -1026,6 +1026,34 @@ defmodule Registry do
   def put_meta(registry, key, value) when is_atom(registry) and (is_atom(key) or is_tuple(key)) do
     try do
       :ets.insert(registry, {key, value})
+      :ok
+    catch
+      :error, :badarg ->
+        raise ArgumentError, "unknown registry: #{inspect(registry)}"
+    end
+  end
+
+  @doc """
+  Deletes registry metadata for the given `key` in `registry`.
+
+  ## Examples
+
+      iex> Registry.start_link(keys: :unique, name: Registry.DeleteMetaTest)
+      iex> Registry.put_meta(Registry.DeleteMetaTest, :custom_key, "custom_value")
+      :ok
+      iex> Registry.meta(Registry.DeleteMetaTest, :custom_key)
+      {:ok, "custom_value"}
+      iex> Registry.delete_meta(Registry.DeleteMetaTest, :custom_key)
+      :ok
+      iex> Registry.meta(Registry.DeleteMetaTest, :custom_key)
+      :error
+
+  """
+  @doc since: "1.11.0"
+  @spec delete_meta(registry, meta_key) :: :ok
+  def delete_meta(registry, key) when is_atom(registry) and (is_atom(key) or is_tuple(key)) do
+    try do
+      :ets.delete(registry, key)
       :ok
     catch
       :error, :badarg ->

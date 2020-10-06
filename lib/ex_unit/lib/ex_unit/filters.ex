@@ -35,6 +35,7 @@ defmodule ExUnit.Filters do
 
         line_numbers =
           reversed_line_numbers
+          |> Enum.reject(&invalid_line_number?/1)
           |> Enum.reverse()
           |> Enum.map(&{:line, &1})
 
@@ -44,6 +45,17 @@ defmodule ExUnit.Filters do
           |> Enum.join(":")
 
         {path, line_numbers}
+    end
+  end
+
+  defp invalid_line_number?(arg) do
+    case Integer.parse(arg) do
+      {num, ""} when num > 0 ->
+        false
+
+      _ ->
+        IO.warn("invalid line number given as ExUnit filter: #{arg}", [])
+        true
     end
   end
 
@@ -124,7 +136,7 @@ defmodule ExUnit.Filters do
     * A set of test IDs that failed the last time they ran
 
   """
-  @spec failure_info(Path.t()) :: {MapSet.t(Path.t()), MapSet.t(FailuresManifest.test_id())}
+  @spec failure_info(Path.t()) :: {MapSet.t(Path.t()), MapSet.t(ExUnit.test_id())}
   def failure_info(manifest_file) do
     manifest = FailuresManifest.read(manifest_file)
     {FailuresManifest.files_with_failures(manifest), FailuresManifest.failed_test_ids(manifest)}

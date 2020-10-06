@@ -26,8 +26,11 @@ defmodule Mix.Tasks.Escript.Build do
   the `Application` module for more information on systems
   life-cycles.
 
-  By default, this task starts the current application. If this
-  is not desired, set the `:app` configuration to nil.
+  All of the configuration defined in `config/config.exs` will
+  be included as part of the escript. `config/runtime.exs`is also
+  included for Elixir escripts. Once the configuration is loaded,
+  this task starts the current application. If this is not desired,
+  set the `:app` configuration to nil.
 
   This task also removes documentation and debugging chunks from
   the compiled `.beam` files to reduce the size of the escript.
@@ -42,8 +45,8 @@ defmodule Mix.Tasks.Escript.Build do
 
   ## Configuration
 
-  The following option must be specified in your `mix.exs` under `:escript`
-  key:
+  The following option must be specified in your `mix.exs`
+  under the `:escript` key:
 
     * `:main_module` - the module to be invoked once the escript starts.
       The module must contain a function named `main/1` that will receive the
@@ -65,6 +68,8 @@ defmodule Mix.Tasks.Escript.Build do
 
     * `:strip_beams` - if `true` strips BEAM code in the escript to remove chunks
       unnecessary at runtime, such as debug information and documentation.
+      Can be set to [keep: ['Docs', 'Dbgi']] to strip while keeping some chunks
+      that would otherwise be stripped, like docs, and debug info, for instance.
       Defaults to `true`.
 
     * `:embed_elixir` - if `true` embeds Elixir and its children apps
@@ -123,11 +128,7 @@ defmodule Mix.Tasks.Escript.Build do
   @impl true
   def run(args) do
     Mix.Project.get!()
-    Mix.Task.run("loadpaths", args)
-
-    unless "--no-compile" in args do
-      Mix.Project.compile(args)
-    end
+    Mix.Task.run("compile", args)
 
     project = Mix.Project.config()
     language = Keyword.get(project, :language, :elixir)
@@ -139,14 +140,6 @@ defmodule Mix.Tasks.Escript.Build do
     script_name = Mix.Local.name_for(:escripts, project)
     filename = escript_opts[:path] || script_name
     main = escript_opts[:main_module]
-
-    unless script_name do
-      error_message =
-        "Could not generate escript, no name given, " <>
-          "set :name escript option or :app in the project settings"
-
-      Mix.raise(error_message)
-    end
 
     unless main do
       error_message =
@@ -171,10 +164,12 @@ defmodule Mix.Tasks.Escript.Build do
     # use default true if neither are present.
     #
     # TODO: Deprecate :strip_beam option on v1.13
-    strip_beams? =
-      Keyword.get_lazy(escript_opts, :strip_beams, fn ->
+    strip_options =
+      escript_opts
+      |> Keyword.get_lazy(:strip_beams, fn ->
         Keyword.get(escript_opts, :strip_beam, true)
       end)
+      |> parse_strip_beams_options()
 
     escript_mod = String.to_atom(Atom.to_string(app) <> "_escript")
 
@@ -185,7 +180,7 @@ defmodule Mix.Tasks.Escript.Build do
       |> Map.merge(consolidated_paths(project))
 
     tuples = gen_main(project, escript_mod, main, app, language) ++ read_beams(beam_paths)
-    tuples = if strip_beams?, do: strip_beams(tuples), else: tuples
+    tuples = if strip_options, do: strip_beams(tuples, strip_options), else: tuples
 
     case :zip.create('mem', tuples, [:memory]) do
       {:ok, {'mem', zip}} ->
@@ -279,10 +274,18 @@ defmodule Mix.Tasks.Escript.Build do
     end)
   end
 
-  defp strip_beams(tuples) do
+  defp parse_strip_beams_options(options) do
+    case options do
+      options when is_list(options) -> options
+      true -> []
+      false -> nil
+    end
+  end
+
+  defp strip_beams(tuples, strip_options) do
     for {basename, maybe_beam} <- tuples do
       with ".beam" <- Path.extname(basename),
-           {:ok, binary} <- Mix.Release.strip_beam(maybe_beam) do
+           {:ok, binary} <- Mix.Release.strip_beam(maybe_beam, strip_options) do
         {basename, binary}
       else
         _ -> {basename, maybe_beam}
@@ -310,23 +313,29 @@ defmodule Mix.Tasks.Escript.Build do
   end
 
   defp gen_main(project, name, module, app, language) do
-    config =
-      if File.regular?(project[:config_path]) do
-        config = Config.Reader.read!(project[:config_path])
+    compile_path = project[:config_path]
+
+    compile_config =
+      if File.regular?(compile_path) do
+        config = Config.Reader.read!(compile_path, env: Mix.env(), target: Mix.target())
         Macro.escape(config)
       else
         []
       end
 
+    runtime_path = compile_path |> Path.dirname() |> Path.join("runtime.exs")
+
+    runtime_config =
+      if File.regular?(runtime_path) do
+        File.read!(runtime_path)
+      end
+
     module_body =
       quote do
-        @module unquote(module)
-        @config unquote(config)
-        @app unquote(app)
-
         @spec main(OptionParser.argv()) :: any
         def main(args) do
-          unquote(main_body_for(language))
+          load_config(unquote(compile_config))
+          unquote(main_body_for(language, module, app, runtime_config))
         end
 
         defp load_config(config) do
@@ -377,15 +386,29 @@ defmodule Mix.Tasks.Escript.Build do
     [{'#{name}.beam', binary}]
   end
 
-  defp main_body_for(:elixir) do
+  defp main_body_for(:elixir, module, app, runtime_config) do
+    runtime_config =
+      if runtime_config do
+        quote do
+          "config/runtime.exs"
+          |> Config.Reader.eval!(
+            unquote(runtime_config),
+            env: unquote(Mix.env()),
+            target: unquote(Mix.target()),
+            imports: :disabled
+          )
+          |> load_config()
+        end
+      end
+
     quote do
-      load_config(@config)
+      unquote(runtime_config)
 
       case :application.ensure_all_started(:elixir) do
         {:ok, _} ->
-          start_app(@app)
+          start_app(unquote(app))
           args = Enum.map(args, &List.to_string(&1))
-          Kernel.CLI.run(fn _ -> @module.main(args) end)
+          Kernel.CLI.run(fn _ -> unquote(module).main(args) end)
 
         error ->
           io_error(["ERROR! Failed to start Elixir.\n", :io_lib.format('error: ~p~n', [error])])
@@ -394,11 +417,10 @@ defmodule Mix.Tasks.Escript.Build do
     end
   end
 
-  defp main_body_for(:erlang) do
+  defp main_body_for(:erlang, module, app, _runtime_config) do
     quote do
-      load_config(@config)
-      start_app(@app)
-      @module.main(args)
+      start_app(unquote(app))
+      unquote(module).main(args)
     end
   end
 end

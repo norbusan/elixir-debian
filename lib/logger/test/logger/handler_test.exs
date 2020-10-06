@@ -107,6 +107,25 @@ defmodule Logger.HandlerTest do
     assert capture_log(fn -> :logger.debug('ok') end) =~ "[debug] ok"
   end
 
+  test "include Erlang severity level information" do
+    Logger.configure_backend(:console, metadata: [:erl_level])
+
+    assert capture_log(fn -> :logger.emergency('ok') end) =~ "erl_level=emergency"
+    assert capture_log(fn -> :logger.alert('ok') end) =~ "erl_level=alert"
+    assert capture_log(fn -> :logger.critical('ok') end) =~ "erl_level=critical"
+    assert capture_log(fn -> :logger.error('ok') end) =~ "erl_level=error"
+    assert capture_log(fn -> :logger.warning('ok') end) =~ "erl_level=warning"
+    assert capture_log(fn -> :logger.info('ok') end) =~ "erl_level=info"
+    assert capture_log(fn -> :logger.debug('ok') end) =~ "erl_level=debug"
+
+    [:emergency, :alert, :critical, :error, :warning, :notice, :info, :debug]
+    |> Enum.each(fn level ->
+      assert capture_log(fn -> :logger.log(level, 'ok') end) =~ "erl_level=#{level}"
+    end)
+  after
+    Logger.configure_backend(:console, metadata: [])
+  end
+
   test "calls report_cb/1 when supplied" do
     report = %{foo: "bar"}
 
@@ -136,6 +155,16 @@ defmodule Logger.HandlerTest do
     assert %{chars_limit: 1000} = opts
     assert %{depth: 10} = opts
     assert %{single_line: false} = opts
+  end
+
+  test "calls report_cb when passed %{label: term(), report: term()}" do
+    report = %{label: :foo, report: %{bar: 1, baz: 2}}
+
+    assert capture_log(fn -> :logger.error(report, %{report_cb: &format_report/1}) end)
+    assert_received {:format, ^report}
+
+    assert capture_log(fn -> :logger.error(report, %{report_cb: &format_report/2}) end)
+    assert_received {:format, ^report, _opts}
   end
 
   defp format_report(report) do

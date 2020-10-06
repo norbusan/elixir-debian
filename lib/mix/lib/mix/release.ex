@@ -50,7 +50,7 @@ defmodule Mix.Release do
 
   @type mode :: :permanent | :transient | :temporary | :load | :none
   @type application :: atom()
-  @type t :: %{
+  @type t :: %__MODULE__{
           name: atom(),
           version: String.t(),
           path: String.t(),
@@ -61,6 +61,7 @@ defmodule Mix.Release do
           erts_source: charlist() | nil,
           config_providers: [{module, term}],
           options: keyword(),
+          overlays: list(String.t()),
           steps: [(t -> t) | :assemble, ...]
         }
 
@@ -90,14 +91,15 @@ defmodule Mix.Release do
     {include_erts, opts} = Keyword.pop(opts, :include_erts, true)
     {erts_source, erts_lib_dir, erts_version} = erts_data(include_erts)
 
-    loaded_apps = apps |> Keyword.keys() |> load_apps(%{}, erts_lib_dir, :maybe)
+    deps_apps = Mix.Project.deps_apps()
+    loaded_apps = apps |> Keyword.keys() |> load_apps(deps_apps, %{}, erts_lib_dir, :maybe)
 
     # Make sure IEx is either an active part of the release or add it as none.
     {loaded_apps, apps} =
       if Map.has_key?(loaded_apps, :iex) do
         {loaded_apps, apps}
       else
-        {load_apps([:iex], loaded_apps, erts_lib_dir, :maybe), apps ++ [iex: :none]}
+        {load_apps([:iex], deps_apps, loaded_apps, erts_lib_dir, :maybe), apps ++ [iex: :none]}
       end
 
     start_boot = build_start_boot(loaded_apps, apps)
@@ -264,13 +266,13 @@ defmodule Mix.Release do
     end
   end
 
-  defp load_apps(apps, seen, otp_root, included) do
+  defp load_apps(apps, deps_apps, seen, otp_root, included) do
     for app <- apps, reduce: seen do
       seen ->
         if reentrant_seen = reentrant(seen, app, included) do
           reentrant_seen
         else
-          load_app(app, seen, otp_root, included)
+          load_app(app, deps_apps, seen, otp_root, included)
         end
     end
   end
@@ -296,30 +298,37 @@ defmodule Mix.Release do
     end
   end
 
-  defp load_app(app, seen, otp_root, included) do
+  defp load_app(app, deps_apps, seen, otp_root, included) do
+    {path, otp_app?} = if app in deps_apps, do: code_path(app), else: otp_path(otp_root, app)
+    do_load_app(app, path, deps_apps, seen, otp_root, otp_app?, included)
+  end
+
+  defp otp_path(otp_root, app) do
     path = Path.join(otp_root, "#{app}-*")
 
     case Path.wildcard(path) do
-      [] ->
-        case :code.lib_dir(app) do
-          {:error, :bad_name} -> Mix.raise("Could not find application #{inspect(app)}")
-          path -> do_load_app(app, path, seen, otp_root, false, included)
-        end
-
-      paths ->
-        path = paths |> Enum.sort() |> List.last()
-        do_load_app(app, to_charlist(path), seen, otp_root, true, included)
+      [] -> code_path(app)
+      paths -> {paths |> Enum.sort() |> List.last() |> to_charlist(), true}
     end
   end
 
-  defp do_load_app(app, path, seen, otp_root, otp_app?, included) do
+  defp code_path(app) do
+    case :code.lib_dir(app) do
+      {:error, :bad_name} -> Mix.raise("Could not find application #{inspect(app)}")
+      path -> {path, false}
+    end
+  end
+
+  defp do_load_app(app, path, deps_apps, seen, otp_root, otp_app?, included) do
     case :file.consult(Path.join(path, "ebin/#{app}.app")) do
       {:ok, terms} ->
         [{:application, ^app, properties}] = terms
         value = [path: path, otp_app?: otp_app?, included: included] ++ properties
         seen = Map.put(seen, app, value)
-        seen = load_apps(Keyword.get(properties, :applications, []), seen, otp_root, false)
-        load_apps(Keyword.get(properties, :included_applications, []), seen, otp_root, true)
+        applications = Keyword.get(properties, :applications, [])
+        seen = load_apps(applications, deps_apps, seen, otp_root, false)
+        included_applications = Keyword.get(properties, :included_applications, [])
+        load_apps(included_applications, deps_apps, seen, otp_root, true)
 
       {:error, reason} ->
         Mix.raise("Could not load #{app}.app. Reason: #{inspect(reason)}")
@@ -402,7 +411,7 @@ defmodule Mix.Release do
     args = [runtime_config?, sys_config]
     format = "%% coding: utf-8~n%% RUNTIME_CONFIG=~s~n~tw.~n"
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, :io_lib.format(format, args), [:utf8])
+    File.write!(path, IO.chardata_to_string(:io_lib.format(format, args)))
 
     case :file.consult(path) do
       {:ok, _} ->
@@ -420,17 +429,19 @@ defmodule Mix.Release do
 
   defp merge_provider_config(release, sys_config, config_path) do
     {reboot?, extra_config, initial_config} = start_distribution(release)
-    prune_after_boot = Keyword.get(release.options, :prune_runtime_sys_config_after_boot, false)
+
+    prune_runtime_sys_config_after_boot =
+      Keyword.get(release.options, :prune_runtime_sys_config_after_boot, false)
 
     opts = [
       extra_config: initial_config,
-      prune_after_boot: prune_after_boot,
-      reboot_after_config: reboot?,
+      prune_runtime_sys_config_after_boot: prune_runtime_sys_config_after_boot,
+      reboot_system_after_config: reboot?,
       validate_compile_env: validate_compile_env(release)
     ]
 
-    init = Config.Provider.init(release.config_providers, config_path, opts)
-    {Config.Reader.merge(sys_config, [elixir: [config_providers: init]] ++ extra_config), reboot?}
+    init_config = Config.Provider.init(release.config_providers, config_path, opts)
+    {Config.Reader.merge(sys_config, init_config ++ extra_config), reboot?}
   end
 
   defp validate_compile_env(release) do
@@ -449,7 +460,7 @@ defmodule Mix.Release do
   end
 
   defp start_distribution(%{options: opts}) do
-    reboot? = Keyword.get(opts, :reboot_system_after_config, true)
+    reboot? = Keyword.get(opts, :reboot_system_after_config, false)
     early_distribution? = Keyword.get(opts, :start_distribution_during_config, false)
 
     if not reboot? or early_distribution? do
@@ -512,7 +523,7 @@ defmodule Mix.Release do
           :ok | {:error, String.t()}
   def make_boot_script(release, path, modes, prepend_paths \\ []) do
     with {:ok, rel_spec} <- build_release_spec(release, modes) do
-      File.write!(path <> ".rel", consultable(rel_spec), [:utf8])
+      File.write!(path <> ".rel", consultable(rel_spec))
 
       sys_path = String.to_charlist(path)
 
@@ -535,7 +546,7 @@ defmodule Mix.Release do
             |> prepend_paths_to_script(prepend_paths)
 
           script = {:script, rel_info, instructions}
-          File.write!(script_path, consultable(script), [:utf8])
+          File.write!(script_path, consultable(script))
           :ok = :systools.script2boot(sys_path)
 
         {:error, module, info} ->
@@ -636,7 +647,7 @@ defmodule Mix.Release do
     do: []
 
   defp config_provider_apply(_),
-    do: [{:apply, {Config.Provider, :boot, [:elixir, :config_providers]}}]
+    do: [{:apply, {Config.Provider, :boot, []}}]
 
   defp prepend_paths_to_script(instructions, []), do: instructions
 
@@ -657,7 +668,14 @@ defmodule Mix.Release do
   end
 
   defp consultable(term) do
-    :io_lib.format("%% coding: utf-8~n~tp.~n", [term])
+    IO.chardata_to_string(:io_lib.format("%% coding: utf-8~n~tp.~n", [term]))
+  end
+
+  @doc """
+  Finds a template path for the release.
+  """
+  def rel_templates_path(release, path) do
+    Path.join(release.options[:rel_templates_path] || "rel", path)
   end
 
   @doc """
@@ -671,21 +689,18 @@ defmodule Mix.Release do
   end
 
   def copy_erts(release) do
-    destination = Path.join(release.path, "erts-#{release.erts_version}")
-    erts_source_contents = File.ls!(release.erts_source)
+    destination = Path.join(release.path, "erts-#{release.erts_version}/bin")
     File.mkdir_p!(destination)
 
-    for dir <- ~w(bin include lib src), dir in erts_source_contents do
-      source = Path.join(release.erts_source, dir)
-      target = Path.join(destination, dir)
-      File.cp_r!(source, target, fn _, _ -> false end)
-    end
+    release.erts_source
+    |> Path.join("bin")
+    |> File.cp_r!(destination, fn _, _ -> false end)
 
-    _ = File.rm(Path.join(destination, "bin/erl"))
-    _ = File.rm(Path.join(destination, "bin/erl.ini"))
+    _ = File.rm(Path.join(destination, "erl"))
+    _ = File.rm(Path.join(destination, "erl.ini"))
 
     destination
-    |> Path.join("bin/erl")
+    |> Path.join("erl")
     |> File.write!(~S"""
     #!/bin/sh
     SELF=$(readlink "$0" || true)
@@ -701,7 +716,7 @@ defmodule Mix.Release do
     exec "$BINDIR/erlexec" ${1+"$@"}
     """)
 
-    File.chmod!(Path.join(destination, "bin/erl"), 0o744)
+    File.chmod!(Path.join(destination, "erl"), 0o755)
     true
   end
 
@@ -751,14 +766,18 @@ defmodule Mix.Release do
   def copy_ebin(release, source, target) do
     with {:ok, [_ | _] = files} <- File.ls(source) do
       File.mkdir_p!(target)
-      strip_beams? = Keyword.get(release.options, :strip_beams, true)
+
+      strip_options =
+        release.options
+        |> Keyword.get(:strip_beams, true)
+        |> parse_strip_beams_options()
 
       for file <- files do
         source_file = Path.join(source, file)
         target_file = Path.join(target, file)
 
-        with true <- strip_beams? and String.ends_with?(file, ".beam"),
-             {:ok, binary} <- strip_beam(File.read!(source_file)) do
+        with true <- is_list(strip_options) and String.ends_with?(file, ".beam"),
+             {:ok, binary} <- strip_beam(File.read!(source_file), strip_options) do
           File.write!(target_file, binary)
         else
           _ -> File.copy(source_file, target_file)
@@ -780,9 +799,12 @@ defmodule Mix.Release do
   The exact chunks that are kept are not documented and may change in
   future versions.
   """
-  @spec strip_beam(binary()) :: {:ok, binary} | {:error, :beam_lib, :beam_lib.chnk_rsn()}
-  def strip_beam(binary) do
-    case :beam_lib.chunks(binary, @significant_chunks, [:allow_missing_chunks]) do
+  @spec strip_beam(binary(), keyword()) :: {:ok, binary()} | {:error, :beam_lib, term()}
+  def strip_beam(binary, options \\ []) when is_list(options) do
+    chunks_to_keep = options[:keep] |> List.wrap() |> Enum.map(&String.to_charlist/1)
+    all_chunks = Enum.uniq(@significant_chunks ++ chunks_to_keep)
+
+    case :beam_lib.chunks(binary, all_chunks, [:allow_missing_chunks]) do
       {:ok, {_, chunks}} ->
         chunks = for {name, chunk} <- chunks, is_binary(chunk), do: {name, chunk}
         {:ok, binary} = :beam_lib.build_module(chunks)
@@ -794,6 +816,14 @@ defmodule Mix.Release do
 
       {:error, _, _} = error ->
         error
+    end
+  end
+
+  defp parse_strip_beams_options(options) do
+    case options do
+      options when is_list(options) -> options
+      true -> []
+      false -> nil
     end
   end
 end

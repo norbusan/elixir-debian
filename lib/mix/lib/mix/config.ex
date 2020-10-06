@@ -5,6 +5,9 @@ defmodule Mix.Config do
   @moduledoc ~S"""
   A simple configuration API and functions for managing config files.
 
+  This module is deprecated, use the modules `Config` and `Config.Reader`
+  from Elixir's standard library instead.
+
   ## Setting configuration
 
   Most commonly, this module is used to define your own configuration:
@@ -24,8 +27,8 @@ defmodule Mix.Config do
 
   Once a configuration is written to a file, the functions in this
   module can be used to read and merge said configuration. The `eval!/2`
-  function allows you evaluate a given configuration file and `merge/2`
-  allows to deep merge the results of multiple configurations. Those
+  function allows you to evaluate a given configuration file and the `merge/2`
+  function allows you to deep merge the results of multiple configurations. Those
   functions should not be invoked by users writing configurations but
   rather by library authors.
 
@@ -171,9 +174,9 @@ defmodule Mix.Config do
 
   It returns a tuple with the configuration and the imported paths.
   """
-  @doc deprecated: "Use Config.Reader.read!/2 instead"
+  @doc deprecated: "Use Config.Reader.read_imports!/2 instead"
   def eval!(file, imported_paths \\ []) do
-    Config.__eval__!(file, imported_paths)
+    Config.Reader.read_imports!(file, imports: imported_paths)
   end
 
   @doc """
@@ -186,13 +189,13 @@ defmodule Mix.Config do
   invoke it inside your `mix.exs` to read some external data
   you decided to move to a configuration file:
 
-      releases: Mix.Config.read!("rel/releases.exs")
+      subsystem: Mix.Config.read!("rel/subsystem.exs")
 
   """
-  @doc deprecated: "Use Config.Reader.read_imports!/2 instead"
+  @doc deprecated: "Use Config.Reader.read!/2 instead"
   @spec read!(Path.t(), [Path.t()]) :: keyword
   def read!(file, imported_paths \\ []) do
-    Config.__eval__!(file, imported_paths) |> elem(0)
+    Config.Reader.read!(file, imports: imported_paths)
   end
 
   @doc """

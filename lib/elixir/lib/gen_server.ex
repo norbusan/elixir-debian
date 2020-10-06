@@ -280,6 +280,10 @@ defmodule GenServer do
         GenServer.call(__MODULE__, {:add, a, b})
       end
 
+      def subtract(a, b) do
+        GenServer.call(__MODULE__, {:subtract, a, b})
+      end
+
       def handle_call({:add, a, b}, _from, state) do
         {:reply, a + b, state}
       end
@@ -1177,8 +1181,11 @@ defmodule GenServer do
   end
 
   @doc """
-  Returns the `pid` or `{name, node}` of a GenServer process, or `nil` if
-  no process is associated with the given `server`.
+  Returns the `pid` or `{name, node}` of a GenServer process, `nil` otherwise.
+
+  To be precise, `nil` is returned whenever a `pid` or `{name, node}` cannot
+  be returned. Note there is no guarantee the returned `pid` or `{name, node}`
+  is alive, as a process could terminate immediately after it is looked up.
 
   ## Examples
 

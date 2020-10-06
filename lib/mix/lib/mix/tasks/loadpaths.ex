@@ -4,6 +4,9 @@ defmodule Mix.Tasks.Loadpaths do
   @moduledoc """
   Loads the application and its dependencies paths.
 
+  This task is never directly invoked from the command line,
+  but it is rather used as building block by other tasks.
+
   ## Configuration
 
     * `:elixir` - matches the current Elixir version against the
@@ -16,7 +19,6 @@ defmodule Mix.Tasks.Loadpaths do
     * `--no-elixir-version-check` - does not check Elixir version
 
   """
-
   @impl true
   def run(args) do
     config = Mix.Project.config()
@@ -29,9 +31,9 @@ defmodule Mix.Tasks.Loadpaths do
       Mix.Task.run("archive.check", args)
     end
 
-    # --no-deps is used only internally. It has no purpose
-    # from Mix.CLI because running a task may load deps.
-    unless "--no-deps" in args do
+    # --no-deps-loading is used only internally. It has no
+    # purpose from Mix.CLI because running a task may load deps.
+    unless "--no-deps-loading" in args do
       Mix.Task.run("deps.loadpaths", args)
     end
 

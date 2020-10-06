@@ -7,7 +7,7 @@ defmodule Application do
   programming languages, but with some additional characteristics.
 
   An application is a component implementing some specific functionality, with a
-  standardized directory structure, configuration, and lifecycle. Applications
+  standardized directory structure, configuration, and life cycle. Applications
   are *loaded*, *started*, and *stopped*. Each application also has its own
   environment, which provides a unified API for configuring each application.
 
@@ -84,8 +84,8 @@ defmodule Application do
 
   This approach has one big limitation: if you change the value of the
   application environment after the code is compiled, the value used at
-  runtime is not going to change! For example, if you are using `mix release`
-  and your `config/releases.exs` has:
+  runtime is not going to change! For example, if your `config/runtime.exs`
+  has:
 
       config :my_app, :db_host, "db.production"
 
@@ -171,7 +171,7 @@ defmodule Application do
   the documentation of `Mix.Tasks.Compile.App`, available as well by running
   `mix help compile.app`.
 
-  ## The application lifecycle
+  ## The application life cycle
 
   ### Loading applications
 
@@ -210,7 +210,7 @@ defmodule Application do
   dependencies for you.
 
   If the application does not have a callback module configured, starting is
-  done at this point. Otherwise, its `c:start/2` callback if invoked. The PID of
+  done at this point. Otherwise, its `c:start/2` callback is invoked. The PID of
   the top-level supervisor returned by this function is stored by the runtime
   for later use, and the returned application state is saved too, if any.
 
@@ -499,7 +499,7 @@ defmodule Application do
   Giving a path is useful to let Elixir know that only certain paths
   in a large configuration are compile time dependent.
   """
-  # TODO: Warn if get_env/fetch_env/fetch_env! is used at compile time instead of compile_env
+  # TODO: Warn on v1.14 if get_env/fetch_env/fetch_env! is used at compile time instead of compile_env
   @doc since: "1.10.0"
   @spec compile_env(app, key | list, value) :: value
   defmacro compile_env(app, key_or_path, default \\ nil) when is_atom(app) do
@@ -524,7 +524,7 @@ defmodule Application do
   Reads the application environment at compilation time or raises.
 
   This is the same as `compile_env/3` but it raises an
-  ArgumentError if the configuration is not available.
+  `ArgumentError` if the configuration is not available.
   """
   @doc since: "1.10.0"
   @spec compile_env!(app, key | list) :: value
@@ -584,7 +584,7 @@ defmodule Application do
   **Important:** if you are writing a library to be used by other developers,
   it is generally recommended to avoid the application environment, as the
   application environment is effectively a global storage. For more information,
-  read our [library guidelines](library-guidelines.html).
+  read our [library guidelines](library-guidelines.md).
 
   ## Examples
 
@@ -618,6 +618,7 @@ defmodule Application do
   """
   @spec get_env(app, key, value) :: value
   def get_env(app, key, default \\ nil) when is_atom(app) do
+    maybe_warn_on_app_env_key(app, key)
     :application.get_env(app, key, default)
   end
 
@@ -628,6 +629,8 @@ defmodule Application do
   """
   @spec fetch_env(app, key) :: {:ok, value} | :error
   def fetch_env(app, key) when is_atom(app) do
+    maybe_warn_on_app_env_key(app, key)
+
     case :application.get_env(app, key) do
       {:ok, value} -> {:ok, value}
       :undefined -> :error
@@ -664,9 +667,7 @@ defmodule Application do
         "because configuration at #{inspect(key)} was not set"
 
       :undefined ->
-        "because the application was not loaded/started. If your application " <>
-          "depends on #{inspect(app)} at runtime, make sure to load/start it or " <>
-          "list it under :extra_applications in your mix.exs file"
+        "because the application was not loaded nor configured"
     end
   end
 
@@ -689,6 +690,7 @@ defmodule Application do
   """
   @spec put_env(app, key, value, timeout: timeout, persistent: boolean) :: :ok
   def put_env(app, key, value, opts \\ []) when is_atom(app) do
+    maybe_warn_on_app_env_key(app, key)
     :application.set_env(app, key, value, opts)
   end
 
@@ -734,7 +736,16 @@ defmodule Application do
   """
   @spec delete_env(app, key, timeout: timeout, persistent: boolean) :: :ok
   def delete_env(app, key, opts \\ []) when is_atom(app) do
+    maybe_warn_on_app_env_key(app, key)
     :application.unset_env(app, key, opts)
+  end
+
+  defp maybe_warn_on_app_env_key(_app, key) when is_atom(key),
+    do: :ok
+
+  defp maybe_warn_on_app_env_key(app, key) do
+    message = "passing non-atom as application env key is deprecated, got: #{inspect(key)}"
+    IO.warn_once({Application, :key, app, key}, message, _stacktrace_drop_levels = 2)
   end
 
   @doc """

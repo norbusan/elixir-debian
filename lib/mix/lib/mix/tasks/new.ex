@@ -292,6 +292,9 @@ defmodule Mix.Tasks.New do
   # Ignore package tarball (built via "mix hex.build").
   <%= @app %>-*.tar
   <% end %>
+
+  # Temporary files for e.g. tests
+  /tmp
   """)
 
   embed_template(:mix_exs, """
@@ -435,6 +438,7 @@ defmodule Mix.Tasks.New do
 
     use Application
 
+    @impl true
     def start(_type, _args) do
       children = [
         # Starts a worker by calling: <%= @mod %>.Worker.start_link(arg)

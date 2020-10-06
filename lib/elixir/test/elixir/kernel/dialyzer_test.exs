@@ -27,20 +27,14 @@ defmodule Kernel.DialyzerTest do
     dialyzer_run(analysis_type: :plt_build, output_plt: plt, apps: [:erts], files: files)
 
     # Compile Dialyzer fixtures
-    assert elixirc("#{fixture_path("dialyzer")} -o #{dir}") == ""
+    source_files = Path.wildcard(Path.join(fixture_path("dialyzer"), "*"))
+    {:ok, _, _} = Kernel.ParallelCompiler.compile_to_path(source_files, dir)
 
     {:ok, [base_dir: dir, base_plt: plt]}
   end
 
   setup context do
-    # Set up a per-test temporary directory, so we can run these with async: true.
-    # We use the test's line number as the directory name, so they won't conflict.
-    dir =
-      context.base_dir
-      |> Path.join("line#{context.line}")
-      |> String.to_charlist()
-
-    File.mkdir_p!(dir)
+    dir = String.to_charlist(context.tmp_dir)
 
     plt =
       dir
@@ -60,6 +54,8 @@ defmodule Kernel.DialyzerTest do
 
     {:ok, [outdir: dir, dialyzer: dialyzer]}
   end
+
+  @moduletag :tmp_dir
 
   @tag warnings: [:specdiffs]
   test "no warnings on specdiffs", context do

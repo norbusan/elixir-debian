@@ -42,6 +42,8 @@ defmodule Code.Formatter do
     :<~>,
     :<|>,
     :^^^,
+    :+++,
+    :---,
     :in,
     :++,
     :--,
@@ -140,8 +142,8 @@ defmodule Code.Formatter do
   Checks if two strings are equivalent.
   """
   def equivalent(string1, string2) when is_binary(string1) and is_binary(string2) do
-    quoted1 = :elixir.string_to_quoted!(to_charlist(string1), 1, "nofile", [])
-    quoted2 = :elixir.string_to_quoted!(to_charlist(string2), 1, "nofile", [])
+    quoted1 = :elixir.string_to_quoted!(to_charlist(string1), 1, 1, "nofile", [])
+    quoted2 = :elixir.string_to_quoted!(to_charlist(string2), 1, 1, "nofile", [])
 
     case not_equivalent(quoted1, quoted2) do
       {left, right} -> {:error, left, right}
@@ -210,7 +212,7 @@ defmodule Code.Formatter do
       token_metadata: true
     ]
 
-    with {:ok, tokens} <- :elixir.string_to_tokens(charlist, line, file, tokenizer_options),
+    with {:ok, tokens} <- :elixir.string_to_tokens(charlist, line, 1, file, tokenizer_options),
          {:ok, forms} <- :elixir.tokens_to_quoted(tokens, file, parser_options) do
       state =
         Process.get(:code_formatter_comments)
@@ -237,8 +239,8 @@ defmodule Code.Formatter do
       {:ok, doc} ->
         doc
 
-      {:error, {line, error, token}} ->
-        :elixir_errors.parse_error(line, Keyword.get(opts, :file, "nofile"), error, token)
+      {:error, {location, error, token}} ->
+        :elixir_errors.parse_error(location, Keyword.get(opts, :file, "nofile"), error, token)
     end
   end
 
@@ -481,6 +483,10 @@ defmodule Code.Formatter do
 
   defp quoted_to_algebra({:__block__, _meta, [arg]}, context, state) do
     quoted_to_algebra(arg, context, state)
+  end
+
+  defp quoted_to_algebra({:__block__, _meta, []}, _context, state) do
+    {"nil", state}
   end
 
   defp quoted_to_algebra({:__block__, meta, _} = block, _context, state) do
@@ -1957,7 +1963,7 @@ defmodule Code.Formatter do
   end
 
   # If the document is immediately followed by comment which is followed by newlines,
-  # its newlines wouldn't have considerd the comment, so we need to adjust it.
+  # its newlines wouldn't have considered the comment, so we need to adjust it.
   defp adjust_trailing_newlines({doc, next_line, newlines}, doc_end, [{line, _, _} | _])
        when newlines > 1 and line == doc_end + 1 do
     {doc, next_line, 1}
@@ -2147,7 +2153,7 @@ defmodule Code.Formatter do
   end
 
   defp next_break_fits?({:__block__, meta, [list]}, _state) when is_list(list) do
-    meta[:delimeter] != ~s[']
+    meta[:delimiter] != ~s[']
   end
 
   defp next_break_fits?({form, _, [_ | _]}, _state) when form in [:fn, :%{}, :%] do

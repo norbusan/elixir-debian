@@ -68,7 +68,7 @@ defmodule Supervisor do
       Supervisor.count_children(pid)
       #=> %{active: 1, specs: 1, supervisors: 0, workers: 1}
 
-  Notice that when starting the GenServer, we are registering it
+  Note that when starting the GenServer, we are registering it
   with name `Stack`, which allows us to call it directly and get
   what is on the stack:
 
@@ -108,7 +108,7 @@ defmodule Supervisor do
   The child specification describes how the supervisor starts, shuts down,
   and restarts child processes.
 
-  The child specification is a map which contains 6 elements. The first two keys
+  The child specification is a map containing up to 6 elements. The first two keys
   in the following list are required, and the remaining ones are optional:
 
     * `:id` - any term used to identify the child specification
@@ -194,7 +194,7 @@ defmodule Supervisor do
         start: {Stack, :start_link, [[:hello]]}
       }
 
-  The map above defines a supervisor with `:id` of `Stack` that is started
+  The map above defines a child with `:id` of `Stack` that is started
   by calling `Stack.start_link([:hello])`.
 
   However, specifying the child specification for each child as a map can be
@@ -433,7 +433,7 @@ defmodule Supervisor do
       restarts in transient mode, and linked processes exit with the same
       reason unless they're trapping exits
 
-  Notice that the supervisor that reaches maximum restart intensity will exit with
+  Note that the supervisor that reaches maximum restart intensity will exit with
   `:shutdown` reason. In this case the supervisor will only be restarted if its
   child specification was defined with the `:restart` option set to `:permanent`
   (the default).
@@ -823,10 +823,11 @@ defmodule Supervisor do
   end
 
   def start_child(supervisor, args) when is_list(args) do
-    # TODO: Deprecate in v1.11
-    # IO.warn(
-    #   "Supervisor.start_child/2 with a list of args is deprecated, please use DynamicSupervisor instead"
-    # )
+    IO.warn_once(
+      {__MODULE__, :start_child},
+      "Supervisor.start_child/2 with a list of args is deprecated, please use DynamicSupervisor instead",
+      _stacktrace_drop_levels = 2
+    )
 
     call(supervisor, {:start_child, args})
   end
@@ -853,10 +854,9 @@ defmodule Supervisor do
   def terminate_child(supervisor, child_id)
 
   def terminate_child(supervisor, pid) when is_pid(pid) do
-    # TODO: Deprecate in v1.11
-    # IO.warn(
-    #   "Supervisor.terminate_child/2 with a PID is deprecated, please use DynamicSupervisor instead"
-    # )
+    IO.warn(
+      "Supervisor.terminate_child/2 with a PID is deprecated, please use DynamicSupervisor instead"
+    )
 
     call(supervisor, {:terminate_child, pid})
   end
@@ -929,7 +929,8 @@ defmodule Supervisor do
 
   """
   @spec which_children(supervisor) :: [
-          {term() | :undefined, child | :restarting, :worker | :supervisor, :supervisor.modules()}
+          # inlining module() | :dynamic here because :supervisor.modules() is not exported
+          {term() | :undefined, child | :restarting, :worker | :supervisor, module() | :dynamic}
         ]
   def which_children(supervisor) do
     call(supervisor, :which_children)

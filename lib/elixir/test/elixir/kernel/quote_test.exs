@@ -3,6 +3,12 @@ Code.require_file("../test_helper.exs", __DIR__)
 defmodule Kernel.QuoteTest do
   use ExUnit.Case, async: true
 
+  @some_fun &List.flatten/1
+
+  test "fun" do
+    assert is_function(@some_fun)
+  end
+
   test "list" do
     assert quote(do: [1, 2, 3]) == [1, 2, 3]
   end
@@ -20,11 +26,23 @@ defmodule Kernel.QuoteTest do
 
   test "fixed line" do
     assert quote(line: 3, do: bar(1, 2, 3)) == {:bar, [line: 3], [1, 2, 3]}
+    assert quote(line: false, do: bar(1, 2, 3)) == {:bar, [], [1, 2, 3]}
+    assert quote(line: true, do: bar(1, 2, 3)) == {:bar, [line: __ENV__.line], [1, 2, 3]}
   end
 
   test "quote line var" do
     line = __ENV__.line
     assert quote(line: line, do: bar(1, 2, 3)) == {:bar, [line: line], [1, 2, 3]}
+
+    assert_raise ArgumentError, fn ->
+      line = "oops"
+      quote(line: line, do: bar(1, 2, 3))
+    end
+
+    assert_raise ArgumentError, fn ->
+      line = true
+      quote(line: line, do: bar(1, 2, 3))
+    end
   end
 
   test "quote context var" do
@@ -67,7 +85,8 @@ defmodule Kernel.QuoteTest do
                 end
               end)
 
-    assert quote(do: foo.unquote(:bar)) == quote(do: foo.bar())
+    assert quote(do: foo.unquote(:bar)) == quote(do: foo.bar)
+    assert quote(do: foo.unquote(:bar)()) == quote(do: foo.bar())
     assert quote(do: foo.unquote(:bar)(1)) == quote(do: foo.bar(1))
 
     assert (quote do
@@ -81,7 +100,8 @@ defmodule Kernel.QuoteTest do
                 end
               end)
 
-    assert quote(do: foo.unquote({:bar, [], nil})) == quote(do: foo.bar())
+    assert quote(do: foo.unquote({:bar, [], nil})) == quote(do: foo.bar)
+    assert quote(do: foo.unquote({:bar, [], nil})()) == quote(do: foo.bar())
     assert quote(do: foo.unquote({:bar, [], [1, 2]})) == quote(do: foo.bar(1, 2))
 
     assert Code.eval_quoted(quote(do: Foo.unquote(Bar))) == {Elixir.Foo.Bar, []}
@@ -198,6 +218,14 @@ defmodule Kernel.QuoteTest do
     assert [{:->, _, [[], 1]}] = quote(do: (() -> 1))
   end
 
+  test "empty block" do
+    # Since ; is allowed by itself, it must also be allowed inside ()
+    # The exception to this rule is an empty (). While empty expressions
+    # are allowed, an empty () is ambiguous. We also can't use quote here,
+    # since the formatter will rewrite (;) to something else.
+    assert {:ok, {:__block__, [line: 1], []}} = Code.string_to_quoted("(;)")
+  end
+
   test "bind quoted" do
     args = [
       {:=, [], [{:foo, [line: __ENV__.line + 4], Kernel.QuoteTest}, 3]},
@@ -233,11 +261,6 @@ defmodule Kernel.QuoteTest do
     assert quote(do: +1.foo) == quote(do: +1.foo)
     assert quote(do: (@1).foo) == quote(do: (@1).foo)
     assert quote(do: &1.foo) == quote(do: &1.foo)
-  end
-
-  test "operators slash arity" do
-    assert {:/, _, [{:+, _, _}, 2]} = quote(do: + / 2)
-    assert {:/, _, [{:&&, _, _}, 3]} = quote(do: && / 3)
   end
 
   test "pipe precedence" do

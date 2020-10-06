@@ -5,7 +5,7 @@
 -include("elixir.hrl").
 
 string(Contents, File, Callback) ->
-  Forms = elixir:'string_to_quoted!'(Contents, 1, File, elixir_config:get(parser_options)),
+  Forms = elixir:'string_to_quoted!'(Contents, 1, 1, File, elixir_config:get(parser_options)),
   quoted(Forms, File, Callback).
 
 quoted(Forms, File, Callback) ->
@@ -82,18 +82,19 @@ code_fun(nil) -> '__FILE__';
 code_fun(_)   -> '__MODULE__'.
 
 code_mod(Fun, Expr, Line, File, Module, Vars) when is_binary(File), is_integer(Line) ->
-  Tuple = {tuple, Line, [{var, Line, Var} || {_, Var} <- Vars]},
+  Ann = erl_anno:new(Line),
+  Tuple = {tuple, Ann, [{var, Ann, Var} || {_, Var} <- Vars]},
   Relative = elixir_utils:relative_to_cwd(File),
 
-  [{attribute, Line, file, {elixir_utils:characters_to_list(Relative), 1}},
-   {attribute, Line, module, Module},
-   {attribute, Line, compile, no_auto_import},
-   {attribute, Line, export, [{Fun, 1}, {'__RELATIVE__', 0}]},
-   {function, Line, Fun, 1, [
-     {clause, Line, [Tuple], [], [Expr]}
+  [{attribute, Ann, file, {elixir_utils:characters_to_list(Relative), 1}},
+   {attribute, Ann, module, Module},
+   {attribute, Ann, compile, no_auto_import},
+   {attribute, Ann, export, [{Fun, 1}, {'__RELATIVE__', 0}]},
+   {function, Ann, Fun, 1, [
+     {clause, Ann, [Tuple], [], [Expr]}
    ]},
-   {function, Line, '__RELATIVE__', 0, [
-     {clause, Line, [], [], [elixir_erl:elixir_to_erl(Relative)]}
+   {function, Ann, '__RELATIVE__', 0, [
+     {clause, Ann, [], [], [elixir_erl:elixir_to_erl(Relative)]}
    ]}].
 
 retrieve_compiler_module() ->
@@ -122,7 +123,11 @@ bootstrap() ->
   elixir_config:put(ignore_module_conflict, true),
   elixir_config:put(tracers, []),
   elixir_config:put(parser_options, []),
-  [bootstrap_file(File) || File <- bootstrap_main()].
+  {Init, Main} = bootstrap_files(),
+  [bootstrap_file(File) || File <- [<<"lib/elixir/lib/kernel.ex">> | Init]],
+  elixir_config:put(bootstrap, true),
+  elixir_config:put(docs, true),
+  [bootstrap_file(File) || File <- [<<"lib/elixir/lib/kernel.ex">> | Main]].
 
 bootstrap_file(File) ->
   try
@@ -135,45 +140,51 @@ bootstrap_file(File) ->
       erlang:halt(1)
   end.
 
-bootstrap_main() ->
-  [<<"lib/elixir/lib/kernel.ex">>,
-   <<"lib/elixir/lib/macro/env.ex">>,
-   <<"lib/elixir/lib/keyword.ex">>,
-   <<"lib/elixir/lib/module.ex">>,
-   <<"lib/elixir/lib/list.ex">>,
-   <<"lib/elixir/lib/macro.ex">>,
-   <<"lib/elixir/lib/kernel/typespec.ex">>,
-   <<"lib/elixir/lib/code.ex">>,
-   <<"lib/elixir/lib/code/identifier.ex">>,
-   <<"lib/elixir/lib/module/checker.ex">>,
-   <<"lib/elixir/lib/module/locals_tracker.ex">>,
-   <<"lib/elixir/lib/module/parallel_checker.ex">>,
-   <<"lib/elixir/lib/module/types/helpers.ex">>,
-   <<"lib/elixir/lib/module/types/infer.ex">>,
-   <<"lib/elixir/lib/module/types/expr.ex">>,
-   <<"lib/elixir/lib/module/types/pattern.ex">>,
-   <<"lib/elixir/lib/module/types.ex">>,
-   <<"lib/elixir/lib/kernel/utils.ex">>,
-   <<"lib/elixir/lib/exception.ex">>,
-   <<"lib/elixir/lib/protocol.ex">>,
-   <<"lib/elixir/lib/stream/reducers.ex">>,
-   <<"lib/elixir/lib/enum.ex">>,
-   <<"lib/elixir/lib/map.ex">>,
-   <<"lib/elixir/lib/inspect/algebra.ex">>,
-   <<"lib/elixir/lib/inspect.ex">>,
-   <<"lib/elixir/lib/access.ex">>,
-   <<"lib/elixir/lib/range.ex">>,
-   <<"lib/elixir/lib/regex.ex">>,
-   <<"lib/elixir/lib/string.ex">>,
-   <<"lib/elixir/lib/string/chars.ex">>,
-   <<"lib/elixir/lib/io.ex">>,
-   <<"lib/elixir/lib/path.ex">>,
-   <<"lib/elixir/lib/file.ex">>,
-   <<"lib/elixir/lib/system.ex">>,
-   <<"lib/elixir/lib/kernel/cli.ex">>,
-   <<"lib/elixir/lib/kernel/error_handler.ex">>,
-   <<"lib/elixir/lib/kernel/parallel_compiler.ex">>,
-   <<"lib/elixir/lib/kernel/lexical_tracker.ex">>].
+bootstrap_files() ->
+  {
+    [
+     <<"lib/elixir/lib/macro/env.ex">>,
+     <<"lib/elixir/lib/keyword.ex">>,
+     <<"lib/elixir/lib/module.ex">>,
+     <<"lib/elixir/lib/list.ex">>,
+     <<"lib/elixir/lib/macro.ex">>,
+     <<"lib/elixir/lib/kernel/typespec.ex">>,
+     <<"lib/elixir/lib/kernel/utils.ex">>,
+     <<"lib/elixir/lib/code.ex">>,
+     <<"lib/elixir/lib/code/identifier.ex">>,
+     <<"lib/elixir/lib/protocol.ex">>,
+     <<"lib/elixir/lib/stream/reducers.ex">>,
+     <<"lib/elixir/lib/enum.ex">>,
+     <<"lib/elixir/lib/regex.ex">>,
+     <<"lib/elixir/lib/inspect/algebra.ex">>,
+     <<"lib/elixir/lib/inspect.ex">>,
+     <<"lib/elixir/lib/string.ex">>,
+     <<"lib/elixir/lib/string/chars.ex">>
+    ],
+    [
+     <<"lib/elixir/lib/list/chars.ex">>,
+     <<"lib/elixir/lib/module/locals_tracker.ex">>,
+     <<"lib/elixir/lib/module/parallel_checker.ex">>,
+     <<"lib/elixir/lib/module/types/helpers.ex">>,
+     <<"lib/elixir/lib/module/types/unify.ex">>,
+     <<"lib/elixir/lib/module/types/of.ex">>,
+     <<"lib/elixir/lib/module/types/pattern.ex">>,
+     <<"lib/elixir/lib/module/types/expr.ex">>,
+     <<"lib/elixir/lib/module/types.ex">>,
+     <<"lib/elixir/lib/exception.ex">>,
+     <<"lib/elixir/lib/path.ex">>,
+     <<"lib/elixir/lib/file.ex">>,
+     <<"lib/elixir/lib/map.ex">>,
+     <<"lib/elixir/lib/range.ex">>,
+     <<"lib/elixir/lib/access.ex">>,
+     <<"lib/elixir/lib/io.ex">>,
+     <<"lib/elixir/lib/system.ex">>,
+     <<"lib/elixir/lib/kernel/cli.ex">>,
+     <<"lib/elixir/lib/kernel/error_handler.ex">>,
+     <<"lib/elixir/lib/kernel/parallel_compiler.ex">>,
+     <<"lib/elixir/lib/kernel/lexical_tracker.ex">>
+    ]
+  }.
 
 binary_to_path({ModuleName, _ModuleMap, Binary}, CompilePath) ->
   Path = filename:join(CompilePath, atom_to_list(ModuleName) ++ ".beam"),

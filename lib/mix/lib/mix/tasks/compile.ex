@@ -4,10 +4,13 @@ defmodule Mix.Tasks.Compile do
   @shortdoc "Compiles source files"
 
   @moduledoc """
-  A meta task that compiles source files.
+  The main entry point to compile source files.
 
   It simply runs the compilers registered in your project and returns
   a tuple with the compilation status and a list of diagnostics.
+
+  Before compiling code, it loads the code in all dependencies and
+  perform a series of checks to ensure the project is up to date.
 
   ## Configuration
 
@@ -43,19 +46,38 @@ defmodule Mix.Tasks.Compile do
 
   ## Command line options
 
-    * `--list` - lists all enabled compilers
-    * `--no-archives-check` - skips checking of archives
-    * `--no-deps-check` - skips checking of dependencies
-    * `--no-protocol-consolidation` - skips protocol consolidation
-    * `--force` - forces compilation
-    * `--return-errors` - returns error status and diagnostics instead of exiting on error
     * `--erl-config` - path to an Erlang term file that will be loaded as Mix config
+    * `--force` - forces compilation
+    * `--list` - lists all enabled compilers
+    * `--no-app-loading` - does not load applications (including from deps) before compiling
+    * `--no-archives-check` - skips checking of archives
+    * `--no-compile` - does not actually compile, only loads code and perform checks
+    * `--no-deps-check` - skips checking of dependencies
+    * `--no-elixir-version-check` - does not check Elixir version
+    * `--no-protocol-consolidation` - skips protocol consolidation
+    * `--no-validate-compile-env` - does not validate the application compile environment
+    * `--return-errors` - returns error status and diagnostics instead of exiting on error
 
   """
 
+  @doc """
+  Returns all compilers.
+  """
+  def compilers(config \\ Mix.Project.config()) do
+    # TODO: Deprecate :xref on v1.12
+    compilers = config[:compilers] || Mix.compilers()
+    List.delete(compilers, :xref)
+  end
+
   @impl true
   def run(["--list"]) do
-    loadpaths!()
+    # Loadpaths without checks because compilers may be defined in deps.
+    args = ["--no-elixir-version-check", "--no-deps-check", "--no-archives-check"]
+    Mix.Task.run("loadpaths", args)
+    Mix.Task.reenable("loadpaths")
+    Mix.Task.reenable("deps.loadpaths")
+
+    # Compilers are tasks, so load all tasks available.
     _ = Mix.Task.load_all()
 
     shell = Mix.shell()
@@ -85,11 +107,12 @@ defmodule Mix.Tasks.Compile do
     :ok
   end
 
+  @impl true
   def run(args) do
     Mix.Project.get!()
     Mix.Task.run("loadpaths", args)
-    {opts, _, _} = OptionParser.parse(args, switches: [erl_config: :string])
 
+    {opts, _, _} = OptionParser.parse(args, switches: [erl_config: :string])
     load_erl_config(opts)
 
     {res, diagnostics} =
@@ -98,15 +121,27 @@ defmodule Mix.Tasks.Compile do
       |> Enum.map(&Mix.Task.Compiler.normalize(&1, :all))
       |> Enum.reduce({:noop, []}, &merge_diagnostics/2)
 
-    res =
-      if consolidate_protocols?(res) and "--no-protocol-consolidation" not in args do
-        Mix.Task.run("compile.protocols", args)
-        :ok
-      else
-        res
-      end
+    config = Mix.Project.config()
 
-    {res, diagnostics}
+    cond do
+      "--no-compile" in args ->
+        Mix.Task.reenable("compile")
+        {:noop, []}
+
+      config[:consolidate_protocols] and "--no-protocol-consolidation" not in args ->
+        {consolidate_and_load_protocols(args, config, res), diagnostics}
+
+      true ->
+        {res, diagnostics}
+    end
+  end
+
+  defp format(expression, args) do
+    :io_lib.format(expression, args) |> IO.iodata_to_binary()
+  end
+
+  defp first_line(doc) do
+    String.split(doc, "\n", parts: 2) |> hd |> String.trim() |> String.trim_trailing(".")
   end
 
   defp merge_diagnostics({status1, diagnostics1}, {status2, diagnostics2}) do
@@ -120,34 +155,11 @@ defmodule Mix.Tasks.Compile do
     {new_status, diagnostics1 ++ diagnostics2}
   end
 
-  # Loadpaths without checks because compilers may be defined in deps.
-  defp loadpaths! do
-    args = ["--no-elixir-version-check", "--no-deps-check", "--no-archives-check"]
-    Mix.Task.run("loadpaths", args)
-    Mix.Task.reenable("loadpaths")
-    Mix.Task.reenable("deps.loadpaths")
-  end
-
-  defp consolidate_protocols?(:ok) do
-    Mix.Project.config()[:consolidate_protocols]
-  end
-
-  defp consolidate_protocols?(:noop) do
-    config = Mix.Project.config()
-    config[:consolidate_protocols] and not Mix.Tasks.Compile.Protocols.consolidated?()
-  end
-
-  defp consolidate_protocols?(:error) do
-    false
-  end
-
-  @doc """
-  Returns all compilers.
-  """
-  # TODO: Deprecate :xref on v1.12
-  def compilers(config \\ Mix.Project.config()) do
-    compilers = config[:compilers] || Mix.compilers()
-    List.delete(compilers, :xref)
+  defp load_erl_config(opts) do
+    if path = opts[:erl_config] do
+      {:ok, terms} = :file.consult(path)
+      Application.put_all_env(terms, persistent: true)
+    end
   end
 
   @impl true
@@ -163,18 +175,40 @@ defmodule Mix.Tasks.Compile do
     end)
   end
 
-  defp format(expression, args) do
-    :io_lib.format(expression, args) |> IO.iodata_to_binary()
+  ## Consolidation handling
+
+  defp consolidate_protocols?(:ok), do: true
+  defp consolidate_protocols?(:noop), do: not Mix.Tasks.Compile.Protocols.consolidated?()
+  defp consolidate_protocols?(:error), do: false
+
+  defp consolidate_and_load_protocols(args, config, res) do
+    res =
+      if consolidate_protocols?(res) do
+        Mix.Task.run("compile.protocols", args)
+        :ok
+      else
+        res
+      end
+
+    path = Mix.Project.consolidation_path(config)
+
+    with {:ok, protocols} <- File.ls(path) do
+      Code.prepend_path(path)
+      Enum.each(protocols, &load_protocol/1)
+    end
+
+    res
   end
 
-  defp first_line(doc) do
-    String.split(doc, "\n", parts: 2) |> hd |> String.trim() |> String.trim_trailing(".")
-  end
+  defp load_protocol(file) do
+    case file do
+      "Elixir." <> _ ->
+        module = file |> Path.rootname() |> String.to_atom()
+        :code.purge(module)
+        :code.delete(module)
 
-  defp load_erl_config(opts) do
-    if path = opts[:erl_config] do
-      {:ok, terms} = :file.consult(path)
-      Application.put_all_env(terms, persistent: true)
+      _ ->
+        :ok
     end
   end
 end

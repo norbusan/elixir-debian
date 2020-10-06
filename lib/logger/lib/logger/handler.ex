@@ -6,17 +6,17 @@ defmodule Logger.Handler do
 
   ## Conversions
 
-  # TODO: Remove this mapping once we support all of Erlang types
-  def erlang_level_to_elixir_level(:none), do: :error
-  def erlang_level_to_elixir_level(:emergency), do: :error
-  def erlang_level_to_elixir_level(:alert), do: :error
-  def erlang_level_to_elixir_level(:critical), do: :error
-  def erlang_level_to_elixir_level(:error), do: :error
-  def erlang_level_to_elixir_level(:warning), do: :warn
-  def erlang_level_to_elixir_level(:notice), do: :info
-  def erlang_level_to_elixir_level(:info), do: :info
-  def erlang_level_to_elixir_level(:debug), do: :debug
-  def erlang_level_to_elixir_level(:all), do: :debug
+  # TODO: Remove this mapping once we remove old Logger Backends (v2.0)
+  defp erlang_level_to_elixir_level(:none), do: :error
+  defp erlang_level_to_elixir_level(:emergency), do: :error
+  defp erlang_level_to_elixir_level(:alert), do: :error
+  defp erlang_level_to_elixir_level(:critical), do: :error
+  defp erlang_level_to_elixir_level(:error), do: :error
+  defp erlang_level_to_elixir_level(:warning), do: :warn
+  defp erlang_level_to_elixir_level(:notice), do: :info
+  defp erlang_level_to_elixir_level(:info), do: :info
+  defp erlang_level_to_elixir_level(:debug), do: :debug
+  defp erlang_level_to_elixir_level(:all), do: :debug
 
   # TODO: Warn on deprecated level
   def elixir_level_to_erlang_level(:warn), do: :warning
@@ -28,7 +28,7 @@ defmodule Logger.Handler do
     {:ok, update_in(config.config, &Map.merge(default_config(), &1))}
   end
 
-  # TODO: Remove when we will support OTP 22+
+  # TODO: Remove this once we support Erlang/OTP 22+ exclusively.
   def changing_config(current, new), do: changing_config(:set, current, new)
 
   def changing_config(
@@ -90,13 +90,16 @@ defmodule Logger.Handler do
             :ok
 
           {message, %{gl: gl} = metadata} ->
-            metadata = erlang_metadata_to_elixir_metadata(metadata)
+            timestamp = Map.get_lazy(metadata, :time, fn -> :os.system_time(:microsecond) end)
+            metadata = [erl_level: erl_level] ++ erlang_metadata_to_elixir_metadata(metadata)
+
             %{truncate: truncate, utc_log: utc_log?} = config
 
             event = {
               level,
               gl,
-              {Logger, truncate(message, truncate), Logger.Utils.timestamp(utc_log?), metadata}
+              {Logger, truncate(message, truncate), Logger.Utils.timestamp(timestamp, utc_log?),
+               metadata}
             }
 
             notify(mode, event)
@@ -115,6 +118,7 @@ defmodule Logger.Handler do
   defp do_log(level, msg, metadata, config) do
     %{level: erl_min_level} = :logger.get_primary_config()
     min_level = erlang_level_to_elixir_level(erl_min_level)
+    %{truncate: truncate} = config
 
     try do
       case msg do
@@ -137,6 +141,9 @@ defmodule Logger.Handler do
            "Failure while translating Erlang's logger event\n",
            Exception.format(:error, e, __STACKTRACE__)
          ], metadata}
+    else
+      :none -> {translate_fallback(msg, metadata, truncate), metadata}
+      other -> other
     end
   end
 
@@ -173,6 +180,8 @@ defmodule Logger.Handler do
   # TODO: We should only do this for legacy handlers.
   # The new handlers should accept all metadata as is
   # and receive the system time unit rather than tuples.
+  # The new handlers should also receive structured
+  # logging events as is.
   defp erlang_metadata_to_elixir_metadata(metadata) do
     metadata =
       case metadata do
@@ -201,15 +210,9 @@ defmodule Logger.Handler do
   ## Translating helpers
 
   defp translate(level, kind, data, meta, config, min_level) do
-    %{
-      truncate: truncate,
-      translators: translators
-    } = config
+    %{translators: translators} = config
 
-    case do_translate(translators, min_level, level, kind, data, meta) do
-      :none -> {translate_fallback(kind, data, meta, truncate), meta}
-      other -> other
-    end
+    do_translate(translators, min_level, level, kind, data, meta)
   end
 
   defp do_translate([{mod, fun} | t], min_level, level, kind, data, meta) do
@@ -225,12 +228,12 @@ defmodule Logger.Handler do
     :none
   end
 
-  defp translate_fallback(:report, {:logger, data}, %{report_cb: callback} = meta, truncate)
+  defp translate_fallback({:report, data}, %{report_cb: callback} = meta, truncate)
        when is_function(callback, 1) do
-    translate_fallback(:format, callback.(data), meta, truncate)
+    translate_fallback(callback.(data), meta, truncate)
   end
 
-  defp translate_fallback(:report, {:logger, data}, %{report_cb: callback}, _truncate)
+  defp translate_fallback({:report, data}, %{report_cb: callback}, _truncate)
        when is_function(callback, 2) do
     translator_opts =
       struct(Inspect.Opts, Application.fetch_env!(:logger, :translator_inspect_opts))
@@ -244,17 +247,17 @@ defmodule Logger.Handler do
     callback.(data, opts)
   end
 
-  defp translate_fallback(:format, {format, args}, _meta, truncate) do
-    format
-    |> Logger.Utils.scan_inspect(args, truncate)
-    |> :io_lib.build_text()
-  end
-
-  defp translate_fallback(:report, {_type, %{} = data}, _meta, _truncate) do
+  defp translate_fallback({:report, %{} = data}, _meta, _truncate) do
     Kernel.inspect(Map.to_list(data))
   end
 
-  defp translate_fallback(:report, {_type, data}, _meta, _truncate) do
+  defp translate_fallback({:report, data}, _meta, _truncate) do
     Kernel.inspect(data)
+  end
+
+  defp translate_fallback({format, args}, _meta, truncate) do
+    format
+    |> Logger.Utils.scan_inspect(args, truncate)
+    |> :io_lib.build_text()
   end
 end

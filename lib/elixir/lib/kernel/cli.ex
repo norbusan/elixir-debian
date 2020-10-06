@@ -498,9 +498,12 @@ defmodule Kernel.CLI do
 
           verbose_opts =
             if config.verbose_compile do
-              [each_long_compilation: &IO.puts("Compiling #{&1} (it's taking more than 15s)")]
+              [each_file: &IO.puts("Compiling #{Path.relative_to_cwd(&1)}")]
             else
-              []
+              [
+                each_long_compilation:
+                  &IO.puts("Compiling #{Path.relative_to_cwd(&1)} (it's taking more than 10s)")
+              ]
             end
 
           profile_opts =
@@ -525,6 +528,7 @@ defmodule Kernel.CLI do
 
   defp filter_patterns(pattern) do
     pattern
+    |> Path.expand()
     |> Path.wildcard()
     |> :lists.usort()
     |> Enum.filter(&File.regular?/1)

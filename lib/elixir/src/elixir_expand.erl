@@ -326,7 +326,7 @@ expand({Name, Meta, Kind}, #{context := match} = E) when is_atom(Name), is_atom(
   Pair = {Name, elixir_utils:var_context(Meta, Kind)},
 
   case ReadCurrent of
-    %% Variable was already overriden
+    %% Variable was already overridden
     #{Pair := VarVersion} when VarVersion >= PrematchVersion ->
       maybe_warn_underscored_var_repeat(Meta, Name, Kind, E),
       NewUnused = var_used(Pair, VarVersion, Unused),
@@ -401,15 +401,6 @@ expand({{'.', DotMeta, [Left, Right]}, Meta, Args}, E)
     when (is_tuple(Left) orelse is_atom(Left)), is_atom(Right), is_list(Meta), is_list(Args) ->
   {ELeft, EL} = expand(Left, elixir_env:prepare_write(E)),
 
-  %% TODO: Emit this warning on v1.11
-  %% case is_atom(ELeft) andalso (Args == []) andalso
-  %%       (lists:keyfind(no_parens, 1, Meta) == {no_parens, true}) of
-  %%   true ->
-  %%     elixir_errors:form_warn(DotMeta, E, ?MODULE, {no_parens_nullary_remote, ELeft, Right});
-  %%   false ->
-  %%     ok
-  %% end,
-
   elixir_dispatch:dispatch_require(Meta, ELeft, Right, Args, EL, fun(AR, AF, AA) ->
     expand_remote(AR, DotMeta, AF, Meta, AA, E, EL)
   end);
@@ -452,7 +443,7 @@ expand(Function, E) when is_function(Function) ->
   case (erlang:fun_info(Function, type) == {type, external}) andalso
        (erlang:fun_info(Function, env) == {env, []}) of
     true ->
-      {Function, E};
+      {elixir_quote:fun_to_quoted(Function), E};
     false ->
       form_error([{line, 0}], ?key(E, file), ?MODULE, {invalid_quoted_expr, Function})
   end;
@@ -546,7 +537,7 @@ expand_block([H], Acc, Meta, E) ->
 expand_block([H | T], Acc, Meta, E) ->
   {EH, EE} = expand(H, E),
 
-  %% Notice checks rely on the code BEFORE expansion
+  %% Note that checks rely on the code BEFORE expansion
   %% instead of relying on Erlang checks.
   %%
   %% That's because expansion may generate useless
@@ -565,7 +556,7 @@ expand_block([H | T], Acc, Meta, E) ->
 
   expand_block(T, [EH | Acc], Meta, EE).
 
-%% Notice we don't handle atoms on purpose. They are common
+%% Note that we don't handle atoms on purpose. They are common
 %% when unquoting AST and it is unlikely that we would catch
 %% bugs as we don't do binary operations on them like in
 %% strings or numbers.
@@ -773,35 +764,48 @@ assert_arg_with_no_clauses(Name, Meta, [{Key, Value} | Rest], E) when is_atom(Ke
 assert_arg_with_no_clauses(_Name, _Meta, _Arg, _E) ->
   ok.
 
-expand_local(Meta, Name, Args, #{function := nil} = E) ->
-  form_error(Meta, E, ?MODULE, {undefined_function, Name, Args});
-expand_local(Meta, Name, Args, #{context := Context} = E) when Context == match; Context == guard ->
-  form_error(Meta, E, ?MODULE, {invalid_local_invocation, Context, {Name, Meta, Args}});
-expand_local(Meta, Name, Args, #{module := Module, function := Function} = E) ->
+expand_local(Meta, Name, Args, #{module := Module, function := Function, context := nil} = E)
+    when Function /= nil ->
   assert_no_clauses(Name, Meta, Args, E),
   Arity = length(Args),
   elixir_env:trace({local_function, Meta, Name, Arity}, E),
   elixir_locals:record_local({Name, Arity}, Module, Function, Meta, false),
   {EArgs, EA} = expand_args(Args, E),
-  {{Name, Meta, EArgs}, EA}.
+  {{Name, Meta, EArgs}, EA};
+expand_local(Meta, Name, Args, E) when Name == '|'; Name == '::' ->
+  form_error(Meta, E, ?MODULE, {undefined_function, Name, Args});
+expand_local(Meta, Name, Args, #{function := nil} = E) ->
+  form_error(Meta, E, ?MODULE, {undefined_function, Name, Args});
+expand_local(Meta, Name, Args, #{context := Context} = E) when Context == match; Context == guard ->
+  form_error(Meta, E, ?MODULE, {invalid_local_invocation, Context, {Name, Meta, Args}}).
 
 %% Remote
 
 expand_remote(Receiver, DotMeta, Right, Meta, Args, #{context := Context} = E, EL) when is_atom(Receiver) or is_tuple(Receiver) ->
   assert_no_clauses(Right, Meta, Args, E),
-  AttachedDotMeta = attach_context_module(Receiver, DotMeta, E),
 
-  is_atom(Receiver) andalso
-    elixir_env:trace({remote_function, DotMeta, Receiver, Right, length(Args)}, E),
+  case {Context, lists:keyfind(no_parens, 1, Meta)} of
+    {guard, {no_parens, true}} when is_tuple(Receiver) ->
+      {{{'.', DotMeta, [Receiver, Right]}, Meta, []}, EL};
 
-  {EArgs, {EA, _}} = lists:mapfoldl(fun expand_arg/2, {EL, E}, Args),
+    {guard, _} when is_tuple(Receiver) ->
+      form_error(Meta, E, ?MODULE, {parens_map_lookup_guard, Receiver, Right});
 
-  case rewrite(Context, Receiver, AttachedDotMeta, Right, Meta, EArgs) of
-    {ok, Rewritten} ->
-      maybe_warn_comparison(Rewritten, Args, E),
-      {Rewritten, elixir_env:close_write(EA, E)};
-    {error, Error} ->
-      form_error(Meta, E, elixir_rewrite, Error)
+    _ ->
+      AttachedDotMeta = attach_context_module(Receiver, DotMeta, E),
+
+      is_atom(Receiver) andalso
+        elixir_env:trace({remote_function, DotMeta, Receiver, Right, length(Args)}, E),
+
+      {EArgs, {EA, _}} = lists:mapfoldl(fun expand_arg/2, {EL, E}, Args),
+
+      case rewrite(Context, Receiver, AttachedDotMeta, Right, Meta, EArgs) of
+        {ok, Rewritten} ->
+          maybe_warn_comparison(Rewritten, Args, E),
+          {Rewritten, elixir_env:close_write(EA, E)};
+        {error, Error} ->
+          form_error(Meta, E, elixir_rewrite, Error)
+      end
   end;
 expand_remote(Receiver, DotMeta, Right, Meta, Args, E, _) ->
   Call = {{'.', DotMeta, [Receiver, Right]}, Meta, Args},
@@ -1259,10 +1263,10 @@ format_error(stacktrace_not_allowed) ->
 format_error({unknown_variable, Name}) ->
   io_lib:format("variable \"~ts\" does not exist and is being expanded to \"~ts()\","
                 " please use parentheses to remove the ambiguity or change the variable name", [Name, Name]);
-format_error({no_parens_nullary_remote, Remote, Fun}) ->
-  io_lib:format("missing parenthesis on call to ~ts.~ts/0. "
-                "parenthesis are always required on function calls without arguments",
-                [elixir_aliases:inspect(Remote), Fun]);
+format_error({parens_map_lookup_guard, Map, Field}) ->
+  io_lib:format("cannot invoke remote function in guard. "
+                "If you want to do a map lookup instead, please remove parens from ~ts.~ts()",
+                ['Elixir.Macro':to_string(Map), Field]);
 format_error({super_in_genserver, {Name, Arity}}) ->
   io_lib:format("calling super for GenServer callback ~ts/~B is deprecated", [Name, Arity]);
 format_error({parallel_bitstring_match, Expr}) ->

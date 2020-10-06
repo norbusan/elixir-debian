@@ -1,10 +1,10 @@
 # Returns config for Elixir docs
 [
-  extras: Path.wildcard("lib/elixir/pages/*.md"),
+  extras: Path.wildcard("lib/elixir/pages/*.md") ++ ["CHANGELOG.md"],
   groups_for_functions: [
     Guards: & &1[:guard] == true
   ],
-  skip_undefined_reference_warnings_on: ["compatibility-and-deprecations"],
+  skip_undefined_reference_warnings_on: ["lib/elixir/pages/compatibility-and-deprecations.md"],
   groups_for_modules: [
     # [Kernel, Kernel.SpecialForms],
 
@@ -89,15 +89,18 @@
       Kernel.ParallelCompiler,
       Macro,
       Macro.Env
-    ],
-    Deprecated: [
-      Behaviour,
-      Dict,
-      GenEvent,
-      HashDict,
-      HashSet,
-      Set,
-      Supervisor.Spec
     ]
+
+    ## Automatically detected groups
+
+    # Deprecated: [
+    #   Behaviour,
+    #   Dict,
+    #   GenEvent,
+    #   HashDict,
+    #   HashSet,
+    #   Set,
+    #   Supervisor.Spec
+    # ]
   ]
 ]

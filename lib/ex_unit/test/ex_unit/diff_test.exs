@@ -54,9 +54,9 @@ defmodule ExUnit.DiffTest do
     end
   end
 
-  defmacrop assert_diff({:==, _, [left, right]}, [], []) do
+  defmacrop assert_diff({op, _, [left, right]}, [], []) when op in [:==, :===] do
     quote do
-      assert_diff(unquote(left), unquote(right), [], :expr)
+      assert_diff(unquote(left), unquote(right), [], unquote(op))
     end
   end
 
@@ -76,14 +76,15 @@ defmodule ExUnit.DiffTest do
     end
   end
 
-  defmacrop refute_diff({:==, _, [left, right]}, expected_left, expected_right, []) do
+  defmacrop refute_diff({op, _, [left, right]}, expected_left, expected_right, [])
+            when op in [:==, :===] do
     quote do
       refute_diff(
         unquote(left),
         unquote(right),
         unquote(expected_left),
         unquote(expected_right),
-        :expr
+        unquote(op)
       )
     end
   end
@@ -181,6 +182,20 @@ defmodule ExUnit.DiffTest do
     refute_diff(-1.23 = 1.23, "---1.23", "1.23")
     refute_diff(123.0 = :a, "-123.0-", "+:a+")
     refute_diff(123.0 = 123_512_235, "-123.0-", "+123512235+")
+  end
+
+  test "== / ===" do
+    refute_diff(
+      %{a: 1, b: 2} == %{a: 1.0, b: :two},
+      "%{a: 1, b: -2-}",
+      "%{a: 1.0, b: +:two+}"
+    )
+
+    refute_diff(
+      %{a: 1, b: 2} === %{a: 1.0, b: :two},
+      "%{a: -1-, b: -2-}",
+      "%{a: +1.0+, b: +:two+}"
+    )
   end
 
   test "lists" do
@@ -607,6 +622,26 @@ defmodule ExUnit.DiffTest do
     )
   end
 
+  test "structs with missing keys on match" do
+    struct = %User{
+      age: ~U[2020-07-30 13:49:59.253158Z]
+    }
+
+    assert_diff(%User{age: %DateTime{}} = struct, [])
+
+    refute_diff(
+      %User{age: %Date{}} = struct,
+      ~s/%ExUnit.DiffTest.User{age: %-Date-{}}/,
+      ~s/%ExUnit.DiffTest.User{age: %+DateTime+{calendar: Calendar.ISO, day: 30, hour: 13, microsecond: {253158, 6}, minute: 49, month: 7, second: 59, std_offset: 0, time_zone: "Etc\/UTC", utc_offset: 0, year: 2020, zone_abbr: "UTC"}, name: nil}/
+    )
+
+    refute_diff(
+      %{age: %Date{}} = struct,
+      ~s/%{age: %-Date-{}}/,
+      ~s/%ExUnit.DiffTest.User{age: %+DateTime+{calendar: Calendar.ISO, day: 30, hour: 13, microsecond: {253158, 6}, minute: 49, month: 7, second: 59, std_offset: 0, time_zone: "Etc\/UTC", utc_offset: 0, year: 2020, zone_abbr: "UTC"}, name: nil}/
+    )
+  end
+
   test "structs with inspect outside match context" do
     refute_diff(
       ~D[2017-10-01] == ~D[2017-10-02],
@@ -627,7 +662,7 @@ defmodule ExUnit.DiffTest do
     )
   end
 
-  test "structs with same inspect but different" do
+  test "structs with same inspect but different inside match" do
     refute_diff(
       %Opaque{data: 1} = %Opaque{data: 2},
       "%ExUnit.DiffTest.Opaque{data: -1-}",
@@ -914,6 +949,7 @@ defmodule ExUnit.DiffTest do
     refute_diff((x when x == 1 or x == 2) = 0, "x when -x == 1- or -x == 2-", "0")
     refute_diff((x when x == 1 when x == 2) = 0, "x when -x == 1- when -x == 2-", "0")
     refute_diff((x when x in [1, 2]) = 0, "x when -x in [1, 2]-", "0")
+    refute_diff(({:ok, x} when x == 1) = :error, "-{:ok, x}- when x == 1", "+:error+")
   end
 
   test "charlists" do
@@ -922,6 +958,11 @@ defmodule ExUnit.DiffTest do
       "'fox -ho-ps over -\\'-the -dog-'",
       "'fox +jum+ps over the +lazy cat+'"
     )
+
+    refute_diff({[], :ok} = {[], [], :ok}, "{[], -:ok-}", "{[], +[]+, +:ok+}")
+    refute_diff({[], :ok} = {'foo', [], :ok}, "{'--', -:ok-}", "{'+foo+', +[]+, +:ok+}")
+    refute_diff({'foo', :ok} = {[], [], :ok}, "{'-foo-', -:ok-}", "{'++', +[]+, +:ok+}")
+    refute_diff({'foo', :ok} = {'bar', [], :ok}, "{'-foo-', -:ok-}", "{'+bar+', +[]+, +:ok+}")
   end
 
   test "refs" do

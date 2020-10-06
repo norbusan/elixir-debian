@@ -41,10 +41,10 @@ defmodule Supervisor.Spec do
         end
       end
 
-  Notice in this case we don't have to explicitly import
-  `Supervisor.Spec` as `use Supervisor` automatically does so.
+  Note that in this case we don't have to explicitly import
+  `Supervisor.Spec` since `use Supervisor` automatically does so.
   Defining a module-based supervisor can be useful, for example,
-  to perform initialization tasks in the `c:init/1` callback.
+  to perform initialization tasks in the `c:Supervisor.init/1` callback.
 
   ## Supervisor and worker options
 
@@ -82,9 +82,9 @@ defmodule Supervisor.Spec do
       terminates abnormally, i.e., with an exit reason other than
       `:normal`, `:shutdown` or `{:shutdown, term}`
 
-  Notice that supervisor that reached maximum restart intensity will exit with `:shutdown` reason.
-  In this case the supervisor will only be restarted if its child specification was defined with
-  the `:restart` option is set to `:permanent` (the default).
+  Note that supervisor that reached maximum restart intensity will exit with `:shutdown` reason.
+  In this case the supervisor will only restart if its child specification was defined with
+  the `:restart` option set to `:permanent` (the default).
 
   ### Shutdown values (`:shutdown`)
 
@@ -136,7 +136,7 @@ defmodule Supervisor.Spec do
   supervise and a set of `options`.
 
   Returns a tuple containing the supervisor specification. This tuple can be
-  used as the return value of the `c:init/1` callback when implementing a
+  used as the return value of the `c:Supervisor.init/1` callback when implementing a
   module-based supervisor.
 
   ## Examples
@@ -234,8 +234,7 @@ defmodule Supervisor.Spec do
           function: atom,
           modules: modules
         ) :: spec
-  # TODO: Deprecate on v1.11
-  # @deprecated "Use the new child specifications outlined in the Supervisor module instead"
+  @deprecated "Use the new child specifications outlined in the Supervisor module instead"
   def worker(module, args, options \\ []) do
     child(:worker, module, args, options)
   end
@@ -269,8 +268,7 @@ defmodule Supervisor.Spec do
           function: atom,
           modules: modules
         ) :: spec
-  # TODO: Deprecate on v1.11
-  # @deprecated "Use the new child specifications outlined in the Supervisor module instead"
+  @deprecated "Use the new child specifications outlined in the Supervisor module instead"
   def supervisor(module, args, options \\ []) do
     options = Keyword.put_new(options, :shutdown, :infinity)
     child(:supervisor, module, args, options)

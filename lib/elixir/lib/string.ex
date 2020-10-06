@@ -60,7 +60,7 @@ defmodule String do
   Note it is generally not advised to use `\xNN` in Elixir
   strings, as introducing an invalid byte sequence would
   make the string invalid. If you have to introduce a
-  character by its hexdecimal representation, it is best
+  character by its hexadecimal representation, it is best
   to work with Unicode code points, such as `\uNNNN`. In fact,
   understanding Unicode code points can be essential when doing
   low-level manipulations of string, so let's explore them in
@@ -193,14 +193,15 @@ defmodule String do
 
   ## Integer code points
 
-  Although code points could be represented as integers, this
-  module represents all code points as strings. For example:
+  Although code points are represented as integers, this module
+  represents code points in their encoded format as strings.
+  For example:
 
       iex> String.codepoints("olá")
       ["o", "l", "á"]
 
-  There are a couple of ways to retrieve a character integer
-  code point. One may use the `?` construct:
+  There are a couple of ways to retrieve the character code point.
+  One may use the `?` construct:
 
       iex> ?o
       111
@@ -220,9 +221,9 @@ defmodule String do
       iex> "ol\u00E1"
       "olá"
 
-  Finally, to convert a String into a list of integers
-  code points, usually known as "char lists", you can call
-  `Strig.to_charlist`:
+  Finally, to convert a String into a list of integer
+  code points, known as "charlists" in Elixir, you can call
+  `String.to_charlist`:
 
       iex> String.to_charlist("olá")
       [111, 108, 225]
@@ -247,7 +248,7 @@ defmodule String do
   ## Compile binary patterns
 
   Many functions in this module work with patterns. For example,
-  `String.split/2` can split a string into multiple strings given
+  `String.split/3` can split a string into multiple strings given
   a pattern. This pattern can be a string, a list of strings or
   a compiled pattern:
 
@@ -282,7 +283,7 @@ defmodule String do
   @typedoc "Multiple code points that may be perceived as a single character by readers"
   @type grapheme :: t
 
-  @typedoc "Pattern used in functions like `replace/3` and `split/2`"
+  @typedoc "Pattern used in functions like `replace/4` and `split/3`"
   @type pattern :: t | [t] | :binary.cp()
 
   @conditional_mappings [:greek]
@@ -373,9 +374,10 @@ defmodule String do
   @doc ~S"""
   Divides a string into parts based on a pattern.
 
-  Returns a list of these parts. The pattern can
-  be a string, a list of strings, a regular expression,
-  or a compiled pattern.
+  Returns a list of these parts.
+
+  The `pattern` may be a string, a list of strings, a regular expression, or a
+  compiled pattern.
 
   The string is split into as many parts as possible by
   default, but can be controlled via the `:parts` option.
@@ -679,9 +681,15 @@ defmodule String do
   form identified by `form`.
 
   Invalid Unicode codepoints are skipped and the remaining of
-  the string is converted. If you want the algorith to stop
-  and return on invalid codepoint, use `:unicode.characters_to_nfd_binary/1`
-  and `:unicode.characters_to_nfc_binary/1` instead.
+  the string is converted. If you want the algorithm to stop
+  and return on invalid codepoint, use `:unicode.characters_to_nfd_binary/1`,
+  `:unicode.characters_to_nfc_binary/1`, `:unicode.characters_to_nfkd_binary/1`,
+  and `:unicode.characters_to_nfkc_binary/1` instead.
+
+  Normalization forms `:nfkc` and `:nfkd` should not be blindly applied
+  to arbitrary text. Because they erase many formatting distinctions,
+  they will prevent round-trip conversion to and from many legacy
+  character sets.
 
   ## Forms
 
@@ -695,6 +703,14 @@ defmodule String do
     * `:nfc` - Normalization Form Canonical Composition.
       Characters are decomposed and then recomposed by canonical equivalence.
 
+    * `:nfkd` - Normalization Form Compatibility Decomposition.
+      Characters are decomposed by compatibility equivalence, and
+      multiple combining characters are arranged in a specific
+      order.
+
+    * `:nfkc` - Normalization Form Compatibility Composition.
+      Characters are decomposed and then recomposed by compatibility equivalence.
+
   ## Examples
 
       iex> String.normalize("yêṩ", :nfd)
@@ -702,6 +718,12 @@ defmodule String do
 
       iex> String.normalize("leña", :nfc)
       "leña"
+
+      iex> String.normalize("ﬁ", :nfkd)
+      "fi"
+
+      iex> String.normalize("fi", :nfkc)
+      "fi"
 
   """
   def normalize(string, form)
@@ -717,6 +739,20 @@ defmodule String do
     case :unicode.characters_to_nfc_binary(string) do
       string when is_binary(string) -> string
       {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfc)
+    end
+  end
+
+  def normalize(string, :nfkd) do
+    case :unicode.characters_to_nfkd_binary(string) do
+      string when is_binary(string) -> string
+      {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfkd)
+    end
+  end
+
+  def normalize(string, :nfkc) do
+    case :unicode.characters_to_nfkc_binary(string) do
+      string when is_binary(string) -> string
+      {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfkc)
     end
   end
 
@@ -1280,12 +1316,12 @@ defmodule String do
   end
 
   defp pad(kind, string, count, padding) do
-    string_len = length(string)
+    string_length = length(string)
 
-    if string_len >= count do
+    if string_length >= count do
       string
     else
-      filler = build_filler(count - string_len, padding, padding, 0, [])
+      filler = build_filler(count - string_length, padding, padding, 0, [])
 
       case kind do
         :leading -> [filler | string]
@@ -1321,26 +1357,26 @@ defmodule String do
 
   @doc false
   @deprecated "Use String.pad_leading/2 instead"
-  def rjust(subject, len) do
-    rjust(subject, len, ?\s)
+  def rjust(subject, length) do
+    rjust(subject, length, ?\s)
   end
 
   @doc false
   @deprecated "Use String.pad_leading/3 with a binary padding instead"
-  def rjust(subject, len, pad) when is_integer(pad) and is_integer(len) and len >= 0 do
-    pad(:leading, subject, len, [<<pad::utf8>>])
+  def rjust(subject, length, pad) when is_integer(pad) and is_integer(length) and length >= 0 do
+    pad(:leading, subject, length, [<<pad::utf8>>])
   end
 
   @doc false
   @deprecated "Use String.pad_trailing/2 instead"
-  def ljust(subject, len) do
-    ljust(subject, len, ?\s)
+  def ljust(subject, length) do
+    ljust(subject, length, ?\s)
   end
 
   @doc false
   @deprecated "Use String.pad_trailing/3 with a binary padding instead"
-  def ljust(subject, len, pad) when is_integer(pad) and is_integer(len) and len >= 0 do
-    pad(:trailing, subject, len, [<<pad::utf8>>])
+  def ljust(subject, length, pad) when is_integer(pad) and is_integer(length) and length >= 0 do
+    pad(:trailing, subject, length, [<<pad::utf8>>])
   end
 
   @doc ~S"""
@@ -1349,7 +1385,8 @@ defmodule String do
 
   The `subject` is always a string.
 
-  The `pattern` may be a string, a regular expression, or a compiled pattern.
+  The `pattern` may be a string, a list of strings, a regular expression, or a
+  compiled pattern.
 
   The `replacement` may be a string or a function that receives the matched
   pattern and must return the replacement as a string or iodata.
@@ -1384,7 +1421,7 @@ defmodule String do
       iex> String.replace("a,b,c", ~r/,(.)/, ",\\1\\g{1}")
       "a,bb,cc"
 
-  Notice we had to escape the backslash escape character (i.e., we used `\\N`
+  Note that we had to escape the backslash escape character (i.e., we used `\\N`
   instead of just `\N` to escape the backslash; same thing for `\\g{N}`). By
   giving `\0`, one can inject the whole match in the replacement string.
 
@@ -1559,10 +1596,13 @@ defmodule String do
     :binary.copy(subject, n)
   end
 
-  @doc """
-  Returns all code points in the string.
+  @doc ~S"""
+  Returns a list of code points encoded as strings.
 
-  For details about code points and graphemes, see the `String` module documentation.
+  To retrieve code points in their natural integer
+  representation, see `to_charlist/1`. For details about
+  code points and graphemes, see the `String` module
+  documentation.
 
   ## Examples
 
@@ -1764,6 +1804,9 @@ defmodule String do
       iex> String.next_grapheme("olá")
       {"o", "lá"}
 
+      iex> String.next_grapheme("")
+      nil
+
   """
   @spec next_grapheme(t) :: {grapheme, t} | nil
   def next_grapheme(binary) do
@@ -1774,9 +1817,9 @@ defmodule String do
   end
 
   @doc """
-  Returns the size of the next grapheme.
+  Returns the size (in bytes) of the next grapheme.
 
-  The result is a tuple with the next grapheme size and
+  The result is a tuple with the next grapheme size in bytes and
   the remainder of the string or `nil` in case the string
   reached its end.
 
@@ -1784,6 +1827,9 @@ defmodule String do
 
       iex> String.next_grapheme_size("olá")
       {1, "lá"}
+
+      iex> String.next_grapheme_size("")
+      nil
 
   """
   @spec next_grapheme_size(t) :: {pos_integer, t} | nil
@@ -1800,6 +1846,9 @@ defmodule String do
 
       iex> String.first("եոգլի")
       "ե"
+
+      iex> String.first("")
+      nil
 
   """
   @spec first(t) :: grapheme | nil
@@ -1894,8 +1943,7 @@ defmodule String do
   end
 
   @doc """
-  Returns a substring starting at the offset `start`, and of
-  length `len`.
+  Returns a substring starting at the offset `start`, and of the given `length`.
 
   If the offset is greater than string length, then it returns `""`.
 
@@ -1936,22 +1984,22 @@ defmodule String do
     ""
   end
 
-  def slice(string, start, len) when start >= 0 and len >= 0 do
+  def slice(string, start, length) when start >= 0 and length >= 0 do
     case String.Unicode.split_at(string, start) do
       {_, nil} ->
         ""
 
       {start_bytes, rest} ->
-        {len_bytes, _} = String.Unicode.split_at(rest, len)
+        {len_bytes, _} = String.Unicode.split_at(rest, length)
         binary_part(string, start_bytes, len_bytes)
     end
   end
 
-  def slice(string, start, len) when start < 0 and len >= 0 do
+  def slice(string, start, length) when start < 0 and length >= 0 do
     start = length(string) + start
 
     case start >= 0 do
-      true -> slice(string, start, len)
+      true -> slice(string, start, length)
       false -> ""
     end
   end
@@ -2555,6 +2603,7 @@ defmodule String do
       [eq: "fox ", del: "ho", ins: "jum", eq: "ps over the ", del: "dog", ins: "lazy cat"]
 
   """
+  @doc since: "1.3.0"
   @spec myers_difference(t, t) :: [{:eq | :ins | :del, t}]
   def myers_difference(string1, string2) do
     graphemes(string1)

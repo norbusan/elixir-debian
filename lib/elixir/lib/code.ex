@@ -86,12 +86,12 @@ defmodule Code do
 
     * `{:local_function, meta, name, arity}` and
       `{:local_macro, meta, name, arity}` - traced whenever a local
-      function or macro is referenced. `meta` is the call AST metadata, `module`
-      is the invoked module, followed by the `name` and `arity`.
+      function or macro is referenced. `meta` is the call AST metadata, followed by
+      the `name` and `arity`.
 
     * `{:compile_env, app, path, return}` - traced whenever `Application.compile_env/3`
       or `Application.compile_env!/2` are called. `app` is an atom, `path` is a list
-      of keys to traverse in the application environemnt and `return` is either
+      of keys to traverse in the application environment and `return` is either
       `{:ok, value}` or `:error`.
 
   The `:tracers` compiler option can be combined with the `:parser_options`
@@ -171,14 +171,14 @@ defmodule Code do
       # Now unrequire all files
       Code.unrequire_files(Code.required_files())
 
-      # Notice modules are still available
+      # Note that modules are still available
       function_exported?(EExTest.Compiled, :before_compile, 0)
       #=> true
 
   """
   @doc since: "1.7.0"
   @spec unrequire_files([binary]) :: :ok
-  def unrequire_files(files) do
+  def unrequire_files(files) when is_list(files) do
     :elixir_code_server.cast({:unrequire_files, files})
   end
 
@@ -290,7 +290,7 @@ defmodule Code do
       and the second a list of imported macro names and arity; the list
       of function names and arity must be sorted
 
-  Notice that setting any of the values above overrides Elixir's default
+  Note that setting any of the values above overrides Elixir's default
   values. For example, setting `:requires` to `[]` will no longer
   automatically require the `Kernel` module. In the same way setting
   `:macros` will no longer auto-import `Kernel` macros like `Kernel.if/2`,
@@ -337,7 +337,7 @@ defmodule Code do
 
   defp eval_string_with_error_handling(string, binding, opts) do
     %{line: line, file: file} = env = :elixir.env_for_eval(opts)
-    forms = :elixir.string_to_quoted!(to_charlist(string), line, file, [])
+    forms = :elixir.string_to_quoted!(to_charlist(string), line, 1, file, [])
     {value, binding, _env} = :elixir.eval_forms(forms, binding, env)
     {value, binding}
   end
@@ -375,7 +375,7 @@ defmodule Code do
 
     * `:force_do_end_blocks` (since v1.9.0) - when `true`, converts all
       inline usages of `do: ...`,  `else: ...` and friends into `do/end`
-      blocks. Defaults to `false`. Notice this option is convergent:
+      blocks. Defaults to `false`. Note that this option is convergent:
       once you set it to `true`, all keywords will be converted. If you
       set it to `false` later on, `do/end` blocks won't be converted
       back to keywords.
@@ -759,6 +759,9 @@ defmodule Code do
     * `:line` - the starting line of the string being parsed.
       Defaults to 1.
 
+    * `:column` - (since v1.11.0) the starting column of the string being parsed.
+      Defaults to 1.
+
     * `:columns` - when `true`, attach a `:column` key to the quoted
       metadata. Defaults to `false`.
 
@@ -826,12 +829,13 @@ defmodule Code do
 
   """
   @spec string_to_quoted(List.Chars.t(), keyword) ::
-          {:ok, Macro.t()} | {:error, {line :: pos_integer, term, term}}
+          {:ok, Macro.t()} | {:error, {location :: keyword, term, term}}
   def string_to_quoted(string, opts \\ []) when is_list(opts) do
     file = Keyword.get(opts, :file, "nofile")
     line = Keyword.get(opts, :line, 1)
+    column = Keyword.get(opts, :column, 1)
 
-    case :elixir.string_to_tokens(to_charlist(string), line, file, opts) do
+    case :elixir.string_to_tokens(to_charlist(string), line, column, file, opts) do
       {:ok, tokens} ->
         :elixir.tokens_to_quoted(tokens, file, opts)
 
@@ -854,7 +858,8 @@ defmodule Code do
   def string_to_quoted!(string, opts \\ []) when is_list(opts) do
     file = Keyword.get(opts, :file, "nofile")
     line = Keyword.get(opts, :line, 1)
-    :elixir.string_to_quoted!(to_charlist(string), line, file, opts)
+    column = Keyword.get(opts, :column, 1)
+    :elixir.string_to_quoted!(to_charlist(string), line, column, file, opts)
   end
 
   @doc """
@@ -889,7 +894,7 @@ defmodule Code do
   If the file was already required, `require_file/2` doesn't do anything and
   returns `nil`.
 
-  Notice that if `require_file/2` is invoked by different processes concurrently,
+  Note that if `require_file/2` is invoked by different processes concurrently,
   the first process to invoke `require_file/2` acquires a lock and the remaining
   ones will block until the file is available. This means that if `require_file/2`
   is called more than once with a given file, that file will be compiled only once.
@@ -932,7 +937,7 @@ defmodule Code do
   @doc """
   Gets all compilation options from the code server.
 
-  To get invidual options, see `get_compiler_option/1`.
+  To get individual options, see `get_compiler_option/1`.
   For a description of all options, see `put_compiler_option/2`.
 
   ## Examples
@@ -951,7 +956,7 @@ defmodule Code do
   @doc """
   Stores all given compilation options.
 
-  To store invidual options, see `put_compiler_option/2`.
+  To store individual options, see `put_compiler_option/2`.
   For a description of all options, see `put_compiler_option/2`.
 
   ## Examples
@@ -963,8 +968,9 @@ defmodule Code do
   @spec compiler_options(Enumerable.t()) :: %{optional(atom) => boolean}
   def compiler_options(opts) do
     for {key, value} <- opts, into: %{} do
+      previous = get_compiler_option(key)
       put_compiler_option(key, value)
-      {key, value}
+      {key, previous}
     end
   end
 
@@ -1275,7 +1281,7 @@ defmodule Code do
   def ensure_compiled(module) when is_atom(module) do
     case :code.ensure_loaded(module) do
       {:error, :nofile} = error ->
-        if is_pid(:erlang.get(:elixir_compiler_pid)) do
+        if can_await_module_compilation?() do
           case Kernel.ErrorHandler.ensure_compiled(module, :module, :soft) do
             :found -> {:module, module}
             :deadlock -> {:error, :unavailable}
@@ -1288,6 +1294,21 @@ defmodule Code do
       other ->
         other
     end
+  end
+
+  @doc """
+  Returns true if the current process can await for module compilation.
+
+  When compiling Elixir code via `Kernel.ParallelCompiler`, which is
+  used by Mix and `elixirc`, calling a module that has not yet been
+  compiled will block the caller until the module becomes available.
+  Executing Elixir scripts, such as passing a filename to `elixir`,
+  does not await.
+  """
+  @doc since: "1.11.0"
+  @spec can_await_module_compilation? :: boolean
+  def can_await_module_compilation? do
+    :erlang.process_info(self(), :error_handler) == {:error_handler, Kernel.ErrorHandler}
   end
 
   @doc false
@@ -1326,8 +1347,8 @@ defmodule Code do
            docs :: [doc_element]}
           | {:error, :module_not_found | :chunk_not_found | {:invalid_chunk, binary}}
         when annotation: :erl_anno.anno(),
-             beam_language: :elixir | :erlang | :lfe | :alpaca | atom(),
-             doc_content: %{required(binary) => binary} | :none | :hidden,
+             beam_language: :elixir | :erlang | atom(),
+             doc_content: %{optional(binary) => binary} | :none | :hidden,
              doc_element:
                {{kind :: atom, function_name :: atom, arity}, annotation, signature, doc_content,
                 metadata},
@@ -1338,29 +1359,63 @@ defmodule Code do
 
   def fetch_docs(module) when is_atom(module) do
     case :code.get_object_code(module) do
-      {_module, bin, _beam_path} -> do_fetch_docs(bin)
-      :error -> {:error, :module_not_found}
+      {_module, bin, beam_path} ->
+        case fetch_docs_from_beam(bin) do
+          {:error, :chunk_not_found} ->
+            app_root = Path.expand(Path.join(["..", ".."]), beam_path)
+            path = Path.join([app_root, "doc", "chunks", "#{module}.chunk"])
+            fetch_docs_from_chunk(path)
+
+          other ->
+            other
+        end
+
+      :error ->
+        case :code.which(module) do
+          :preloaded ->
+            path = Path.join([:code.lib_dir(:erts), "doc", "chunks", "#{module}.chunk"])
+            fetch_docs_from_chunk(path)
+
+          _ ->
+            {:error, :module_not_found}
+        end
     end
   end
 
   def fetch_docs(path) when is_binary(path) do
-    do_fetch_docs(String.to_charlist(path))
+    fetch_docs_from_beam(String.to_charlist(path))
   end
 
   @docs_chunk 'Docs'
 
-  defp do_fetch_docs(bin_or_path) do
+  defp fetch_docs_from_beam(bin_or_path) do
     case :beam_lib.chunks(bin_or_path, [@docs_chunk]) do
       {:ok, {_module, [{@docs_chunk, bin}]}} ->
-        try do
-          :erlang.binary_to_term(bin)
-        rescue
-          _ -> {:error, {:invalid_chunk, bin}}
-        end
+        load_docs_chunk(bin)
 
       {:error, :beam_lib, {:missing_chunk, _, @docs_chunk}} ->
         {:error, :chunk_not_found}
+
+      {:error, :beam_lib, {:file_error, _, :enoent}} ->
+        {:error, :module_not_found}
     end
+  end
+
+  defp fetch_docs_from_chunk(path) do
+    case File.read(path) do
+      {:ok, bin} ->
+        load_docs_chunk(bin)
+
+      {:error, _} ->
+        {:error, :chunk_not_found}
+    end
+  end
+
+  defp load_docs_chunk(bin) do
+    :erlang.binary_to_term(bin)
+  rescue
+    _ ->
+      {:error, {:invalid_chunk, bin}}
   end
 
   @doc ~S"""

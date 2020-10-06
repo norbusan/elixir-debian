@@ -18,10 +18,13 @@ defmodule Dict do
   message =
     "Use the Map module for working with maps or the Keyword module for working with keyword lists"
 
-  @deprecated message
   defmacro __using__(_) do
     # Use this import to guarantee proper code expansion
     import Kernel, except: [size: 1]
+
+    if __CALLER__.module != HashDict do
+      IO.warn("use Dict is deprecated. " <> unquote(message), Macro.Env.stacktrace(__CALLER__))
+    end
 
     quote do
       message = "Use maps and the Map module instead"
@@ -152,13 +155,13 @@ defmodule Dict do
       end
 
       @deprecated message
-      def update(dict, key, initial, fun) do
+      def update(dict, key, default, fun) do
         case fetch(dict, key) do
           {:ok, value} ->
             put(dict, key, fun.(value))
 
           :error ->
-            put(dict, key, initial)
+            put(dict, key, default)
         end
       end
 
@@ -375,8 +378,8 @@ defmodule Dict do
 
   @deprecated message
   @spec update(t, key, value, (value -> value)) :: t
-  def update(dict, key, initial, fun) do
-    target(dict).update(dict, key, initial, fun)
+  def update(dict, key, default, fun) do
+    target(dict).update(dict, key, default, fun)
   end
 
   @deprecated message

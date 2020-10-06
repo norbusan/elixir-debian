@@ -21,15 +21,15 @@ defmodule Exception do
 
   @typedoc "The kind handled by formatting functions"
   @type kind :: :error | non_error_kind
-  @typep non_error_kind :: :exit | :throw | {:EXIT, pid}
+  @type non_error_kind :: :exit | :throw | {:EXIT, pid}
 
   @type stacktrace :: [stacktrace_entry]
   @type stacktrace_entry ::
           {module, atom, arity_or_args, location}
           | {(... -> any), arity_or_args, location}
 
-  @typep arity_or_args :: non_neg_integer | list
-  @typep location :: keyword
+  @type arity_or_args :: non_neg_integer | list
+  @type location :: keyword
 
   @callback exception(term) :: t
   @callback message(t) :: String.t()
@@ -46,6 +46,8 @@ defmodule Exception do
   @doc """
   Returns `true` if the given `term` is an exception.
   """
+  # TODO: Remove this on Elixir v1.15
+  @doc deprecated: "Use Kernel.is_exception/1 instead"
   def exception?(term)
   def exception?(%_{__exception__: true}), do: true
   def exception?(_), do: false
@@ -188,7 +190,7 @@ defmodule Exception do
   Where `definition` is `:def`, `:defp`, `:defmacro` or `:defmacrop`.
   """
   @doc since: "1.5.0"
-  @spec blame_mfa(module, function, args :: [term]) ::
+  @spec blame_mfa(module, function :: atom, args :: [term]) ::
           {:ok, :def | :defp | :defmacro | :defmacrop, [{args :: [term], guards :: [term]}]}
           | :error
   def blame_mfa(module, function, args)
@@ -237,7 +239,11 @@ defmodule Exception do
     binding = :orddict.store(:VAR, call_arg, binding)
 
     try do
-      {:value, _, binding} = :erl_eval.expr({:match, 0, erl_arg, {:var, 0, :VAR}}, binding, :none)
+      ann = :erl_anno.new(0)
+
+      {:value, _, binding} =
+        :erl_eval.expr({:match, ann, erl_arg, {:var, ann, :VAR}}, binding, :none)
+
       {true, binding}
     rescue
       _ -> {false, binding}
@@ -261,7 +267,13 @@ defmodule Exception do
       blame_guard(right, scope, binding)
     ]
 
-    {rewrite_guard_call(op), meta, guards}
+    kernel_op =
+      case op do
+        :orelse -> :or
+        :andalso -> :and
+      end
+
+    {kernel_op, meta, guards}
   end
 
   defp blame_guard(ex_guard, scope, binding) do
@@ -280,32 +292,17 @@ defmodule Exception do
 
   defp rewrite_guard(guard) do
     Macro.prewalk(guard, fn
-      {{:., _, [:erlang, :element]}, _, [{{:., _, [:erlang, :+]}, _, [int, 1]}, arg]} ->
-        {:elem, [], [arg, int]}
-
-      {{:., _, [:erlang, :element]}, _, [int, arg]} when is_integer(int) ->
-        {:elem, [], [arg, int - 1]}
-
-      {:., _, [:erlang, call]} ->
-        rewrite_guard_call(call)
-
-      other ->
-        other
+      {{:., _, [mod, fun]}, meta, args} -> erl_to_ex(mod, fun, args, meta)
+      other -> other
     end)
   end
 
-  defp rewrite_guard_call(:orelse), do: :or
-  defp rewrite_guard_call(:andalso), do: :and
-  defp rewrite_guard_call(:"=<"), do: :<=
-  defp rewrite_guard_call(:"/="), do: :!=
-  defp rewrite_guard_call(:"=:="), do: :===
-  defp rewrite_guard_call(:"=/="), do: :!==
-
-  defp rewrite_guard_call(op) when op in [:band, :bor, :bnot, :bsl, :bsr, :bxor],
-    do: {:., [], [Bitwise, op]}
-
-  defp rewrite_guard_call(op) when op in [:xor, :element, :size], do: {:., [], [:erlang, op]}
-  defp rewrite_guard_call(op), do: op
+  defp erl_to_ex(mod, fun, args, meta) do
+    case :elixir_rewrite.erl_to_ex(mod, fun, args) do
+      {Kernel, fun, args} -> {fun, meta, args}
+      {mod, fun, args} -> {{:., [], [mod, fun]}, meta, args}
+    end
+  end
 
   defp blame_wrap(match?, ast), do: %{match?: match?, node: ast}
 
@@ -638,6 +635,7 @@ defmodule Exception do
 
   @doc """
   Formats the given `file` and `line` as shown in stacktraces.
+
   If any of the values are `nil`, they are omitted.
 
   ## Examples
@@ -653,14 +651,42 @@ defmodule Exception do
 
   """
   def format_file_line(file, line, suffix \\ "") do
-    if file do
-      if line && line != 0 do
-        "#{file}:#{line}:#{suffix}"
-      else
-        "#{file}:#{suffix}"
-      end
-    else
+    cond do
+      is_nil(file) -> ""
+      is_nil(line) or line == 0 -> "#{file}:#{suffix}"
+      true -> "#{file}:#{line}:#{suffix}"
+    end
+  end
+
+  @doc """
+  Formats the given `file`, `line`, and `column` as shown in stacktraces.
+
+  If any of the values are `nil`, they are omitted.
+
+  ## Examples
+
+      iex> Exception.format_file_line_column("foo", 1, 2)
+      "foo:1:2:"
+
+      iex> Exception.format_file_line_column("foo", 1, nil)
+      "foo:1:"
+
+      iex> Exception.format_file_line_column("foo", nil, nil)
+      "foo:"
+
+      iex> Exception.format_file_line_column("foo", nil, 2)
+      "foo:"
+
+      iex> Exception.format_file_line_column(nil, nil, nil)
       ""
+
+  """
+  def format_file_line_column(file, line, column, suffix \\ "") do
+    cond do
+      is_nil(file) -> ""
+      is_nil(line) or line == 0 -> "#{file}:#{suffix}"
+      is_nil(column) or column == 0 -> "#{file}:#{line}:#{suffix}"
+      true -> "#{file}:#{line}:#{column}:#{suffix}"
     end
   end
 
@@ -692,7 +718,7 @@ defmodule ArgumentError do
         not is_atom(module) and is_atom(function) and args == [] ->
           "you attempted to apply #{inspect(function)} on #{inspect(module)}. " <>
             "If you are using apply/3, make sure the module is an atom. " <>
-            "If you are using the dot syntax, such as map.field or module.function, " <>
+            "If you are using the dot syntax, such as map.field or module.function(), " <>
             "make sure the left side of the dot is an atom or a map"
 
         not is_atom(module) ->
@@ -766,21 +792,22 @@ defmodule SystemLimitError do
 end
 
 defmodule SyntaxError do
-  defexception [:file, :line, description: "syntax error"]
+  defexception [:file, :line, :column, description: "syntax error"]
 
   @impl true
-  def message(exception) do
-    Exception.format_file_line(Path.relative_to_cwd(exception.file), exception.line) <>
-      " " <> exception.description
+  def message(%{file: file, line: line, column: column, description: description}) do
+    Exception.format_file_line_column(Path.relative_to_cwd(file), line, column) <>
+      " " <> description
   end
 end
 
 defmodule TokenMissingError do
-  defexception [:file, :line, description: "expression is incomplete"]
+  defexception [:file, :line, :column, description: "expression is incomplete"]
 
   @impl true
-  def message(%{file: file, line: line, description: description}) do
-    Exception.format_file_line(file && Path.relative_to_cwd(file), line) <> " " <> description
+  def message(%{file: file, line: line, column: column, description: description}) do
+    Exception.format_file_line_column(file && Path.relative_to_cwd(file), line, column) <>
+      " " <> description
   end
 end
 
@@ -950,7 +977,7 @@ defmodule UndefinedFunctionError do
   end
 
   defp hint(nil, _function, 0, _loaded?) do
-    ". If you are using the dot syntax, such as map.field or module.function, " <>
+    ". If you are using the dot syntax, such as map.field or module.function(), " <>
       "make sure the left side of the dot is an atom or a map"
   end
 
@@ -1329,7 +1356,7 @@ defmodule File.CopyError do
     formatted = IO.iodata_to_binary(:file.format_error(exception.reason))
 
     location =
-      case exception.on() do
+      case exception.on do
         "" -> ""
         on -> ". #{on}"
       end
@@ -1347,7 +1374,7 @@ defmodule File.RenameError do
     formatted = IO.iodata_to_binary(:file.format_error(exception.reason))
 
     location =
-      case exception.on() do
+      case exception.on do
         "" -> ""
         on -> ". #{on}"
       end

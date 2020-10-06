@@ -48,8 +48,15 @@ defmodule Mix.Shell.IO do
   @doc """
   Prints a message and asks the user if they want to proceed.
 
-  The user must press Enter or type one of "y", "yes", "Y", "YES" or
-  "Yes".
+  The user must press Enter or type one of "y", "yes", "Y", "YES"
+  or "Yes".
+
+  ## Examples
+
+      if Mix.shell().yes?("Are you sure?") do
+        # do something...
+      end
+
   """
   def yes?(message) do
     print_app()

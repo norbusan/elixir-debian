@@ -46,6 +46,7 @@ defmodule Time do
         }
 
   @parts_per_day 86_400_000_000
+  @seconds_per_day 24 * 60 * 60
 
   @doc """
   Returns the current time in UTC.
@@ -136,6 +137,44 @@ defmodule Time do
 
       false ->
         {:error, :invalid_time}
+    end
+  end
+
+  @doc """
+  Builds a new time.
+
+  Expects all values to be integers. Returns `time` if each
+  entry fits its appropriate range, raises if the time is invalid.
+
+  Microseconds can also be given with a precision, which must be an
+  integer between 0 and 6.
+
+  The built-in calendar does not support leap seconds.
+
+  ## Examples
+
+      iex> Time.new!(0, 0, 0, 0)
+      ~T[00:00:00.000000]
+      iex> Time.new!(23, 59, 59, 999_999)
+      ~T[23:59:59.999999]
+      iex> Time.new!(24, 59, 59, 999_999)
+      ** (ArgumentError) cannot build time, reason: :invalid_time
+  """
+  @doc since: "1.11.0"
+  @spec new!(
+          Calendar.hour(),
+          Calendar.minute(),
+          Calendar.second(),
+          Calendar.microsecond() | non_neg_integer,
+          Calendar.calendar()
+        ) :: t
+  def new!(hour, minute, second, microsecond \\ {0, 0}, calendar \\ Calendar.ISO) do
+    case new(hour, minute, second, microsecond, calendar) do
+      {:ok, time} ->
+        time
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot build time, reason: #{inspect(reason)}"
     end
   end
 
@@ -359,6 +398,63 @@ defmodule Time do
   end
 
   @doc """
+  Converts a number of seconds after midnight to a `Time` struct.
+
+  ## Examples
+
+      iex> Time.from_seconds_after_midnight(10_000)
+      ~T[02:46:40]
+      iex> Time.from_seconds_after_midnight(30_000, {5000, 3})
+      ~T[08:20:00.005]
+      iex> Time.from_seconds_after_midnight(-1)
+      ~T[23:59:59]
+      iex> Time.from_seconds_after_midnight(100_000)
+      ~T[03:46:40]
+
+  """
+  @doc since: "1.11.0"
+  @spec from_seconds_after_midnight(
+          integer(),
+          Calendar.microsecond(),
+          Calendar.calendar()
+        ) :: t
+  def from_seconds_after_midnight(seconds, microsecond \\ {0, 0}, calendar \\ Calendar.ISO)
+      when is_integer(seconds) do
+    seconds_in_day = Integer.mod(seconds, @seconds_per_day)
+
+    {hour, minute, second, {_, _}} =
+      calendar.time_from_day_fraction({seconds_in_day, @seconds_per_day})
+
+    %Time{
+      calendar: calendar,
+      hour: hour,
+      minute: minute,
+      second: second,
+      microsecond: microsecond
+    }
+  end
+
+  @doc """
+  Converts a `Time` struct to a number of seconds after midnight.
+
+  The returned value is a two-element tuple with the number of seconds and microseconds.
+
+  ## Examples
+
+      iex> Time.to_seconds_after_midnight(~T[23:30:15])
+      {84615, 0}
+      iex> Time.to_seconds_after_midnight(~N[2010-04-17 23:30:15.999])
+      {84615, 999000}
+
+  """
+  @doc since: "1.11.0"
+  @spec to_seconds_after_midnight(Calendar.time()) :: {integer(), non_neg_integer()}
+  def to_seconds_after_midnight(%{microsecond: {microsecond, _precision}} = time) do
+    iso_days = {0, to_day_fraction(time)}
+    {Calendar.ISO.iso_days_to_unit(iso_days, :second), microsecond}
+  end
+
+  @doc """
   Adds the `number` of `unit`s to the given `time`.
 
   This function accepts the `number` measured according to `Calendar.ISO`.
@@ -556,12 +652,12 @@ defmodule Time do
 
   As with the `compare/2` function both `Time` structs and other structures
   containing time can be used. If for instance a `NaiveDateTime` or `DateTime`
-  is passed, only the hour, month, second, and microsecond is considered. Any
+  is passed, only the hour, minute, second, and microsecond is considered. Any
   additional information about a date or time zone is ignored when calculating
   the difference.
 
   The answer can be returned in any `unit` available from
-  `t:System.time_unit/0`. If the first unit is smaller than
+  `t:System.time_unit/0`. If the first time value is earlier than
   the second, a negative number is returned.
 
   This function returns the difference in seconds where seconds

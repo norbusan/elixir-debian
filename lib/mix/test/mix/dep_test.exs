@@ -73,6 +73,11 @@ defmodule Mix.DepTest do
     Mix.Project.push(DepsApp)
 
     in_fixture("deps_status", fn ->
+      apps = Mix.Project.deps_apps()
+      assert length(apps) == 6
+      assert :ok in apps
+      assert :uncloned in apps
+
       paths = Mix.Project.deps_paths()
       assert map_size(paths) == 6
       assert paths[:ok] =~ "deps/ok"
@@ -288,6 +293,10 @@ defmodule Mix.DepTest do
         """)
 
         Mix.Tasks.Deps.run([])
+        assert_received {:mix_shell, :info, ["* deps_repo1" <> _]}
+        assert_received {:mix_shell, :info, [_]}
+        assert_received {:mix_shell, :info, ["* deps_repo2" <> _]}
+        assert_received {:mix_shell, :info, [_]}
         assert_received {:mix_shell, :info, ["* git_repo" <> _]}
         assert_received {:mix_shell, :info, [msg]}
         assert msg =~ "different specs were given for the git_repo"
@@ -598,6 +607,8 @@ defmodule Mix.DepTest do
           assert [divergedonly: _, noappfile: {_, _}] = Enum.map(loaded, & &1.status)
 
           Mix.Tasks.Deps.run([])
+          assert_received {:mix_shell, :info, ["* deps_repo" <> _]}
+          assert_received {:mix_shell, :info, [_]}
           assert_received {:mix_shell, :info, ["* git_repo" <> _]}
           assert_received {:mix_shell, :info, [msg]}
           assert msg =~ "Remove the :only restriction from your dep"
@@ -680,6 +691,8 @@ defmodule Mix.DepTest do
           assert [unavailable: _] = Enum.map(loaded, & &1.status)
 
           Mix.Tasks.Deps.run([])
+          assert_received {:mix_shell, :info, ["* deps_repo" <> _]}
+          assert_received {:mix_shell, :info, [_]}
           assert_received {:mix_shell, :info, ["* git_repo" <> _]}
           assert_received {:mix_shell, :info, [msg]}
           assert msg =~ "Ensure you specify at least the same environments in :only in your dep"
@@ -873,6 +886,8 @@ defmodule Mix.DepTest do
           assert [divergedtargets: _, noappfile: {_, _}] = Enum.map(loaded, & &1.status)
 
           Mix.Tasks.Deps.run([])
+          assert_received {:mix_shell, :info, ["* deps_repo" <> _]}
+          assert_received {:mix_shell, :info, [_]}
           assert_received {:mix_shell, :info, ["* git_repo" <> _]}
           assert_received {:mix_shell, :info, [msg]}
           assert msg =~ "Remove the :targets restriction from your dep"
@@ -955,6 +970,8 @@ defmodule Mix.DepTest do
           assert [unavailable: _] = Enum.map(loaded, & &1.status)
 
           Mix.Tasks.Deps.run([])
+          assert_received {:mix_shell, :info, ["* deps_repo" <> _]}
+          assert_received {:mix_shell, :info, [_]}
           assert_received {:mix_shell, :info, ["* git_repo" <> _]}
           assert_received {:mix_shell, :info, [msg]}
           assert msg =~ "Ensure you specify at least the same targets in :targets in your dep"

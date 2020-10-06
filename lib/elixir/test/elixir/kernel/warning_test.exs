@@ -22,6 +22,10 @@ defmodule Kernel.WarningTest do
     assert output =~ "nofile:2"
   end
 
+  test "does not warn on incomplete tokenization" do
+    assert {:error, _} = Code.string_to_quoted(~s[:"foobar" do])
+  end
+
   test "operators formed by many of the same character followed by that character" do
     output =
       capture_err(fn ->
@@ -43,6 +47,9 @@ defmodule Kernel.WarningTest do
     test "does not warn for unnecessary quotes in uppercase atoms/keywords" do
       assert capture_err(fn -> Code.eval_string(~s/:"Foo"/) end) == ""
       assert capture_err(fn -> Code.eval_string(~s/["Foo": :bar]/) end) == ""
+      assert capture_err(fn -> Code.eval_string(~s/:"Foo"/) end) == ""
+      assert capture_err(fn -> Code.eval_string(~s/:"foo@bar"/) end) == ""
+      assert capture_err(fn -> Code.eval_string(~s/:"héllò"/) end) == ""
     end
 
     test "warns for unnecessary quotes" do
@@ -75,6 +82,23 @@ defmodule Kernel.WarningTest do
     assert output =~ "variable \"arg\" is unused"
     assert output =~ "variable \"module\" is unused"
     assert output =~ "variable \"file\" is unused"
+  after
+    purge(Sample)
+  end
+
+  test "unused compiler variable" do
+    output =
+      capture_err(fn ->
+        Code.eval_string("""
+        defmodule Sample do
+          def hello(__MODULE___), do: :ok
+          def world(_R), do: :ok
+        end
+        """)
+      end)
+
+    assert output =~ "unknown compiler variable \"__MODULE___\""
+    refute output =~ "unknown compiler variable \"_R\""
   after
     purge(Sample)
   end
@@ -432,7 +456,7 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "default arguments in b/3 are never used\n  nofile:3"
+           end) =~ "default values for the optional arguments in b/3 are never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -441,7 +465,8 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "the first 2 default arguments in b/3 are never used\n  nofile:3"
+           end) =~
+             "the default values for the first 2 optional arguments in b/3 are never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -450,7 +475,8 @@ defmodule Kernel.WarningTest do
                defp b(arg1 \\ 1, arg2 \\ 2, arg3 \\ 3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "the first default argument in b/3 is never used\n  nofile:3"
+           end) =~
+             "the default value for the first optional argument in b/3 is never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -470,7 +496,7 @@ defmodule Kernel.WarningTest do
                defp b(arg1, arg2, arg3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "default arguments in b/3 are never used\n  nofile:3"
+           end) =~ "default values for the optional arguments in b/3 are never used\n  nofile:3"
 
     assert capture_err(fn ->
              Code.eval_string(~S"""
@@ -481,7 +507,8 @@ defmodule Kernel.WarningTest do
                defp b(arg1, arg2, arg3), do: [arg1, arg2, arg3]
              end
              """)
-           end) =~ "the first 2 default arguments in b/3 are never used\n  nofile:3"
+           end) =~
+             "the default values for the first 2 optional arguments in b/3 are never used\n  nofile:3"
   after
     purge([Sample1, Sample2, Sample3, Sample4, Sample5, Sample6])
   end
@@ -1174,6 +1201,51 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
+  test "duplicate docs across clauses" do
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample1 do
+               defmacro __using__(_) do
+                 quote do
+                   @doc "hello"
+                   def add(a, 1), do: a + 1
+                 end
+               end
+             end
+
+             defmodule Sample2 do
+               use Sample1
+               @doc "world"
+               def add(a, 2), do: a + 2
+             end
+             """)
+           end) == ""
+
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample3 do
+               @doc "hello"
+               def add(a, 1), do: a + 1
+               @doc "world"
+               def add(a, b)
+             end
+             """)
+           end) =~ ""
+
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample4 do
+               @doc "hello"
+               def add(a, 1), do: a + 1
+               @doc "world"
+               def add(a, 2), do: a + 2
+             end
+             """)
+           end) =~ "redefining @doc attribute previously set at line "
+  after
+    purge([Sample1, Sample2, Sample3, Sample4])
+  end
+
   test "reserved doc metadata keys" do
     output =
       capture_err(fn ->
@@ -1548,23 +1620,8 @@ defmodule Kernel.WarningTest do
   end
 
   test "System.stacktrace is deprecated outside catch/rescue" do
-    output = capture_err(fn -> Code.eval_string("System.stacktrace()") end)
-    assert output =~ "System.stacktrace/0 outside of rescue/catch clauses is deprecated"
-
-    output =
-      capture_err(fn ->
-        Code.eval_string("""
-        try do
-          :trying
-        rescue
-          _ -> System.stacktrace()
-        catch
-          _ -> System.stacktrace()
-        end
-        """)
-      end)
-
-    assert output == ""
+    assert capture_err(fn -> Code.eval_string("System.stacktrace()") end) =~
+             "System.stacktrace/0 is deprecated"
   end
 
   test "unused variable in defguard" do
@@ -1752,6 +1809,22 @@ defmodule Kernel.WarningTest do
            end) =~ "duplicate key :foo found in struct"
   after
     purge(TestMod)
+  end
+
+  test "deprecate nullary remote zero-arity capture with parens" do
+    assert capture_err(fn ->
+             Code.eval_string("""
+             import System, only: [pid: 0]
+             &pid/0
+             """)
+           end) == ""
+
+    assert capture_err(fn ->
+             Code.eval_string("""
+             &System.pid()/0
+             """)
+           end) =~
+             "extra parentheses on a remote function capture &System.pid()/0 have been deprecated. Please remove the parentheses: &System.pid/0"
   end
 
   defp purge(list) when is_list(list) do

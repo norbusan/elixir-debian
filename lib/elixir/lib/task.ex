@@ -203,6 +203,9 @@ defmodule Task do
   a list `[pid_n, ..., pid2, pid1]` with at least one entry Where `pid_n` is
   the PID that called the current process, `pid2` called `pid_n`, and `pid2` was
   called by `pid1`.
+
+  If a task crashes, the callers field is included as part of the log message
+  metadata under the `:callers` key.
   """
 
   @doc """
@@ -458,8 +461,8 @@ defmodule Task do
       This is also useful when you're using the tasks for side effects.
       Defaults to `true`.
 
-    * `:timeout` - the maximum amount of time (in milliseconds) each
-      task is allowed to execute for. Defaults to `5000`.
+    * `:timeout` - the maximum amount of time (in milliseconds or `:infinity`)
+      each task is allowed to execute for. Defaults to `5000`.
 
     * `:on_timeout` - what to do when a task times out. The possible
       values are:
@@ -488,6 +491,38 @@ defmodule Task do
       stream = Task.async_stream(collection, Mod, :expensive_fun, [], ordered: false)
       Stream.run(stream)
 
+  ## Attention: async + take
+
+  Given items in an async stream are processed concurrently, doing
+  `async_stream` followed by `Enum.take/2` may cause more items than
+  requested to be processed. Let's see an example:
+
+      1..100
+      |> Task.async_stream(fn i ->
+        Process.sleep(100)
+        IO.puts(to_string(i))
+      end)
+      |> Enum.take(10)
+
+  For a machine with 8 cores, the above will process 16 items instead
+  of 10. The reason is that `async_stream/5` always have 8 elements
+  processing at once. So by the time `Enum` says it got all elements
+  it needed, there are still 6 elements left to be processed.
+
+  The solution here is to use `Stream.take/2` instead of `Enum.take/2`
+  to filter elements before-hand:
+
+      1..100
+      |> Stream.take(10)
+      |> Task.async_stream(fn i ->
+        Process.sleep(100)
+        IO.puts(to_string(i))
+      end)
+      |> Enum.to_list()
+
+  If for some reason you cannot take the elements before hand,
+  you can use `:max_concurrency` to limit how many elements
+  may be over processed at the cost of reducing concurrency.
   """
   @doc since: "1.4.0"
   @spec async_stream(Enumerable.t(), module, atom, [term], keyword) :: Enumerable.t()
@@ -558,11 +593,12 @@ defmodule Task do
   In case the task process dies, the current process will exit with the same
   reason as the task.
 
-  A timeout in milliseconds or `:infinity`, can be given with a default value of `5000`. If the
-  timeout is exceeded, then the current process will exit. If the task process
-  is linked to the current process which is the case when a task is started with
-  `async`, then the task process will also exit. If the task process is trapping
-  exits or not linked to the current process, then it will continue to run.
+  A timeout, in milliseconds or `:infinity`, can be given with a default value
+  of `5000`. If the timeout is exceeded, then the current process will exit. If
+  the task process is linked to the current process which is the case when a
+  task is started with `async`, then the task process will also exit. If the
+  task process is trapping exits or not linked to the current process, then it
+  will continue to run.
 
   This function assumes the task's monitor is still active or the monitor's
   `:DOWN` message is in the message queue. If it has been demonitored, or the
@@ -608,6 +644,109 @@ defmodule Task do
     end
   end
 
+  @doc """
+  Awaits replies from multiple tasks and returns them.
+
+  This function receives a list of tasks and waits for their replies in the
+  given time interval. It returns a list of the results, in the same order as
+  the tasks supplied in the `tasks` input argument.
+
+  If any of the task processes dies, the current process will exit with the
+  same reason as that task.
+
+  A timeout, in milliseconds or `:infinity`, can be given with a default value
+  of `5000`. If the timeout is exceeded, then the current process will exit.
+  Any task processes that are linked to the current process (which is the case
+  when a task is started with `async`) will also exit. Any task processes that
+  are trapping exits or not linked to the current process will continue to run.
+
+  This function assumes the tasks' monitors are still active or the monitors'
+  `:DOWN` message is in the message queue. If any tasks have been demonitored,
+  or the message already received, this function will wait for the duration of
+  the timeout.
+
+  This function can only be called once for any given task. If you want to be
+  able to check multiple times if a long-running task has finished its
+  computation, use `yield_many/2` instead.
+
+  ## Compatibility with OTP behaviours
+
+  It is not recommended to `await` long-running tasks inside an OTP behaviour
+  such as `GenServer`. See `await/2` for more information.
+
+  ## Examples
+
+      iex> tasks = [
+      ...>   Task.async(fn -> 1 + 1 end),
+      ...>   Task.async(fn -> 2 + 3 end)
+      ...> ]
+      iex> Task.await_many(tasks)
+      [2, 5]
+
+  """
+  @doc since: "1.11.0"
+  @spec await_many([t], timeout) :: [term]
+  def await_many(tasks, timeout \\ 5000) when is_timeout(timeout) do
+    awaiting =
+      for task <- tasks, into: %{} do
+        %Task{ref: ref, owner: owner} = task
+
+        if owner != self() do
+          raise ArgumentError, invalid_owner_error(task)
+        end
+
+        {ref, true}
+      end
+
+    timeout_ref = make_ref()
+
+    timer_ref =
+      if timeout != :infinity do
+        Process.send_after(self(), timeout_ref, timeout)
+      end
+
+    try do
+      await_many(tasks, timeout, awaiting, %{}, timeout_ref)
+    after
+      timer_ref && Process.cancel_timer(timer_ref)
+      receive do: (^timeout_ref -> :ok), after: (0 -> :ok)
+    end
+  end
+
+  defp await_many(tasks, _timeout, awaiting, replies, _timeout_ref)
+       when map_size(awaiting) == 0 do
+    for %{ref: ref} <- tasks, do: Map.fetch!(replies, ref)
+  end
+
+  defp await_many(tasks, timeout, awaiting, replies, timeout_ref) do
+    receive do
+      ^timeout_ref ->
+        demonitor_pending_tasks(awaiting)
+        exit({:timeout, {__MODULE__, :await_many, [tasks, timeout]}})
+
+      {:DOWN, ref, _, proc, reason} when is_map_key(awaiting, ref) ->
+        demonitor_pending_tasks(awaiting)
+        exit({reason(reason, proc), {__MODULE__, :await_many, [tasks, timeout]}})
+
+      {ref, reply} when is_map_key(awaiting, ref) ->
+        Process.demonitor(ref, [:flush])
+
+        await_many(
+          tasks,
+          timeout,
+          Map.delete(awaiting, ref),
+          Map.put(replies, ref, reply),
+          timeout_ref
+        )
+    end
+  end
+
+  defp demonitor_pending_tasks(awaiting) do
+    Enum.each(awaiting, fn {ref, _} ->
+      Process.demonitor(ref, [:flush])
+    end)
+  end
+
   @doc false
   @deprecated "Pattern match directly on the message instead"
   def find(tasks, {ref, reply}) when is_reference(ref) do
@@ -647,10 +786,9 @@ defmodule Task do
     * the caller is trapping exits
 
   A timeout, in milliseconds or `:infinity`, can be given with a default value
-  of `5000`. If the time runs out before a message from
-  the task is received, this function will return `nil`
-  and the monitor will remain active. Therefore `yield/2` can be
-  called multiple times on the same task.
+  of `5000`. If the time runs out before a message from the task is received,
+  this function will return `nil` and the monitor will remain active. Therefore
+  `yield/2` can be called multiple times on the same task.
 
   This function assumes the task's monitor is still active or the
   monitor's `:DOWN` message is in the message queue. If it has been

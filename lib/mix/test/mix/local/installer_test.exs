@@ -30,7 +30,7 @@ defmodule Mix.Local.InstallerTest do
 
   test "parse_args Git" do
     args = ["git", "https://example.com/user/repo.git"]
-    opts = [branch: "master", git: "https://example.com/user/repo.git", submodules: nil]
+    opts = [git: "https://example.com/user/repo.git", submodules: nil]
 
     assert Mix.Local.Installer.parse_args(args, []) == {:fetcher, {:"new package", opts}}
   end
@@ -58,7 +58,7 @@ defmodule Mix.Local.InstallerTest do
 
   test "parse_args Git submodules" do
     args = ["git", "https://example.com/user/repo.git"]
-    opts = [branch: "master", git: "https://example.com/user/repo.git", submodules: true]
+    opts = [git: "https://example.com/user/repo.git", submodules: true]
 
     assert Mix.Local.Installer.parse_args(args, submodules: true) ==
              {:fetcher, {:"new package", opts}}
@@ -66,35 +66,47 @@ defmodule Mix.Local.InstallerTest do
 
   test "parse_args Git app" do
     args = ["git", "https://example.com/user/repo.git"]
-    opts = [branch: "master", git: "https://example.com/user/repo.git", submodules: nil]
+    opts = [git: "https://example.com/user/repo.git", submodules: nil]
 
     assert Mix.Local.Installer.parse_args(args, app: "my_app") == {:fetcher, {:my_app, opts}}
   end
 
   test "parse_args GitHub" do
     args = ["github", "user/repo"]
-    opts = [branch: "master", git: "https://github.com/user/repo.git", submodules: nil]
+    opts = [git: "https://github.com/user/repo.git", submodules: nil]
 
     assert Mix.Local.Installer.parse_args(args, []) == {:fetcher, {:"new package", opts}}
   end
 
   test "parse_args Hex" do
     assert Mix.Local.Installer.parse_args(["hex", "a_package"], []) ==
-             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package]}}
+             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, repo: "hexpm"]}}
   end
 
   test "parse_args Hex app" do
     assert Mix.Local.Installer.parse_args(["hex", "a_package"], app: "my_app") ==
-             {:fetcher, {:my_app, ">= 0.0.0", [hex: :a_package]}}
+             {:fetcher, {:my_app, ">= 0.0.0", [hex: :a_package, repo: "hexpm"]}}
   end
 
   test "parse_args Hex version spec" do
     assert Mix.Local.Installer.parse_args(["hex", "a_package", "1.0.0"], []) ==
-             {:fetcher, {:a_package, "1.0.0", [hex: :a_package]}}
+             {:fetcher, {:a_package, "1.0.0", [hex: :a_package, repo: "hexpm"]}}
   end
 
   test "parse_args Hex with organization" do
     assert Mix.Local.Installer.parse_args(["hex", "a_package"], organization: "my_org") ==
-             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, organization: "my_org"]}}
+             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, repo: "hexpm:my_org"]}}
+  end
+
+  test "parse_args Hex with repo" do
+    assert Mix.Local.Installer.parse_args(["hex", "a_package"], repo: "my_repo") ==
+             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, repo: "my_repo"]}}
+  end
+
+  test "parse_args Hex with repo and organization" do
+    opts = [repo: "my_repo", organization: "my_org"]
+
+    assert Mix.Local.Installer.parse_args(["hex", "a_package"], opts) ==
+             {:fetcher, {:a_package, ">= 0.0.0", [hex: :a_package, repo: "my_repo:my_org"]}}
   end
 end

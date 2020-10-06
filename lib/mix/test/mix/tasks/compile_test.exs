@@ -66,7 +66,7 @@ defmodule Mix.Tasks.CompileTest do
       end)
       """)
 
-      assert Mix.Task.run("compile", ["--force", "--no-deps"]) == {:ok, []}
+      assert Mix.Task.run("compile", ["--force", "--no-deps-loading"]) == {:ok, []}
     end)
   end
 
@@ -105,6 +105,8 @@ defmodule Mix.Tasks.CompileTest do
     import ExUnit.CaptureLog
 
     in_fixture("no_mixfile", fn ->
+      Process.put({MixTest.Case.Sample, :application}, extra_applications: [:logger])
+
       File.write!("lib/a.ex", """
       defmodule A do
       require Logger
@@ -140,6 +142,39 @@ defmodule Mix.Tasks.CompileTest do
                  severity: :error,
                  position: 2,
                  message: "** (SyntaxError) lib/a.ex:2:" <> _,
+                 compiler_name: "Elixir"
+               } = diagnostic
+      end)
+    end)
+  end
+
+  test "calling raise inside a macro returns a diagnostic with a position" do
+    in_fixture("no_mixfile", fn ->
+      File.write!("lib/a.ex", """
+      defmodule A do
+        defmacro custom_macro do
+          raise "error"
+        end
+      end
+      """)
+
+      File.write!("lib/b.ex", """
+      defmodule B do
+        require A
+        A.custom_macro()
+      end
+      """)
+
+      file = Path.absname("lib/b.ex")
+
+      ExUnit.CaptureIO.capture_io(fn ->
+        assert {:error, [diagnostic]} = Mix.Task.run("compile", ["--return-errors"])
+
+        assert %Mix.Task.Compiler.Diagnostic{
+                 file: ^file,
+                 severity: :error,
+                 position: 3,
+                 message: "** (RuntimeError) error\n    expanding macro: A.custom_macro/0" <> _,
                  compiler_name: "Elixir"
                } = diagnostic
       end)
@@ -223,5 +258,43 @@ defmodule Mix.Tasks.CompileTest do
     ExUnit.CaptureIO.capture_io(fn ->
       assert Mix.Task.run("compile", ["--no-protocol-consolidation"]) == {:noop, []}
     end)
+  end
+
+  test "validates compile_env" do
+    in_fixture("no_mixfile", fn ->
+      File.mkdir_p!("config")
+
+      File.write!("config/config.exs", """
+      import Config
+      config :sample, :hello, System.get_env("MIX_SAMPLE_HELLO")
+      """)
+
+      File.write!("lib/a.ex", """
+      defmodule A do
+        _ = Application.compile_env(:sample, :hello)
+      end
+      """)
+
+      System.put_env("MIX_SAMPLE_HELLO", "compile")
+      Mix.Tasks.Loadconfig.run([])
+      assert Mix.Tasks.Compile.All.run([]) == {:ok, []}
+
+      System.put_env("MIX_SAMPLE_HELLO", "runtime")
+      Mix.Tasks.Loadconfig.run([])
+      Application.unload(:sample)
+
+      assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+               assert_raise ErlangError, fn -> Mix.Tasks.Compile.All.run([]) end
+             end) =~
+               " the application :sample has a different value set for key :hello during runtime compared to compile time"
+
+      # Can start if compile env matches
+      System.put_env("MIX_SAMPLE_HELLO", "compile")
+      Mix.Tasks.Loadconfig.run([])
+      assert Mix.Tasks.App.Start.run([]) == :ok
+    end)
+  after
+    System.delete_env("MIX_SAMPLE_HELLO")
+    Application.delete_env(:sample, :hello, persistent: true)
   end
 end

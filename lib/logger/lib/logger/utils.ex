@@ -162,21 +162,23 @@ defmodule Logger.Utils do
   defp inspect_width(_, width), do: width
 
   defp inspect_data([data | _], opts) do
+    width = if opts.width == :none, do: 80, else: opts.width
+
     data
     |> Inspect.Algebra.to_doc(opts)
-    |> Inspect.Algebra.format(opts.width)
+    |> Inspect.Algebra.format(width)
   end
 
   @doc """
   Returns a timestamp that includes milliseconds.
   """
-  def timestamp(utc_log?) do
-    {_, _, micro} = now = :os.timestamp()
+  def timestamp(timestamp \\ :os.system_time(:microsecond), utc_log?) do
+    micro = rem(timestamp, 1_000_000)
 
     {date, {hours, minutes, seconds}} =
       case utc_log? do
-        true -> :calendar.now_to_universal_time(now)
-        false -> :calendar.now_to_local_time(now)
+        true -> :calendar.system_time_to_universal_time(timestamp, :microsecond)
+        false -> :calendar.system_time_to_local_time(timestamp, :microsecond)
       end
 
     {date, {hours, minutes, seconds, div(micro, 1000)}}
