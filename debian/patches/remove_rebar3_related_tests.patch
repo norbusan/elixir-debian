@@ -4,10 +4,13 @@ Description: remove rebar3 related tests
 Author: Evgeny Golyshev <eugulixes@gmail.com>
 Last-Update: 2019-07-19
 
-Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
-===================================================================
---- elixir-lang.orig/lib/mix/test/mix/rebar_test.exs
-+++ elixir-lang/lib/mix/test/mix/rebar_test.exs
+---
+ lib/mix/test/mix/rebar_test.exs |  103 ----------------------------------------
+ lib/mix/test/test_helper.exs    |    2 
+ 2 files changed, 105 deletions(-)
+
+--- a/lib/mix/test/mix/rebar_test.exs
++++ b/lib/mix/test/mix/rebar_test.exs
 @@ -36,39 +36,6 @@ defmodule Mix.RebarTest do
      end
    end
@@ -79,12 +82,15 @@ Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
 -    end
 -
      test "gets and compiles dependencies for Rebar" do
-       Mix.Project.push(RebarAsDep)
+       Mix.Project.push(RebarAsDepWithEnv)
  
-@@ -266,54 +214,6 @@ defmodule Mix.RebarTest do
+@@ -266,57 +214,6 @@ defmodule Mix.RebarTest do
        end)
      end
  
+-    # We run only on Unix because Windows has a hard time
+-    # removing the Rebar executable after executed.
+-    @tag [unix: true]
 -    test "gets and compiles dependencies for Rebar3" do
 -      Mix.Project.push(Rebar3AsDep)
 -
@@ -136,16 +142,14 @@ Index: elixir-lang/lib/mix/test/mix/rebar_test.exs
      test "gets and compiles dependencies for Rebar with Mix" do
        Mix.Project.push(RebarAsDep)
  
-Index: elixir-lang/lib/mix/test/test_helper.exs
-===================================================================
---- elixir-lang.orig/lib/mix/test/test_helper.exs
-+++ elixir-lang/lib/mix/test/test_helper.exs
-@@ -186,8 +186,6 @@ System.delete_env("XDG_CONFIG_HOME")
+--- a/lib/mix/test/test_helper.exs
++++ b/lib/mix/test/test_helper.exs
+@@ -203,8 +203,6 @@ System.delete_env("XDG_CONFIG_HOME")
  
  rebar = System.get_env("REBAR") || Path.expand("fixtures/rebar", __DIR__)
- File.cp!(rebar, Path.join(home, "rebar"))
+ File.cp!(rebar, Path.join(mix, "rebar"))
 -rebar = System.get_env("REBAR3") || Path.expand("fixtures/rebar3", __DIR__)
--File.cp!(rebar, Path.join(home, "rebar3"))
+-File.cp!(rebar, Path.join(mix, "rebar3"))
  
  ## Copy fixtures to tmp
  
