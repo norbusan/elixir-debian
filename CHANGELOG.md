@@ -14,7 +14,7 @@ Elixir v1.11 builds on top of the recently added compilation tracers to track ap
 
 These two conditions may seem contradictory. After all, if a module is available, it must have come from a dependency. This is not true in two scenarios:
 
-  * Modules from Elixir and Erlang/OTP are always available - even if their applications are not explicitly listed as a dependency
+  * Modules from Elixir and Erlang/OTP are always available - even if their applications are not listed as a dependency
 
   * In an umbrella project, because all child applications are compiled within the same VM, you may have a module from a sibling project available, even if you don't depend on said sibling
 
@@ -36,7 +36,7 @@ on :ssl. To fix this, you must do one of:
      to your "def project" in mix.exs
 ```
 
-This comes with extra benefits in umbrella projects, as it requires child applications to explicitly list their dependencies, completely rejecting cyclic dependencies between siblings.
+This comes with extra benefits in umbrella projects, as it requires applications to depend on the siblings they depend on, which will fail if there are any cyclic dependencies.
 
 ## Compiler checks: data constructors
 
@@ -242,6 +242,21 @@ Elixir v1.11 adds the `is_struct/2`, `is_exception/1`, and `is_exception/2` guar
 The Calendar module ships with a new `Calendar.strftime/3` function, which provides datetime formatting based on the `strftime` format. The `Date` module got new functions for working with weeks and months, such as `Date.beginning_of_month/1` and `Date.end_of_week/2`. Finally, all calendar types got conversion functions from and to gregorian timestamps, such as `Date.from_gregorian_days/2` and `NaiveDateTime.to_gregorian_seconds/1`.
 
 Mix also includes two new tasks: `mix app.config`, for application runtime configuration, and `mix test.coverage`, which generates aggregated coverage reports for umbrella projects and for test suites partitioned across processes.
+
+## v1.11.2 (2020-11-03)
+
+### 1. Bug fixes
+
+#### Elixir
+
+  * [Code] Do not crash when getting docs for missing `erts` appdir
+  * [Kernel] Raise meaningful error if `:erlang.is_record` is used in guards
+  * [Kernel] Prune tracers when fetching `__ENV__` inside functions
+
+#### Mix
+
+  * [mix] Fix regression where aliases could not call themselves recursively
+  * [mix compile] Do not discard tracers that are set programatically
 
 ## v1.11.1 (2020-10-16)
 
