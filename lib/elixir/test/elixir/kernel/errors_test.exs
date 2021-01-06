@@ -692,16 +692,6 @@ defmodule Kernel.ErrorsTest do
     end
   end
 
-  test "match attribute in module" do
-    msg = "invalid write attribute syntax, you probably meant to use: @foo expression"
-
-    assert_raise ArgumentError, msg, fn ->
-      defmodule MatchAttributeInModule do
-        @foo = 42
-      end
-    end
-  end
-
   test "invalid case clauses" do
     assert_eval_raise CompileError,
                       "nofile:1: expected one argument for :do clauses (->) in \"case\"",
@@ -828,7 +818,7 @@ defmodule Kernel.ErrorsTest do
                       "nofile:3: function exit/1 imported from both :erlang and Kernel, call is ambiguous",
                       '''
                       defmodule Kernel.ErrorsTest.FunctionImportConflict do
-                        import :erlang, warn: false
+                        import :erlang, only: [exit: 1], warn: false
                         def foo, do: exit(:test)
                       end
                       '''
@@ -1202,7 +1192,7 @@ defmodule Kernel.ErrorsTest do
     rescue
       ArgumentError ->
         assert [
-                 {:erlang, :apply, [1, :foo, []], []},
+                 {:erlang, :apply, [1, :foo, []], _},
                  {__MODULE__, :bad_remote_call, 1, [file: _, line: _]} | _
                ] = __STACKTRACE__
     end
