@@ -1,3 +1,9 @@
+elixir-lang (1.11.3.dfsg-1~np1) unstable; urgency=medium
+
+  * New upstream version 1.11.3.dfsg
+
+ -- Norbert Preining <norbert@preining.info>  Wed, 06 Jan 2021 12:25:25 +0900
+
 elixir-lang (1.11.2.dfsg-1~np1) unstable; urgency=medium
 
   * New upstream version 1.11.2.dfsg
