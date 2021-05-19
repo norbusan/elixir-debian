@@ -4,7 +4,7 @@ defmodule Regex do
 
   Regex is based on PCRE (Perl Compatible Regular Expressions) and
   built on top of Erlang's `:re` module. More information can be found
-  in the [`:re` module documentation](http://www.erlang.org/doc/man/re.html).
+  in the [`:re` module documentation](`:re`).
 
   Regular expressions in Elixir can be created using the sigils
   `~r` (see `Kernel.sigil_r/2`) or `~R` (see `Kernel.sigil_R/2`):
@@ -107,7 +107,6 @@ defmodule Regex do
 
     * alnum - Letters and digits
     * alpha - Letters
-    * ascii - Character codes 0-127
     * blank - Space or tab only
     * cntrl - Control characters
     * digit - Decimal digits (same as \\d)
@@ -119,6 +118,11 @@ defmodule Regex do
     * upper - Uppercase letters
     * word  - "Word" characters (same as \w)
     * xdigit - Hexadecimal digits
+
+  There is another character class, `ascii`, that erroneously matches
+  Latin-1 characters instead of the 0-127 range specified by POSIX. This
+  cannot be fixed without altering the behaviour of other classes, so we
+  recommend matching the range with `[\\0-\x7f]` instead.
 
   Note the behaviour of those classes may change according to the Unicode
   and other modifiers:
@@ -296,6 +300,8 @@ defmodule Regex do
       Defaults to `:binary`.
     * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
       to see the possible capture values.
+    * `:offset` - (since v1.12.0) specifies the starting offset to match in the given string.
+      Defaults to zero.
 
   ## Examples
 
@@ -315,8 +321,9 @@ defmodule Regex do
   def run(%Regex{} = regex, string, options) when is_binary(string) do
     return = Keyword.get(options, :return, :binary)
     captures = Keyword.get(options, :capture, :all)
+    offset = Keyword.get(options, :offset, 0)
 
-    case safe_run(regex, string, [{:capture, captures, return}]) do
+    case safe_run(regex, string, [{:capture, captures, return}, {:offset, offset}]) do
       :nomatch -> nil
       :match -> []
       {:match, results} -> results
@@ -425,6 +432,8 @@ defmodule Regex do
       Defaults to `:binary`.
     * `:capture` - what to capture in the result. Check the moduledoc for `Regex`
       to see the possible capture values.
+    * `:offset` - (since v1.12.0) specifies the starting offset to match in the given string.
+      Defaults to zero.
 
   ## Examples
 
@@ -450,7 +459,8 @@ defmodule Regex do
   def scan(%Regex{} = regex, string, options) when is_binary(string) do
     return = Keyword.get(options, :return, :binary)
     captures = Keyword.get(options, :capture, :all)
-    options = [{:capture, captures, return}, :global]
+    offset = Keyword.get(options, :offset, 0)
+    options = [{:capture, captures, return}, :global, {:offset, offset}]
 
     case safe_run(regex, string, options) do
       :match -> []
@@ -643,20 +653,8 @@ defmodule Regex do
 
   """
   @spec replace(t, String.t(), String.t() | (... -> String.t()), [term]) :: String.t()
-  def replace(regex, string, replacement, options \\ [])
-
-  def replace(regex, string, replacement, options)
-      when is_binary(string) and is_binary(replacement) and is_list(options) do
-    do_replace(regex, string, precompile_replacement(replacement), options)
-  end
-
-  def replace(regex, string, replacement, options)
-      when is_binary(string) and is_function(replacement) and is_list(options) do
-    {:arity, arity} = Function.info(replacement, :arity)
-    do_replace(regex, string, {replacement, arity}, options)
-  end
-
-  defp do_replace(%Regex{} = regex, string, replacement, options) do
+  def replace(%Regex{} = regex, string, replacement, options \\ [])
+      when is_binary(string) and is_list(options) do
     opts = if Keyword.get(options, :global) != false, do: [:global], else: []
     opts = [{:capture, :all, :index} | opts]
 
@@ -665,11 +663,18 @@ defmodule Regex do
         string
 
       {:match, [mlist | t]} when is_list(mlist) ->
-        apply_list(string, replacement, [mlist | t]) |> IO.iodata_to_binary()
+        apply_list(string, precompile_replacement(replacement), [mlist | t])
+        |> IO.iodata_to_binary()
 
       {:match, slist} ->
-        apply_list(string, replacement, [slist]) |> IO.iodata_to_binary()
+        apply_list(string, precompile_replacement(replacement), [slist])
+        |> IO.iodata_to_binary()
     end
+  end
+
+  defp precompile_replacement(replacement) when is_function(replacement) do
+    {:arity, arity} = Function.info(replacement, :arity)
+    {replacement, arity}
   end
 
   defp precompile_replacement(""), do: []
@@ -823,6 +828,7 @@ defmodule Regex do
 
   @doc false
   # Unescape map function used by Macro.unescape_string.
+  def unescape_map(:newline), do: true
   def unescape_map(?f), do: ?\f
   def unescape_map(?n), do: ?\n
   def unescape_map(?r), do: ?\r

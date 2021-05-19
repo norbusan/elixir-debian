@@ -74,8 +74,8 @@ defmodule Mix.Tasks.Compile.ElixirTest do
     in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       defmodule A do
-      require Logger
-      def info, do: Logger.info("hello")
+        require Logger
+        def info, do: Logger.info("hello")
       end
       """)
 
@@ -91,6 +91,21 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       assert capture_io(:stderr, fn ->
                assert catch_exit(Mix.Task.run("compile", ["--warnings-as-errors", "--force"]))
              end) =~ message
+    end)
+  end
+
+  test "does not warn when __info__ is used but not depended on" do
+    in_fixture("no_mixfile", fn ->
+      File.write!("lib/a.ex", """
+      defmodule A do
+        require Logger
+        def info, do: Logger.__impl__("hello")
+      end
+      """)
+
+      assert capture_io(:stderr, fn ->
+               Mix.Task.run("compile", [])
+             end) == ""
     end)
   end
 
@@ -406,6 +421,33 @@ defmodule Mix.Tasks.Compile.ElixirTest do
       assert_received {:mix_shell, :info, ["Compiled lib/a.ex"]}
       assert_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
       purge([A, B])
+
+      # Remove all code, we should now get a compilation error
+      File.write!("lib/a.ex", """
+      """)
+
+      assert capture_io(fn ->
+               {:error, _} = Mix.Tasks.Compile.Elixir.run(["--verbose"])
+             end) =~ "A.__struct__/1 is undefined, cannot expand struct A"
+
+      # At the code back and it should work again
+      File.write!("lib/a.ex", """
+      defmodule A do
+        defstruct [:foo, :bar]
+      end
+      """)
+
+      assert Mix.Tasks.Compile.Elixir.run(["--verbose"]) == {:ok, []}
+      assert_received {:mix_shell, :info, ["Compiled lib/a.ex"]}
+      assert_received {:mix_shell, :info, ["Compiled lib/b.ex"]}
+      purge([A, B])
+
+      # Removing the file should have the same effect as removing all code
+      File.rm!("lib/a.ex")
+
+      assert capture_io(fn ->
+               {:error, _} = Mix.Tasks.Compile.Elixir.run(["--verbose"])
+             end) =~ "A.__struct__/1 is undefined, cannot expand struct A"
     end)
   end
 
@@ -717,13 +759,13 @@ defmodule Mix.Tasks.Compile.ElixirTest do
     in_fixture("no_mixfile", fn ->
       File.write!("lib/a.ex", """
       defmodule A do
-        import B
+        B.__info__(:module)
       end
       """)
 
       File.write!("lib/b.ex", """
       defmodule B do
-        import A
+        A.__info__(:module)
       end
       """)
 

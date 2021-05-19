@@ -335,7 +335,7 @@ expand({Name, Meta, Kind}, #{context := match} = E) when is_atom(Name), is_atom(
 
     %% Variable is being overridden now
     #{Pair := _} ->
-      NewUnused = var_unused(Pair, Meta, Version, Unused),
+      NewUnused = var_unused(Pair, Meta, Version, Unused, true),
       NewReadCurrent = ReadCurrent#{Pair => Version},
       NewWriteCurrent = (WriteCurrent /= false) andalso WriteCurrent#{Pair => Version},
       Var = {Name, [{version, Version} | Meta], Kind},
@@ -344,7 +344,7 @@ expand({Name, Meta, Kind}, #{context := match} = E) when is_atom(Name), is_atom(
     %% Variable defined for the first time
     _ ->
       NewVars = ordsets:add_element(Pair, ?key(E, vars)),
-      NewUnused = var_unused(Pair, Meta, Version, Unused),
+      NewUnused = var_unused(Pair, Meta, Version, Unused, false),
       NewReadCurrent = ReadCurrent#{Pair => Version},
       NewWriteCurrent = (WriteCurrent /= false) andalso WriteCurrent#{Pair => Version},
       Var = {Name, [{version, Version} | Meta], Kind},
@@ -599,9 +599,9 @@ expand_args(Args, E) ->
 
 %% Match/var helpers
 
-var_unused({Name, Kind}, Meta, Version, Unused) ->
+var_unused({Name, Kind}, Meta, Version, Unused, Override) ->
   case (Kind == nil) andalso should_warn(Meta) of
-    true -> Unused#{{Name, Version} => ?line(Meta)};
+    true -> Unused#{{Name, Version} => {?line(Meta), Override}};
     false -> Unused
   end.
 
@@ -833,7 +833,7 @@ rewrite(_, Receiver, DotMeta, Right, Meta, EArgs) ->
   {ok, elixir_rewrite:rewrite(Receiver, DotMeta, Right, Meta, EArgs)}.
 
 maybe_warn_comparison({{'.', _, [erlang, Op]}, Meta, [ELeft, ERight]}, [Left, Right], E)
-    when Op =:= '>'; Op =:= '<'; Op =:= '=<'; Op =:= '>=' ->
+    when Op =:= '>'; Op =:= '<'; Op =:= '=<'; Op =:= '>='; Op =:= min; Op =:= max ->
   case is_struct_comparison(ELeft, ERight, Left, Right) of
     false ->
       case is_nested_comparison(Op, ELeft, ERight, Left, Right) of
@@ -1244,9 +1244,9 @@ format_error({underscored_var_access, Name}) ->
 format_error({struct_comparison, StructExpr}) ->
   String = 'Elixir.Macro':to_string(StructExpr),
   io_lib:format("invalid comparison with struct literal ~ts. Comparison operators "
-                "(>, <, >=, <=) perform structural and not semantic comparison. "
+                "(>, <, >=, <=, min, and max) perform structural and not semantic comparison. "
                 "Comparing with a struct literal is unlikely to give a meaningful result. "
-                "Modules typically define a compare/2 function that can be used for "
+                "Struct modules typically define a compare/2 function that can be used for "
                 "semantic comparison", [String]);
 format_error({nested_comparison, CompExpr}) ->
   String = 'Elixir.Macro':to_string(CompExpr),

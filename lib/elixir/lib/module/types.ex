@@ -60,7 +60,7 @@ defmodule Module.Types do
     head_stack = Unify.push_expr_stack(def_expr, stack)
 
     with {:ok, _types, context} <- Pattern.of_head(args, guards, head_stack, context),
-         {:ok, _type, context} <- Expr.of_expr(body, stack, context) do
+         {:ok, _type, context} <- Expr.of_expr(body, :dynamic, stack, context) do
       context.warnings
     else
       {:error, {type, error, context}} ->
@@ -92,7 +92,7 @@ defmodule Module.Types do
       traces: %{},
       # Counter to give type variables unique names
       counter: 0,
-      # Track if a variable was infered from a type guard function such is_tuple/1
+      # Track if a variable was inferred from a type guard function such is_tuple/1
       # or a guard function that fails such as elem/2, possible values are:
       # `:guarded` when `is_tuple(x)`
       # `:guarded` when `is_tuple and elem(x, 0)`
@@ -115,102 +115,19 @@ defmodule Module.Types do
       # When false do not add a trace when a type variable is refined,
       # useful when merging contexts where the variables already have traces
       trace: true,
-      # Track if we are in a context where type guard functions should
-      # affect inference
-      type_guards_enabled?: true,
+      # There are two factors that control how we track guards.
+      #
+      # * consider_type_guards?: if type guards should be considered.
+      #   This applies only at the root and root-based "and" and "or" nodes.
+      #
+      # * keep_guarded? - if a guarded clause should remain as guarded
+      #   even on failure. Used on the right side of and.
+      #
+      type_guards: {_consider_type_guards? = true, _keep_guarded? = false},
       # Context used to determine if unification is bi-directional, :expr
       # is directional, :pattern is bi-directional
       context: nil
     }
-  end
-
-  ## VARIABLE LIFTING
-
-  @doc """
-  Lifts type variables to their infered types from the context.
-  """
-  def lift_types(types, context) do
-    context = %{
-      types: context.types,
-      lifted_types: %{},
-      lifted_counter: 0
-    }
-
-    {types, _context} = Enum.map_reduce(types, context, &do_lift_type/2)
-    types
-  end
-
-  @doc """
-  Lifts a single type to its infered type from the context.
-  """
-  def lift_type(type, context) do
-    context = %{
-      types: context.types,
-      lifted_types: %{},
-      lifted_counter: 0
-    }
-
-    {type, _context} = do_lift_type(type, context)
-    type
-  end
-
-  # Lift type variable to its infered (hopefully concrete) types from the context
-  defp do_lift_type({:var, var}, context) do
-    case Map.fetch(context.lifted_types, var) do
-      {:ok, lifted_var} ->
-        {{:var, lifted_var}, context}
-
-      :error ->
-        case Map.fetch(context.types, var) do
-          {:ok, :unbound} ->
-            new_lifted_var(var, context)
-
-          {:ok, type} ->
-            # Remove visited types to avoid infinite loops
-            # then restore after we are done recursing on vars
-            types = context.types
-            context = %{context | types: Map.delete(context.types, var)}
-            {type, context} = do_lift_type(type, context)
-            {type, %{context | types: types}}
-
-          :error ->
-            new_lifted_var(var, context)
-        end
-    end
-  end
-
-  defp do_lift_type({:tuple, n, types}, context) do
-    {types, context} = Enum.map_reduce(types, context, &do_lift_type/2)
-    {{:tuple, n, types}, context}
-  end
-
-  defp do_lift_type({:map, pairs}, context) do
-    {pairs, context} =
-      Enum.map_reduce(pairs, context, fn {kind, key, value}, context ->
-        {key, context} = do_lift_type(key, context)
-        {value, context} = do_lift_type(value, context)
-        {{kind, key, value}, context}
-      end)
-
-    {{:map, pairs}, context}
-  end
-
-  defp do_lift_type({:list, type}, context) do
-    {type, context} = do_lift_type(type, context)
-    {{:list, type}, context}
-  end
-
-  defp do_lift_type(other, context) do
-    {other, context}
-  end
-
-  defp new_lifted_var(original_var, context) do
-    types = Map.put(context.lifted_types, original_var, context.lifted_counter)
-    counter = context.lifted_counter + 1
-
-    type = {:var, context.lifted_counter}
-    context = %{context | lifted_types: types, lifted_counter: counter}
-    {type, context}
   end
 
   ## ERROR TO WARNING
@@ -222,8 +139,7 @@ defmodule Module.Types do
     location = {context.file, line, {context.module, fun, arity}}
 
     traces = type_traces(stack, context)
-    traces = tag_traces(traces, context)
-
+    {left, right, traces} = lift_all_types(left, right, traces, context)
     error = {:unable_unify, left, right, {location, stack.last_expr, traces}}
     {Module.Types, error, location}
   end
@@ -234,14 +150,13 @@ defmodule Module.Types do
     #       in the stack since we get related variables anyway?
     stack =
       stack.unify_stack
-      |> Enum.uniq()
       |> Enum.flat_map(&[&1 | related_variables(&1, context.types)])
       |> Enum.uniq()
 
     Enum.flat_map(stack, fn var_index ->
       with %{^var_index => traces} <- context.traces,
            %{^var_index => expr_var} <- context.types_to_vars do
-        Enum.map(traces, &{expr_var, &1})
+        Enum.map(traces, &tag_trace(expr_var, &1, context))
       else
         _other -> []
       end
@@ -259,15 +174,26 @@ defmodule Module.Types do
   end
 
   # Tag if trace is for a concrete type or type variable
-  defp tag_traces(traces, context) do
-    Enum.flat_map(traces, fn {var, {type, expr, location}} ->
-      with {:var, var_index} <- type,
-           %{^var_index => expr_var} <- context.types_to_vars do
-        [{var, {:var, expr_var, expr, location}}]
-      else
-        _ -> [{var, {:type, type, expr, location}}]
-      end
-    end)
+  defp tag_trace(var, {type, expr, location}, context) do
+    with {:var, var_index} <- type,
+         %{^var_index => expr_var} <- context.types_to_vars do
+      {:var, var, expr_var, expr, location}
+    else
+      _ -> {:type, var, type, expr, location}
+    end
+  end
+
+  defp lift_all_types(left, right, traces, context) do
+    all_types = [left, right] ++ for({:type, _, type, _, _} <- traces, do: type)
+    [left, right | all_types] = Unify.lift_types(all_types, context)
+
+    {traces, []} =
+      Enum.map_reduce(traces, all_types, fn
+        {:type, var, _, expr, location}, [type | acc] -> {{:type, var, type, expr, location}, acc}
+        other, acc -> {other, acc}
+      end)
+
+    {left, right, traces}
   end
 
   ## FORMAT WARNINGS
@@ -343,9 +269,10 @@ defmodule Module.Types do
 
   defp format_traces(traces, simplify?) do
     traces
+    |> Enum.uniq()
     |> Enum.reverse()
     |> Enum.map_reduce([], fn
-      {var, {:type, type, expr, location}}, hints ->
+      {:type, var, type, expr, location}, hints ->
         {hint, hints} = format_type_hint(type, expr, hints)
 
         trace = [
@@ -363,7 +290,7 @@ defmodule Module.Types do
 
         {trace, hints}
 
-      {var1, {:var, var2, expr, location}}, hints ->
+      {:var, var1, var2, expr, location}, hints ->
         trace = [
           "where \"",
           Macro.to_string(var1),

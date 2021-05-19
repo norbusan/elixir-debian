@@ -316,8 +316,8 @@ defmodule ExUnit.Case do
   @doc """
   Defines a test with `message`.
 
-  The test may also define a `var`, which will pattern match
-  on the test context. For more information on contexts, see
+  The test may also define a pattern, which will be matched
+  against the test context. For more information on contexts, see
   `ExUnit.Callbacks`.
 
   ## Examples
@@ -328,6 +328,14 @@ defmodule ExUnit.Case do
 
   """
   defmacro test(message, var \\ quote(do: _), contents) do
+    unless is_tuple(var) do
+      IO.warn(
+        "test context is always a map. The pattern " <>
+          "#{inspect(Macro.to_string(var))} will never match",
+        Macro.Env.stacktrace(__CALLER__)
+      )
+    end
+
     contents =
       case contents do
         [do: block] ->
@@ -581,9 +589,9 @@ defmodule ExUnit.Case do
   end
 
   @doc """
-  Reigsters a test with the given environment.
+  Registers a test with the given environment.
 
-  This function is deprecated in favor of register_test/6 which performs
+  This function is deprecated in favor of `register_test/6` which performs
   better under tight loops by avoiding `__ENV__`.
   """
   @doc deprecated: "Use register_test/6 instead"
@@ -691,11 +699,11 @@ defmodule ExUnit.Case do
         @module_fixtures {:post, insert: false}
 
         test "using custom attribute", context do
-          assert context.registered.fixtures == [{:post, insert: false}, :user]
+          assert context.registered.module_fixtures == [{:post, insert: false}, :user]
         end
 
         test "still using custom attribute", context do
-          assert context.registered.fixtures == [{:post, insert: false}, :user]
+          assert context.registered.module_fixtures == [{:post, insert: false}, :user]
         end
       end
 

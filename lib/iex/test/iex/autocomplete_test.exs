@@ -9,15 +9,9 @@ defmodule IEx.AutocompleteTest do
     :ok
   end
 
-  defmodule MyServer do
-    def evaluator do
-      {Process.get(:evaluator), self()}
-    end
-  end
-
   defp eval(line) do
     ExUnit.CaptureIO.capture_io(fn ->
-      {evaluator, _} = MyServer.evaluator()
+      evaluator = Process.get(:evaluator)
       Process.group_leader(evaluator, Process.group_leader())
       send(evaluator, {:eval, self(), line <> "\n", %IEx.State{}})
       assert_receive {:evaled, _, _}
@@ -25,7 +19,7 @@ defmodule IEx.AutocompleteTest do
   end
 
   defp expand(expr) do
-    IEx.Autocomplete.expand(Enum.reverse(expr), MyServer)
+    IEx.Autocomplete.expand(Enum.reverse(expr), self())
   end
 
   test "Erlang module completion" do
@@ -34,7 +28,6 @@ defmodule IEx.AutocompleteTest do
 
   test "Erlang module no completion" do
     assert expand(':unknown') == {:no, '', []}
-    assert expand('Enum:') == {:no, '', []}
   end
 
   test "Erlang module multiple values completion" do
@@ -279,7 +272,10 @@ defmodule IEx.AutocompleteTest do
     functions_list = ['take/2', 'take_every/2', 'take_random/2', 'take_while/2']
     assert expand('take') == {:yes, '', functions_list}
 
-    assert expand('count') == {:yes, '', ['count/1', 'count/2', 'count_children/1']}
+    assert expand('count') ==
+             {:yes, '',
+              ['count/1', 'count/2', 'count_children/1', 'count_until/2', 'count_until/3']}
+
     assert expand('der') == {:yes, 'ive', []}
   end
 
@@ -386,5 +382,27 @@ defmodule IEx.AutocompleteTest do
   after
     :code.purge(:"Elixir.IEx.AutocompleteTest.Unicodé")
     :code.delete(:"Elixir.IEx.AutocompleteTest.Unicodé")
+  end
+
+  test "signature help for functions and macros" do
+    assert expand('String.graphemes(') == {:yes, '', ['graphemes(string)']}
+    assert expand('def ') == {:yes, '', ['def(call, expr \\\\ nil)']}
+
+    eval("import Enum; import Protocol")
+
+    assert ExUnit.CaptureIO.capture_io(fn ->
+             send(self(), expand('reduce('))
+           end) == "\nreduce(enumerable, acc, fun)"
+
+    assert_received {:yes, '', ['reduce(enumerable, fun)']}
+
+    assert expand('take(') == {:yes, '', ['take(enumerable, amount)']}
+    assert expand('derive(') == {:yes, '', ['derive(protocol, module, options \\\\ [])']}
+
+    defmodule NoDocs do
+      def sample(a), do: a
+    end
+
+    assert {:yes, [], [_ | _]} = expand('NoDocs.sample(')
   end
 end

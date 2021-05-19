@@ -2,7 +2,7 @@ Code.require_file("../../test_helper.exs", __DIR__)
 
 defmodule TypeHelper do
   alias Module.Types
-  alias Module.Types.{Pattern, Expr}
+  alias Module.Types.{Pattern, Expr, Unify}
 
   defmacro quoted_expr(patterns \\ [], guards \\ [], body) do
     expr = expand_expr(patterns, guards, body, __CALLER__)
@@ -15,8 +15,8 @@ defmodule TypeHelper do
   def __expr__({patterns, guards, body}) do
     with {:ok, _types, context} <-
            Pattern.of_head(patterns, guards, new_stack(), new_context()),
-         {:ok, type, context} <- Expr.of_expr(body, new_stack(), context) do
-      {:ok, Types.lift_type(type, context)}
+         {:ok, type, context} <- Expr.of_expr(body, :dynamic, new_stack(), context) do
+      {:ok, [type] |> Unify.lift_types(context) |> hd()}
     else
       {:error, {type, reason, _context}} ->
         {:error, {type, reason}}

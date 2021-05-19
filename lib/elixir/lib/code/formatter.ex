@@ -12,8 +12,11 @@ defmodule Code.Formatter do
   @empty empty()
   @ampersand_prec Code.Identifier.unary_op(:&) |> elem(1)
 
+  # Operators that are composed of multiple binary operators
+  @multi_binary_operators [:"..//"]
+
   # Operators that do not have space between operands
-  @no_space_binary_operators [:..]
+  @no_space_binary_operators [:.., :"//"]
 
   # Operators that do not have newline between operands (as well as => and keywords)
   @no_newline_binary_operators [:\\, :in]
@@ -247,18 +250,6 @@ defmodule Code.Formatter do
   defp state(comments, opts) do
     force_do_end_blocks = Keyword.get(opts, :force_do_end_blocks, false)
 
-    rename_deprecated_at =
-      if version = opts[:rename_deprecated_at] do
-        case Version.parse(version) do
-          {:ok, parsed} ->
-            parsed
-
-          :error ->
-            raise ArgumentError,
-                  "invalid version #{inspect(version)} given to :rename_deprecated_at"
-        end
-      end
-
     locals_without_parens =
       Keyword.get(opts, :locals_without_parens, []) ++ @locals_without_parens
 
@@ -266,7 +257,6 @@ defmodule Code.Formatter do
       force_do_end_blocks: force_do_end_blocks,
       locals_without_parens: locals_without_parens,
       operand_nesting: 2,
-      rename_deprecated_at: rename_deprecated_at,
       comments: comments
     }
   end
@@ -332,7 +322,7 @@ defmodule Code.Formatter do
     {next_eol, comments, doc}
   end
 
-  # Special AST nodes from compiler feedback.
+  # Special AST nodes from compiler feedback
 
   defp quoted_to_algebra({{:special, :clause_args}, _meta, [args]}, _context, state) do
     {doc, state} = clause_args_to_algebra(args, state)
@@ -403,10 +393,17 @@ defmodule Code.Formatter do
   end
 
   # foo[bar]
-  defp quoted_to_algebra({{:., _, [Access, :get]}, meta, [target | args]}, _context, state) do
+  defp quoted_to_algebra({{:., _, [Access, :get]}, meta, [target, arg]}, _context, state) do
     {target_doc, state} = remote_target_to_algebra(target, state)
-    {call_doc, state} = list_to_algebra(meta, args, state)
-    {concat(target_doc, call_doc), state}
+
+    {access_doc, state} =
+      if keyword?(arg) do
+        list_to_algebra(meta, arg, state)
+      else
+        list_to_algebra(meta, [arg], state)
+      end
+
+    {concat(target_doc, access_doc), state}
   end
 
   # %Foo{}
@@ -521,15 +518,13 @@ defmodule Code.Formatter do
 
   # not(left in right)
   # left not in right
-  defp quoted_to_algebra({:not, meta, [{:in, _, [left, right]} = arg]}, context, state) do
-    %{rename_deprecated_at: since} = state
+  defp quoted_to_algebra({:not, meta, [{:in, _, [left, right]}]}, context, state) do
+    binary_op_to_algebra(:in, "not in", meta, left, right, context, state)
+  end
 
-    # TODO: Remove metadata and always rewrite to left not in right in Elixir v2.0.
-    if meta[:operator] == :"not in" || (since && Version.match?(since, "~> 1.5")) do
-      binary_op_to_algebra(:in, "not in", meta, left, right, context, state)
-    else
-      unary_op_to_algebra(:not, meta, arg, context, state)
-    end
+  # 1..2//3
+  defp quoted_to_algebra({:"..//", meta, [left, middle, right]}, context, state) do
+    quoted_to_algebra({:"//", meta, [{:.., meta, [left, middle]}, right]}, context, state)
   end
 
   defp quoted_to_algebra({:fn, meta, [_ | _] = clauses}, _context, state) do
@@ -565,6 +560,10 @@ defmodule Code.Formatter do
       if keyword_key?(left_arg) do
         {left, state} =
           case left_arg do
+            # TODO: Remove this clause in v1.16 when we no longer quote operator :..//
+            {:__block__, _, [:"..//"]} ->
+              {string(~S{"..//":}), state}
+
             {:__block__, _, [atom]} when is_atom(atom) ->
               key =
                 case Code.Identifier.classify(atom) do
@@ -711,7 +710,7 @@ defmodule Code.Formatter do
     {operands, max_line} =
       unwrap_right(right_arg, op, meta, right_context, [{{:root, left_context}, left_arg}])
 
-    operand_to_algebra = fn
+    fun = fn
       {{:root, context}, arg}, _args, state ->
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, :left, 2)
         {{doc, @empty, 1}, state}
@@ -723,14 +722,7 @@ defmodule Code.Formatter do
     end
 
     {doc, state} =
-      operand_to_algebra_with_comments(
-        operands,
-        meta,
-        min_line,
-        max_line,
-        state,
-        operand_to_algebra
-      )
+      operand_to_algebra_with_comments(operands, meta, min_line, max_line, context, state, fun)
 
     if keyword?(right_arg) and context in [:parens_arg, :no_parens_arg] do
       {wrap_in_parens(doc), state}
@@ -749,7 +741,7 @@ defmodule Code.Formatter do
     {pipes, min_line} =
       unwrap_pipes(left_arg, meta, left_context, [{{op, right_context}, right_arg}])
 
-    operand_to_algebra = fn
+    fun = fn
       {{:root, context}, arg}, _args, state ->
         {doc, state} = binary_operand_to_algebra(arg, context, state, op, op_info, :left, 2)
         {{doc, @empty, 1}, state}
@@ -761,7 +753,7 @@ defmodule Code.Formatter do
         {{concat(op_string, doc), @empty, 1}, state}
     end
 
-    operand_to_algebra_with_comments(pipes, meta, min_line, max_line, state, operand_to_algebra)
+    operand_to_algebra_with_comments(pipes, meta, min_line, max_line, context, state, fun)
   end
 
   defp binary_op_to_algebra(op, op_string, meta, left_arg, right_arg, context, state, nesting) do
@@ -889,9 +881,43 @@ defmodule Code.Formatter do
     {Enum.reverse(acc), line(meta)}
   end
 
-  defp operand_to_algebra_with_comments(operands, meta, min_line, max_line, state, fun) do
+  defp operand_to_algebra_with_comments(operands, meta, min_line, max_line, context, state, fun) do
+    # If we are in a no_parens_one_arg expression, we actually cannot
+    # extract comments from the first operand, because it would rewrite:
+    #
+    #     @spec function(x) ::
+    #             # Comment
+    #             any
+    #           when x: any
+    #
+    # to:
+    #
+    #     @spec # Comment
+    #           function(x) ::
+    #             any
+    #           when x: any
+    #
+    # Instead we get:
+    #
+    #     @spec function(x) ::
+    #             any
+    #           # Comment
+    #           when x: any
+    #
+    # Which may look counter-intuitive but it actually makes sense,
+    # as the closest possible location for the comment is the when
+    # operator.
+    {operands, acc, state} =
+      if context == :no_parens_one_arg do
+        [operand | operands] = operands
+        {doc_triplet, state} = fun.(operand, :unused, state)
+        {operands, [doc_triplet], state}
+      else
+        {operands, [], state}
+      end
+
     {docs, comments?, state} =
-      quoted_to_algebra_with_comments(operands, [], min_line, max_line, state, fun)
+      quoted_to_algebra_with_comments(operands, acc, min_line, max_line, state, fun)
 
     if comments? or eol?(meta) do
       {docs |> Enum.reduce(&line(&2, &1)) |> force_unfit(), state}
@@ -958,7 +984,7 @@ defmodule Code.Formatter do
        )
        when is_atom(fun) and is_integer(arity) do
     {target_doc, state} = remote_target_to_algebra(target, state)
-    fun = remote_fun_to_algebra(target, fun, arity, state)
+    fun = Code.Identifier.inspect_as_function(fun)
     {target_doc |> nest(1) |> concat(string(".#{fun}/#{arity}")), state}
   end
 
@@ -1003,7 +1029,7 @@ defmodule Code.Formatter do
   defp remote_to_algebra({{:., _, [target, fun]}, meta, args}, context, state)
        when is_atom(fun) do
     {target_doc, state} = remote_target_to_algebra(target, state)
-    fun = remote_fun_to_algebra(target, fun, length(args), state)
+    fun = Code.Identifier.inspect_as_function(fun)
     remote_doc = target_doc |> concat(".") |> concat(string(fun))
 
     if args == [] and not remote_target_is_a_module?(target) and not meta?(meta, :closing) do
@@ -1038,38 +1064,6 @@ defmodule Code.Formatter do
       _ -> false
     end
   end
-
-  defp remote_fun_to_algebra(target, fun, arity, state) do
-    %{rename_deprecated_at: since} = state
-
-    atom_target =
-      case since && target do
-        {:__aliases__, _, [alias | _] = aliases} when is_atom(alias) ->
-          Module.concat(aliases)
-
-        {:__block__, _, [atom]} when is_atom(atom) ->
-          atom
-
-        _ ->
-          nil
-      end
-
-    with {fun, requirement} <- deprecated(atom_target, fun, arity),
-         true <- Version.match?(since, requirement) do
-      fun
-    else
-      _ -> Code.Identifier.inspect_as_function(fun)
-    end
-  end
-
-  # We can only rename functions in the same module because
-  # introducing a new module may be wrong due to aliases.
-  defp deprecated(Enum, :partition, 2), do: {"split_with", "~> 1.4"}
-  defp deprecated(Code, :unload_files, 2), do: {"unrequire_files", "~> 1.7"}
-  defp deprecated(Code, :loaded_files, 2), do: {"required_files", "~> 1.7"}
-  defp deprecated(Kernel.ParallelCompiler, :files, 2), do: {"compile", "~> 1.6"}
-  defp deprecated(Kernel.ParallelCompiler, :files_to_path, 2), do: {"compile_to_path", "~> 1.6"}
-  defp deprecated(_, _, _), do: :error
 
   defp remote_target_to_algebra({:fn, _, [_ | _]} = quoted, state) do
     # This change is not semantically required but for beautification.
@@ -1351,9 +1345,9 @@ defmodule Code.Formatter do
   end
 
   defp list_interpolation_to_algebra([entry | entries], escape, state, acc, last) do
-    {{:., _, [Kernel, :to_string]}, meta, [quoted]} = entry
-    {doc, state} = block_to_algebra(quoted, line(meta), closing_line(meta), state)
-    doc = surround("\#{", doc, "}")
+    {{:., _, [Kernel, :to_string]}, _meta, [quoted]} = entry
+    {doc, state} = block_to_algebra(quoted, @max_line, @min_line, state)
+    doc = surround("\#{", doc, "}") |> interpolation_to_string()
     list_interpolation_to_algebra(entries, escape, state, concat(acc, doc), last)
   end
 
@@ -1368,14 +1362,25 @@ defmodule Code.Formatter do
   end
 
   defp interpolation_to_algebra([entry | entries], escape, state, acc, last) do
-    {:"::", _, [{{:., _, [Kernel, :to_string]}, meta, [quoted]}, {:binary, _, _}]} = entry
-    {doc, state} = block_to_algebra(quoted, line(meta), closing_line(meta), state)
-    doc = surround("\#{", doc, "}")
+    {:"::", _, [{{:., _, [Kernel, :to_string]}, _meta, [quoted]}, {:binary, _, _}]} = entry
+    {doc, state} = block_to_algebra(quoted, @max_line, @min_line, state)
+    doc = surround("\#{", doc, "}") |> interpolation_to_string()
     interpolation_to_algebra(entries, escape, state, concat(acc, doc), last)
   end
 
   defp interpolation_to_algebra([], _escape, state, acc, last) do
     {concat(acc, last), state}
+  end
+
+  defp interpolation_to_string(doc) do
+    [head | tail] =
+      doc
+      |> format_to_string()
+      |> String.split("\n")
+
+    Enum.reduce(tail, string(head), fn line, acc ->
+      concat([acc, line(), string(line)])
+    end)
   end
 
   ## Sigils
@@ -1537,6 +1542,11 @@ defmodule Code.Formatter do
 
   defp atom_to_algebra(atom) when atom in [nil, true, false] do
     Atom.to_string(atom)
+  end
+
+  # TODO: Remove this clause in v1.16 when we no longer quote operator :..//
+  defp atom_to_algebra(:"..//") do
+    string(":\"..//\"")
   end
 
   defp atom_to_algebra(atom) do
@@ -2041,8 +2051,6 @@ defmodule Code.Formatter do
     {wrap_in_parens_if_operator(doc, ast), state}
   end
 
-  # TODO: We can remove this workaround once we remove
-  # ?rearrange_uop from the parser on v2.0.
   defp wrap_in_parens_if_operator(doc, {:__block__, _, [expr]}) do
     wrap_in_parens_if_operator(doc, expr)
   end
@@ -2098,21 +2106,16 @@ defmodule Code.Formatter do
 
   defp binary_operator?(quoted) do
     case quoted do
-      {op, _, [_, _]} when is_atom(op) ->
-        Code.Identifier.binary_op(op) != :error
-
-      _ ->
-        false
+      {op, _, [_, _, _]} when op in @multi_binary_operators -> true
+      {op, _, [_, _]} when is_atom(op) -> Code.Identifier.binary_op(op) != :error
+      _ -> false
     end
   end
 
   defp unary_operator?(quoted) do
     case quoted do
-      {op, _, [_]} when is_atom(op) ->
-        Code.Identifier.unary_op(op) != :error
-
-      _ ->
-        false
+      {op, _, [_]} when is_atom(op) -> Code.Identifier.unary_op(op) != :error
+      _ -> false
     end
   end
 

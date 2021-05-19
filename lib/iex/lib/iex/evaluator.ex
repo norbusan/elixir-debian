@@ -49,6 +49,61 @@ defmodule IEx.Evaluator do
     end
   end
 
+  # If parsing fails, this might be a TokenMissingError which we treat in
+  # a special way (to allow for continuation of an expression on the next
+  # line in IEx).
+  #
+  # The first two clauses provide support for the break-trigger allowing to
+  # break out from a pending incomplete expression. See
+  # https://github.com/elixir-lang/elixir/issues/1089 for discussion.
+  @break_trigger "#iex:break\n"
+
+  @op_tokens [:or_op, :and_op, :comp_op, :rel_op, :arrow_op, :in_op] ++
+               [:three_op, :concat_op, :mult_op]
+
+  @doc false
+  def parse(input, opts, buffer)
+
+  def parse(@break_trigger, _opts, "") do
+    {:incomplete, ""}
+  end
+
+  def parse(@break_trigger, opts, _buffer) do
+    :elixir_errors.parse_error([line: opts[:line]], opts[:file], "incomplete expression", "")
+  end
+
+  def parse(input, opts, buffer) do
+    input = buffer <> input
+    file = Keyword.get(opts, :file, "nofile")
+    line = Keyword.get(opts, :line, 1)
+    column = Keyword.get(opts, :column, 1)
+    charlist = String.to_charlist(input)
+
+    result =
+      with {:ok, tokens} <- :elixir.string_to_tokens(charlist, line, column, file, opts) do
+        :elixir.tokens_to_quoted(adjust_operator(tokens, line, column, file, opts), file, opts)
+      end
+
+    case result do
+      {:ok, forms} ->
+        {:ok, forms, ""}
+
+      {:error, {_, _, ""}} ->
+        {:incomplete, input}
+
+      {:error, {location, error, token}} ->
+        :elixir_errors.parse_error(location, file, error, token)
+    end
+  end
+
+  defp adjust_operator([{op_type, _, _} | _] = tokens, line, column, file, opts)
+       when op_type in @op_tokens do
+    {:ok, prefix} = :elixir.string_to_tokens('v(-1)', line, column, file, opts)
+    prefix ++ tokens
+  end
+
+  defp adjust_operator(tokens, _line, _column, _file, _opts), do: tokens
+
   @doc """
   Gets a value out of the binding, using the provided
   variable name and map key path.
@@ -201,48 +256,30 @@ defmodule IEx.Evaluator do
     end
   end
 
-  # Instead of doing just :elixir.eval, we first parse the expression to see
-  # if it's well formed. If parsing succeeds, we evaluate the AST as usual.
-  #
-  # If parsing fails, this might be a TokenMissingError which we treat in
-  # a special way (to allow for continuation of an expression on the next
-  # line in IEx).
-  #
-  # Returns updated state.
-  #
-  # The first two clauses provide support for the break-trigger allowing to
-  # break out from a pending incomplete expression. See
-  # https://github.com/elixir-lang/elixir/issues/1089 for discussion.
-  @break_trigger '#iex:break\n'
-
   defp eval(code, iex_state, state) do
     try do
-      do_eval(String.to_charlist(code), iex_state, state)
+      {parser_module, parser_fun, args} = IEx.Config.parser()
+      args = [code, [line: iex_state.counter, file: "iex"], iex_state.buffer | args]
+      do_eval(apply(parser_module, parser_fun, args), iex_state, state)
     catch
       kind, error ->
         print_error(kind, error, __STACKTRACE__)
-        {%{iex_state | cache: ''}, state}
+        {%{iex_state | buffer: ""}, state}
     end
   end
 
-  defp do_eval(@break_trigger, %IEx.State{cache: ''} = iex_state, state) do
-    {iex_state, state}
-  end
-
-  defp do_eval(@break_trigger, iex_state, _state) do
-    :elixir_errors.parse_error([line: iex_state.counter], "iex", "incomplete expression", "")
-  end
-
-  defp do_eval(latest_input, iex_state, state) do
-    code = iex_state.cache ++ latest_input
-    line = iex_state.counter
+  defp do_eval({:ok, forms, buffer}, iex_state, state) do
     put_history(state)
     put_whereami(state)
-    quoted = Code.string_to_quoted(code, line: line, file: "iex")
-    handle_eval(quoted, code, line, iex_state, state)
+    state = handle_eval(forms, iex_state.counter, state)
+    {%{iex_state | buffer: buffer, counter: iex_state.counter + 1}, state}
   after
     Process.delete(:iex_history)
     Process.delete(:iex_whereami)
+  end
+
+  defp do_eval({:incomplete, buffer}, iex_state, state) do
+    {%{iex_state | buffer: buffer}, state}
   end
 
   defp put_history(%{history: history}) do
@@ -257,30 +294,18 @@ defmodule IEx.Evaluator do
     Process.put(:iex_whereami, {file, line, stacktrace})
   end
 
-  defp handle_eval({:ok, forms}, code, line, iex_state, state) do
+  defp handle_eval(forms, line, state) do
     {result, binding, env} = :elixir.eval_forms(forms, state.binding, state.env)
 
     unless result == IEx.dont_display_result() do
       io_inspect(result)
     end
 
-    iex_state = %{iex_state | cache: '', counter: iex_state.counter + 1}
     state = %{state | env: env, binding: binding}
-    {iex_state, update_history(state, line, code, result)}
+    update_history(state, line, result)
   end
 
-  defp handle_eval({:error, {_, _, ""}}, code, _line, iex_state, state) do
-    # Update iex_state.cache so that IEx continues to add new input to
-    # the unfinished expression in "code"
-    {%{iex_state | cache: code}, state}
-  end
-
-  defp handle_eval({:error, {location, error, token}}, _code, _line, _iex_state, _state) do
-    # Encountered malformed expression
-    :elixir_errors.parse_error(location, "iex", error, token)
-  end
-
-  defp update_history(state, counter, _cache, result) do
+  defp update_history(state, counter, result) do
     history_size = IEx.Config.history_size()
     update_in(state.history, &IEx.History.append(&1, {counter, result}, history_size))
   end

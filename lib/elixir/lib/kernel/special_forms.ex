@@ -201,7 +201,7 @@ defmodule Kernel.SpecialForms do
       iex> <<"foo"::utf32>>
       <<0, 0, 0, 102, 0, 0, 0, 111, 0, 0, 0, 111>>
 
-  Otherwise we get an `ArgumentError` when construcing the binary:
+  Otherwise we get an `ArgumentError` when constructing the binary:
 
       rest = "oo"
       <<102, rest>>
@@ -233,9 +233,9 @@ defmodule Kernel.SpecialForms do
 
   Sizes for types are a bit more nuanced. The default size for integers is 8.
 
-  For floats, it is 64. For floats, `size * unit` must result in 32 or 64,
+  For floats, it is 64. For floats, `size * unit` must result in 16, 32, or 64,
   corresponding to [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point)
-  binary32 and binary64, respectively.
+  binary16, binary32, and binary64, respectively.
 
   For binaries, the default is the size of the binary. Only the last binary in a
   match can use the default size. All others must have their size specified
@@ -365,8 +365,8 @@ defmodule Kernel.SpecialForms do
       ERL_COMPILER_OPTIONS=bin_opt_info mix compile
 
   To learn more about specific optimizations and performance considerations,
-  check out
-  [Erlang's Efficiency Guide on handling binaries](http://www.erlang.org/doc/efficiency_guide/binaryhandling.html).
+  check out the
+  ["Constructing and matching binaries" chapter of the Erlang's Efficiency Guide](https://erlang.org/doc/efficiency_guide/binaryhandling.html).
   """
   defmacro unquote(:<<>>)(args), do: error!([args])
 
@@ -617,9 +617,11 @@ defmodule Kernel.SpecialForms do
       import List, only: [flatten: 1]
       import String, except: [split: 2]
 
-  Note that calling `except` is always exclusive on a previously
-  declared `import/2`. If there is no previous import, then it applies
-  to all functions and macros in the module. For example:
+  Importing the same module again will erase the previous imports,
+  except when the `except` option is used, which is always exclusive
+  on a previously declared `import/2`. If there is no previous import,
+  then it applies to all functions and macros in the module. For
+  example:
 
       import List, only: [flatten: 1, keyfind: 4]
       import List, except: [flatten: 1]
@@ -1414,7 +1416,7 @@ defmodule Kernel.SpecialForms do
   The `IO` module provides streams, that are both `Enumerable` and
   `Collectable`, here is an upcase echo server using comprehensions:
 
-      for line <- IO.stream(:stdio, :line), into: IO.stream(:stdio, :line) do
+      for line <- IO.stream(), into: IO.stream() do
         String.upcase(line)
       end
 
@@ -1548,8 +1550,15 @@ defmodule Kernel.SpecialForms do
       ...> else
       ...>   :error ->
       ...>     {:error, :wrong_data}
+      ...>
+      ...>   _other_error ->
+      ...>     :unexpected_error
       ...> end
       {:error, :wrong_data}
+
+  The `else` block works like a `case` clause: it can have multiple clauses,
+  and the first match will be used. Variables bound inside `with` (such as
+  `width` in this example) are not available in the `else` block.
 
   If an `else` block is used and there are no matching clauses, a `WithClauseError`
   exception is raised.
@@ -1598,7 +1607,7 @@ defmodule Kernel.SpecialForms do
   defmacro unquote(:__block__)(args), do: error!([args])
 
   @doc """
-  Caputure operator. Captures or creates an anonymous function.
+  Capture operator. Captures or creates an anonymous function.
 
   ## Capture
 
@@ -1721,19 +1730,21 @@ defmodule Kernel.SpecialForms do
 
   ## Examples
 
-      case thing do
-        {:selector, i, value} when is_integer(i) ->
-          value
-        value ->
-          value
+      case File.read(file) do
+        {:ok, contents} when is_binary(contents) ->
+          String.split(contents, "\n")
+
+        {:error, _reason} ->
+          Logger.warning "could not find #{file}, assuming empty..."
+          []
       end
 
-  In the example above, we match `thing` against each clause "head"
-  and execute the clause "body" corresponding to the first clause
-  that matches.
+  In the example above, we match the result of `File.read/1`
+  against each clause "head" and execute the clause "body"
+  corresponding to the first clause that matches.
 
-  If no clause matches, an error is raised.
-  For this reason, it may be necessary to add a final catch-all clause (like `_`)
+  If no clause matches, an error is raised. For this reason,
+  it may be necessary to add a final catch-all clause (like `_`)
   which will always match.
 
       x = 10
@@ -1741,6 +1752,7 @@ defmodule Kernel.SpecialForms do
       case x do
         0 ->
           "This clause won't match"
+
         _ ->
           "This clause would match any value (x = #{x})"
       end
@@ -1758,8 +1770,7 @@ defmodule Kernel.SpecialForms do
       value
       #=> unbound variable value
 
-  When binding variables with the same names as variables in the outer context,
-  the variables in the outer context are not affected.
+  Variables in the outer context cannot be overridden either:
 
       value = 7
 
@@ -1785,6 +1796,19 @@ defmodule Kernel.SpecialForms do
         _ -> "Will match"
       end
       #=> "Will match"
+
+  ## Using guards to match against multiple values
+
+  While it is not possible to match against multiple patterns in a single
+  clause, it's possible to match against multiple values by using guards:
+
+      case data do
+        value when value in [:one, :two] ->
+          "#{value} has been matched"
+
+        :three ->
+          "three has been matched"
+      end
 
   """
   defmacro case(condition, clauses), do: error!([condition, clauses])

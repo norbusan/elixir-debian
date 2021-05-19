@@ -23,7 +23,7 @@ defmodule Mix.Tasks.TestTest do
       assert ex_unit_opts_from_given(only: "focus", include: "special") == only
     end
 
-    test "translates :color into list containing an enabled key/value pair" do
+    test "translates :color into list containing an enabled key-value pair" do
       assert ex_unit_opts_from_given(color: false) == [colors: [enabled: false]]
       assert ex_unit_opts_from_given(color: true) == [colors: [enabled: true]]
     end
@@ -133,6 +133,8 @@ defmodule Mix.Tasks.TestTest do
       in_fixture("umbrella_test", fn ->
         output = mix(["test", "--cover"])
 
+        assert output =~ "3 tests, 0 failures"
+
         # For bar, we do regular --cover and also test protocols
         assert output =~ """
                Generating cover results ...
@@ -144,6 +146,8 @@ defmodule Mix.Tasks.TestTest do
                -----------|--------------------------
                   100.00% | Total
                """
+
+        assert output =~ "1 test, 0 failures"
 
         # For foo, we do regular --cover and test it does not include bar
         assert output =~ """
@@ -210,8 +214,13 @@ defmodule Mix.Tasks.TestTest do
         System.put_env("PASS_FAILING_TESTS", "true")
         assert mix(["test", "--failed"]) =~ "2 tests, 0 failures"
 
-        # Nothing should get run if we try it again since everything is passing.
-        assert mix(["test", "--failed"]) =~ "There are no tests to run"
+        # All tests should be run if we try it again with no failing tests.
+        # This prevents `mix test --failed` from passing in cases where
+        # `mix test` had a compilation error before having failing tests.
+        # It also provides a better workflow as you can always run with --failed.
+        output = mix(["test", "--failed"])
+        assert output =~ "No pending --failed tests, re-running all available tests..."
+        assert output =~ "4 tests, 0 failures"
 
         # `--failed` and `--stale` cannot be combined
         output = mix(["test", "--failed", "--stale"])
@@ -386,7 +395,7 @@ defmodule Mix.Tasks.TestTest do
 
         assert output =~ """
                ==> bar
-               .
+               ...
                """
 
         refute output =~ "==> foo"
@@ -404,6 +413,31 @@ defmodule Mix.Tasks.TestTest do
 
         refute output =~ "==> foo"
         refute output =~ "Paths given to \"mix test\" did not match any directory/file"
+      end)
+    end
+  end
+
+  describe "--warnings-as-errors" do
+    test "fail on warning in tests" do
+      in_fixture("test_stale", fn ->
+        File.write!("lib/warning.ex", """
+        unused_compile_var = 1
+        """)
+
+        File.write!("test/warning_test.exs", """
+        defmodule WarningTest do
+          use ExUnit.Case
+
+          test "warning" do
+            unused_test_var = 1
+          end
+        end
+        """)
+
+        output = mix(["test", "--warnings-as-errors", "test/warning_test.exs"])
+        assert output =~ "variable \"unused_compile_var\" is unused"
+        assert output =~ "variable \"unused_test_var\" is unused"
+        assert output =~ "Compilation failed due to warnings"
       end)
     end
   end

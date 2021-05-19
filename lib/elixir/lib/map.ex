@@ -19,8 +19,13 @@ defmodule Map do
   in a map literal, the last one prevails.
 
   When the key in a key-value pair is an atom, the `key: value` shorthand syntax
-  can be used (as in many other special forms), provided key-value pairs are put at
-  the end:
+  can be used (as in many other special forms):
+
+      iex> %{a: 1, b: 2}
+      %{a: 1, b: 2}
+
+  If you want to mix the shorthand syntax with `=>`, the shorthand syntax must come
+  at the end:
 
       iex> %{"hello" => "world", a: 1, b: 2}
       %{:a => 1, :b => 2, "hello" => "world"}
@@ -45,11 +50,11 @@ defmodule Map do
       map.foo
       #=> "bar"
       map.non_existing_key
-      #=> ** (KeyError) key :non_existing_key not found in: %{baz: "bong", foo: "bar"}
+      ** (KeyError) key :non_existing_key not found in: %{baz: "bong", foo: "bar"}
 
   > Note: do not add parens when accessing fields, such as in `data.key()`.
-  > If parenthesis are used, Elixir will consider it to be a function call
-  > on `data`, which would be expected to be an atom.
+  > If parenthesis are used, Elixir will expect `data` to be an atom representing
+  > a module and attempt to call the *function* `key/0` in it.
 
   The two syntaxes for accessing keys reveal the dual nature of maps. The `map[key]`
   syntax is used for dynamically created maps that may have any key, of any type.
@@ -614,7 +619,7 @@ defmodule Map do
       %{a: 1, b: 11}
 
   """
-  @spec update(map, key, default :: value, (existing_value :: value -> updated_value :: value)) ::
+  @spec update(map, key, default :: value, (existing_value :: value -> new_value :: value)) ::
           map
   def update(map, key, default, fun) when is_function(fun, 1) do
     case map do
@@ -632,8 +637,8 @@ defmodule Map do
   @doc """
   Removes the value associated with `key` in `map` and returns the value and the updated map.
 
-  If `key` is present in `map`, it returns `{value, new_map}` where `value` is the value of
-  the key and `new_map` is the result of removing `key` from `map`. If `key`
+  If `key` is present in `map`, it returns `{value, updated_map}` where `value` is the value of
+  the key and `updated_map` is the result of removing `key` from `map`. If `key`
   is not present in `map`, `{default, map}` is returned.
 
   ## Examples
@@ -646,7 +651,7 @@ defmodule Map do
       {3, %{a: 1}}
 
   """
-  @spec pop(map, key, value) :: {value, new_map :: map}
+  @spec pop(map, key, default) :: {value, updated_map :: map} | {default, map} when default: value
   def pop(map, key, default \\ nil) do
     case :maps.take(key, map) do
       {_, _} = tuple -> tuple
@@ -655,8 +660,8 @@ defmodule Map do
   end
 
   @doc """
-  Returns and removes the value associated with `key` in `map` or raises
-  if `key` is not present.
+  Removes the value associated with `key` in `map` and returns the value
+  and the updated map, or it raises if `key` is not present.
 
   Behaves the same as `pop/3` but raises if `key` is not present in `map`.
 
@@ -671,7 +676,7 @@ defmodule Map do
 
   """
   @doc since: "1.10.0"
-  @spec pop!(map, key) :: {value, map}
+  @spec pop!(map, key) :: {value, updated_map :: map}
   def pop!(map, key) do
     case :maps.take(key, map) do
       {_, _} = tuple -> tuple
@@ -812,7 +817,7 @@ defmodule Map do
       ** (KeyError) key :b not found in: %{a: 1}
 
   """
-  @spec update!(map, key, (existing_value :: value -> updated_value :: value)) :: map
+  @spec update!(map, key, (existing_value :: value -> new_value :: value)) :: map
   def update!(map, key, fun) when is_function(fun, 1) do
     value = fetch!(map, key)
     put(map, key, fun.(value))
@@ -841,7 +846,7 @@ defmodule Map do
       iex> Map.get_and_update(%{a: 1}, :b, fn current_value ->
       ...>   {current_value, "new value!"}
       ...> end)
-      {nil, %{b: "new value!", a: 1}}
+      {nil, %{a: 1, b: "new value!"}}
 
       iex> Map.get_and_update(%{a: 1}, :a, fn _ -> :pop end)
       {1, %{}}
@@ -850,8 +855,8 @@ defmodule Map do
       {nil, %{a: 1}}
 
   """
-  @spec get_and_update(map, key, (value -> {current_value, new_value :: value} | :pop)) ::
-          {current_value, map}
+  @spec get_and_update(map, key, (value | nil -> {current_value, new_value :: value} | :pop)) ::
+          {current_value, new_map :: map}
         when current_value: value
   def get_and_update(map, key, fun) when is_function(fun, 1) do
     current = get(map, key)
@@ -892,7 +897,7 @@ defmodule Map do
       {1, %{}}
 
   """
-  @spec get_and_update!(map, key, (value -> {current_value, new_value :: value} | :pop)) ::
+  @spec get_and_update!(map, key, (value | nil -> {current_value, new_value :: value} | :pop)) ::
           {current_value, map}
         when current_value: value
   def get_and_update!(map, key, fun) when is_function(fun, 1) do
@@ -945,11 +950,22 @@ defmodule Map do
   Two maps are considered to be equal if they contain
   the same keys and those keys contain the same values.
 
+  Note this function exists for completeness so the `Map`
+  and `Keyword` modules provide similar APIs. In practice,
+  developers often compare maps using `==/2` or `===/2`
+  directly.
+
   ## Examples
 
       iex> Map.equal?(%{a: 1, b: 2}, %{b: 2, a: 1})
       true
       iex> Map.equal?(%{a: 1, b: 2}, %{b: 1, a: 2})
+      false
+
+  Comparison between keys and values is done with `===/3`,
+  which means integers are not equivalent to floats:
+
+      iex> Map.equal?(%{a: 1.0}, %{a: 1})
       false
 
   """

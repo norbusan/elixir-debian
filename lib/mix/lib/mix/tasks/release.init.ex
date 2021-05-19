@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Release.Init do
 
       mix release.init
       * creating rel/vm.args.eex
+      * creating rel/remote.vm.args.eex
       * creating rel/env.sh.eex
       * creating rel/env.bat.eex
 
@@ -33,6 +34,7 @@ defmodule Mix.Tasks.Release.Init do
     end
 
     create_file("rel/vm.args.eex", vm_args_text(), opts)
+    create_file("rel/remote.vm.args.eex", vm_args_text(), opts)
     create_file("rel/env.sh.eex", env_text(), opts)
     create_file("rel/env.bat.eex", env_bat_text(), opts)
     :ok
@@ -41,7 +43,7 @@ defmodule Mix.Tasks.Release.Init do
   @doc false
   def vm_args_text,
     do: ~S"""
-    ## Customize flags given to the VM: http://erlang.org/doc/man/erl.html
+    ## Customize flags given to the VM: https://erlang.org/doc/man/erl.html
     ## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
 
     ## Number of dirty schedulers doing IO work (file, sockets, and others)
@@ -85,12 +87,13 @@ defmodule Mix.Tasks.Release.Init do
 
     SELF=$(readlink "$0" || true)
     if [ -z "$SELF" ]; then SELF="$0"; fi
-    RELEASE_ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
+    RELEASE_ROOT="$(CDPATH='' cd "$(dirname "$SELF")/.." && pwd -P)"
     export RELEASE_ROOT
     export RELEASE_NAME="${RELEASE_NAME:-"<%= @release.name %>"}"
     export RELEASE_VSN="${RELEASE_VSN:-"$(cut -d' ' -f2 "$RELEASE_ROOT/releases/start_erl.data")"}"
     export RELEASE_COMMAND="$1"
     export RELEASE_MODE="${RELEASE_MODE:-"embedded"}"
+    export RELEASE_PROG="${RELEASE_PROG:-"$(echo "$0" | sed 's/.*\///')"}"
 
     REL_VSN_DIR="$RELEASE_ROOT/releases/$RELEASE_VSN"
     . "$REL_VSN_DIR/env.sh"
@@ -99,12 +102,13 @@ defmodule Mix.Tasks.Release.Init do
     export RELEASE_NODE="${RELEASE_NODE:-"$RELEASE_NAME"}"
     export RELEASE_TMP="${RELEASE_TMP:-"$RELEASE_ROOT/tmp"}"
     export RELEASE_VM_ARGS="${RELEASE_VM_ARGS:-"$REL_VSN_DIR/vm.args"}"
+    export RELEASE_REMOTE_VM_ARGS="${RELEASE_REMOTE_VM_ARGS:-"$REL_VSN_DIR/remote.vm.args"}"
     export RELEASE_DISTRIBUTION="${RELEASE_DISTRIBUTION:-"sname"}"
     export RELEASE_BOOT_SCRIPT="${RELEASE_BOOT_SCRIPT:-"start"}"
     export RELEASE_BOOT_SCRIPT_CLEAN="${RELEASE_BOOT_SCRIPT_CLEAN:-"start_clean"}"
 
     rand () {
-      od -t xS -N 2 -A n /dev/urandom | tr -d " \n"
+      dd count=1 bs=2 if=/dev/urandom 2> /dev/null | od -x | awk 'NR==1{print $2}'
     }
 
     release_distribution () {
@@ -129,6 +133,7 @@ defmodule Mix.Tasks.Release.Init do
            $(release_distribution "rpc-$(rand)-$RELEASE_NODE") \
            --boot "$REL_VSN_DIR/$RELEASE_BOOT_SCRIPT_CLEAN" \
            --boot-var RELEASE_LIB "$RELEASE_ROOT/lib" \
+           --vm-args "$RELEASE_REMOTE_VM_ARGS" \
            --rpc-eval "$RELEASE_NODE" "$1"
     }
 
@@ -201,6 +206,7 @@ defmodule Mix.Tasks.Release.Init do
              $(release_distribution "rem-$(rand)-$RELEASE_NODE") \
              --boot "$REL_VSN_DIR/$RELEASE_BOOT_SCRIPT_CLEAN" \
              --boot-var RELEASE_LIB "$RELEASE_ROOT/lib" \
+             --vm-args "$RELEASE_REMOTE_VM_ARGS" \
              --remsh "$RELEASE_NODE"
         ;;
 
@@ -275,6 +281,7 @@ defmodule Mix.Tasks.Release.Init do
     if not defined RELEASE_NAME (set RELEASE_NAME=<%= @release.name %>)
     if not defined RELEASE_VSN (for /f "tokens=1,2" %%K in ('type "!RELEASE_ROOT!\releases\start_erl.data"') do (set ERTS_VSN=%%K) && (set RELEASE_VSN=%%L))
     if not defined RELEASE_MODE (set RELEASE_MODE=embedded)
+    if not defined RELEASE_PROG (set RELEASE_PROG=%~nx0)
     set RELEASE_COMMAND=%~1
     set REL_VSN_DIR=!RELEASE_ROOT!\releases\!RELEASE_VSN!
     call "!REL_VSN_DIR!\env.bat"
@@ -283,6 +290,7 @@ defmodule Mix.Tasks.Release.Init do
     if not defined RELEASE_NODE (set RELEASE_NODE=!RELEASE_NAME!)
     if not defined RELEASE_TMP (set RELEASE_TMP=!RELEASE_ROOT!\tmp)
     if not defined RELEASE_VM_ARGS (set RELEASE_VM_ARGS=!REL_VSN_DIR!\vm.args)
+    if not defined RELEASE_REMOTE_VM_ARGS (set RELEASE_REMOTE_VM_ARGS=!REL_VSN_DIR!\remote.vm.args)
     if not defined RELEASE_DISTRIBUTION (set RELEASE_DISTRIBUTION=sname)
     if not defined RELEASE_BOOT_SCRIPT (set RELEASE_BOOT_SCRIPT=start)
     if not defined RELEASE_BOOT_SCRIPT_CLEAN (set RELEASE_BOOT_SCRIPT_CLEAN=start_clean)
@@ -385,6 +393,7 @@ defmodule Mix.Tasks.Release.Init do
       !RELEASE_DISTRIBUTION_FLAG! ^
       --boot "!REL_VSN_DIR!\!RELEASE_BOOT_SCRIPT_CLEAN!" ^
       --boot-var RELEASE_LIB "!RELEASE_ROOT!\lib" ^
+      --vm-args "!RELEASE_REMOTE_VM_ARGS!" ^
       --remsh "!RELEASE_NODE!"
     goto end
 
@@ -400,6 +409,7 @@ defmodule Mix.Tasks.Release.Init do
       !RELEASE_DISTRIBUTION_FLAG! ^
       --boot "!REL_VSN_DIR!\!RELEASE_BOOT_SCRIPT_CLEAN!" ^
       --boot-var RELEASE_LIB "!RELEASE_ROOT!\lib" ^
+      --vm-args "!RELEASE_REMOTE_VM_ARGS!" ^
       --rpc-eval "!RELEASE_NODE!" "!REL_RPC!"
     goto end
 

@@ -87,7 +87,11 @@ defmodule EExTest do
       expected = "123\n456\n789"
       assert_eval(expected, string, [], trim: true)
 
-      string = "<%= 123 %> \n  <%= 456 %>  \n  <%= 789 %>"
+      string = "<%= 123 %> \n\n456\n\n  <%= 789 %>"
+      expected = "123\n456\n789"
+      assert_eval(expected, string, [], trim: true)
+
+      string = "<%= 123 %> \n  \n456\n  \n  <%= 789 %>"
       expected = "123\n456\n789"
       assert_eval(expected, string, [], trim: true)
 
@@ -256,7 +260,7 @@ defmodule EExTest do
       assert_raise EEx.SyntaxError,
                    "nofile:1:18: unexpected middle of expression <% else %>",
                    fn ->
-                     EEx.compile_string("<% if true %> foo<% else %>bar<% end %>")
+                     EEx.compile_string("<%= if true %>foo<% else %>bar<% end %>")
                    end
     end
 
@@ -267,16 +271,16 @@ defmodule EExTest do
     end
 
     test "when start expression is found without an end expression" do
-      msg = "nofile:2:17: unexpected end of string, expected a closing '<% end %>'"
+      msg = "nofile:2:18: unexpected end of string, expected a closing '<% end %>'"
 
       assert_raise EEx.SyntaxError, msg, fn ->
-        EEx.compile_string("foo\n<% if true do %>")
+        EEx.compile_string("foo\n<%= if true do %>")
       end
     end
 
     test "when nested end expression is found without a start expression" do
-      assert_raise EEx.SyntaxError, "nofile:1:30: unexpected end of expression <% end %>", fn ->
-        EEx.compile_string("foo <% if true do %><% end %><% end %>")
+      assert_raise EEx.SyntaxError, "nofile:1:31: unexpected end of expression <% end %>", fn ->
+        EEx.compile_string("foo <%= if true do %><% end %><% end %>")
       end
     end
 
@@ -524,7 +528,7 @@ defmodule EExTest do
        <% "a" in y -> %>
         Good
        <% true -> %>
-        <% if true do %>true<% else %>false<% end %>
+        <%= if true do %>true<% else %>false<% end %>
         Bad
       <% end %>
       """
@@ -569,18 +573,6 @@ defmodule EExTest do
   end
 
   describe "buffers" do
-    test "unused buffers are kept out" do
-      string = """
-      <%= 123 %>
-      <% if true do %>
-        <%= 456 %>
-      <% end %>
-      <%= 789 %>
-      """
-
-      assert_eval("123\n\n789\n", string)
-    end
-
     test "inside comprehensions" do
       string = """
       <%= for _name <- packages || [] do %>
@@ -617,6 +609,24 @@ defmodule EExTest do
     test "sets external resource attribute" do
       assert EExTest.Compiled.__info__(:attributes)[:external_resource] ==
                [Path.join(__DIR__, "fixtures/eex_template_with_bindings.eex")]
+    end
+
+    test "supports t:Path.t() paths" do
+      filename = to_charlist(Path.join(__DIR__, "fixtures/eex_template_with_bindings.eex"))
+      result = EEx.eval_file(filename, bar: 1)
+      assert_normalized_newline_equal("foo 1\n", result)
+    end
+
+    assert_raise EEx.SyntaxError, "my_file.eex:1:12: missing token '%>'", fn ->
+      EEx.compile_string("foo <%= bar", file: "my_file.eex")
+    end
+
+    test "supports overriding file and line through options" do
+      filename = Path.join(__DIR__, "fixtures/eex_template_with_syntax_error.eex")
+
+      assert_raise EEx.SyntaxError, "my_file.eex:11:1: missing token '%>'", fn ->
+        EEx.eval_file(filename, _bindings = [], file: "my_file.eex", line: 10)
+      end
     end
   end
 
@@ -663,8 +673,8 @@ defmodule EExTest do
       buffer <> ":END"
     end
 
-    def handle_text(buffer, text) do
-      buffer <> ":TEXT(#{String.trim(text)})"
+    def handle_text(buffer, meta, text) do
+      buffer <> ":TEXT-#{meta[:line]}-#{meta[:column]}(#{String.trim(text)})"
     end
 
     def handle_expr(buffer, "/", expr) do
@@ -682,16 +692,16 @@ defmodule EExTest do
 
   describe "custom engines" do
     test "text" do
-      assert_eval("BODY(INIT:TEXT(foo))", "foo", [], engine: TestEngine)
+      assert_eval("BODY(INIT:TEXT-1-1(foo))", "foo", [], engine: TestEngine)
     end
 
     test "custom marker" do
-      assert_eval("BODY(INIT:TEXT(foo):DIV(:bar))", "foo <%/ :bar %>", [], engine: TestEngine)
+      assert_eval("BODY(INIT:TEXT-1-1(foo):DIV(:bar))", "foo <%/ :bar %>", [], engine: TestEngine)
     end
 
     test "begin/end" do
       assert_eval(
-        ~s[BODY(INIT:TEXT(foo):EQUAL(if do\n  "BEGIN:TEXT(this):END"\nelse\n  "BEGIN:TEXT(that):END"\nend))],
+        ~s[BODY(INIT:TEXT-1-1(foo):EQUAL(if do\n  "BEGIN:TEXT-1-17(this):END"\nelse\n  "BEGIN:TEXT-1-31(that):END"\nend))],
         "foo <%= if do %>this<% else %>that<% end %>",
         [],
         engine: TestEngine

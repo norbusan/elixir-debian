@@ -120,7 +120,7 @@ defmodule Mix do
 
   Aliases are shortcuts or tasks specific to the current project.
 
-  In the "Mix.Task" section, we have defined a task that would be
+  In the [Mix.Task section](#module-mix-task), we have defined a task that would be
   available to everyone using our project as a dependency. What if
   we wanted the task to only be available for our project? Just
   define an alias:
@@ -151,7 +151,7 @@ defmodule Mix do
   In the example above, we have defined two aliases. One is `mix c`
   which is a shortcut for `mix compile`. The other is named
   `mix hello`, which is the equivalent to the `Mix.Tasks.Hello`
-  we have defined in the "Mix.Task" section.
+  we have defined in the [Mix.Task section](#module-mix-task).
 
   Aliases may also be lists, specifying multiple tasks to be run
   consecutively:
@@ -208,7 +208,7 @@ defmodule Mix do
   powerful aliases mixed with Mix tasks can be.
 
   Mix tasks are designed to run only once. This prevents the same task
-  to be executed multiple times. For example, if there are several tasks
+  from being executed multiple times. For example, if there are several tasks
   depending on `mix compile`, the code will be compiled once. Tasks can
   be executed again if they are explicitly reenabled using `Mix.Task.reenable/1`:
 
@@ -251,6 +251,8 @@ defmodule Mix do
     * `MIX_EXS` - changes the full path to the `mix.exs` file
     * `MIX_HOME` - path to Mix's home directory, stores configuration files and scripts used by Mix
       (default: `~/.mix`)
+    * `MIX_INSTALL_DIR` - (since v1.12.0) specifies directory where `Mix.install/2` keeps
+      installs cache
     * `MIX_PATH` - appends extra code paths
     * `MIX_QUIET` - does not print information messages to the terminal
     * `MIX_REBAR` - path to rebar command that overrides the one Mix installs
@@ -271,6 +273,8 @@ defmodule Mix do
   """
 
   use Application
+
+  import Kernel, except: [raise: 2]
 
   @doc false
   def start do
@@ -429,11 +433,25 @@ defmodule Mix do
   end
 
   @doc """
-  Raises a Mix error that is nicely formatted.
+  Raises a Mix error that is nicely formatted, defaulting to exit code `1`.
   """
   @spec raise(binary) :: no_return
-  def raise(message) when is_binary(message) do
-    Kernel.raise(Mix.Error, mix: true, message: message)
+  def raise(message) do
+    __MODULE__.raise(message, exit_code: 1)
+  end
+
+  @doc """
+  Raises a Mix error that is nicely formatted.
+
+  ## Options
+
+    * `:exit_code` - defines exit code value, defaults to `1`
+
+  """
+  @doc since: "1.12.0"
+  @spec raise(binary, exit_code: non_neg_integer()) :: no_return
+  def raise(message, opts) when is_binary(message) and is_list(opts) do
+    Kernel.raise(Mix.Error, mix: Keyword.get(opts, :exit_code, 1), message: message)
   end
 
   @doc """
@@ -447,5 +465,129 @@ defmodule Mix do
 
   def path_for(:escripts) do
     Path.join(Mix.Utils.mix_home(), "escripts")
+  end
+
+  @doc """
+  Installs and starts dependencies.
+
+  The given `deps` should be in the same format as defined in a regular Mix
+  project. See `mix help deps` for more information. As a shortcut, an atom
+  can be given as dependency to mean the latest version. In other words,
+  specifying `:decimal` is the same as `{:decimal, ">= 0.0.0"}`.
+
+  After each successful installation, a given set of dependencies is cached
+  so starting another VM and calling `Mix.install/2` with the same dependencies
+  will avoid unnecessary downloads and compilations. The location of the cache
+  directory can be controlled using the `MIX_INSTALL_DIR` environment variable.
+
+  This function can only be called outside of a Mix project and only with the
+  same dependencies in the given VM.
+
+  **Note:** this feature is currently experimental and it may change
+  in future releases.
+
+  ## Options
+
+    * `:force` - if `true`, removes install cache. This is useful when you want
+      to update your dependencies or your install got into an inconsistent state
+      (Default: `false`)
+
+    * `:verbose` - if `true`, prints additional debugging information
+      (Default: `false`)
+
+    * `:consolidate_protocols` - if `true`, runs protocol
+      consolidation via the `mix compile.protocols` task (Default: `true`)
+
+  ## Examples
+
+      Mix.install([
+        :decimal,
+        {:jason, "~> 1.0"}
+      ])
+
+  """
+  @doc since: "1.12.0"
+  def install(deps, opts \\ [])
+
+  def install(deps, opts) when is_list(deps) and is_list(opts) do
+    Mix.start()
+
+    if Mix.Project.get() do
+      Mix.raise("Mix.install/2 cannot be used inside a Mix project")
+    end
+
+    deps =
+      Enum.map(deps, fn
+        dep when is_atom(dep) -> {dep, ">= 0.0.0"}
+        dep -> dep
+      end)
+
+    force? = !!opts[:force]
+
+    case Mix.State.get(:installed) do
+      nil ->
+        :ok
+
+      ^deps when not force? ->
+        :ok
+
+      _ ->
+        Mix.raise("Mix.install/2 can only be called with the same dependencies in the given VM")
+    end
+
+    installs_root =
+      System.get_env("MIX_INSTALL_DIR") ||
+        Path.join(Mix.Utils.mix_cache(), "installs")
+
+    id = deps |> :erlang.term_to_binary() |> :erlang.md5() |> Base.encode16(case: :lower)
+    version = "elixir-#{System.version()}-erts-#{:erlang.system_info(:version)}"
+    dir = Path.join([installs_root, version, id])
+
+    if opts[:verbose] do
+      Mix.shell().info("using #{dir}")
+    end
+
+    if force? do
+      File.rm_rf!(dir)
+    end
+
+    config = [
+      version: "0.1.0",
+      build_per_environment: true,
+      build_path: "_build",
+      lockfile: "mix.lock",
+      deps_path: "deps",
+      deps: deps,
+      app: :mix_install,
+      erlc_paths: ["src"],
+      elixirc_paths: ["lib"],
+      compilers: [],
+      consolidate_protocols: Keyword.get(opts, :consolidate_protocols, true)
+    ]
+
+    :ok = Mix.Local.append_archives()
+    :ok = Mix.ProjectStack.push(__MODULE__.InstallProject, config, "nofile")
+
+    try do
+      run_deps? = not File.dir?(Path.join(dir, "_build"))
+      File.mkdir_p!(dir)
+
+      File.cd!(dir, fn ->
+        if run_deps? do
+          Mix.Task.rerun("deps.get")
+        end
+
+        Mix.Task.run("compile")
+      end)
+
+      for app <- Mix.Project.deps_apps() do
+        Application.ensure_all_started(app)
+      end
+
+      Mix.State.put(:installed, deps)
+      :ok
+    after
+      Mix.ProjectStack.pop()
+    end
   end
 end

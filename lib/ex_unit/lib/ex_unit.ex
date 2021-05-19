@@ -54,7 +54,7 @@ defmodule ExUnit do
 
   Mix will load the `test_helper.exs` file before executing the tests.
   It is not necessary to `require` the `test_helper.exs` file in your test
-  files. See `Mix.Tasks.Test` for more information.
+  files. Run `mix help test` for more information.
   """
 
   @typedoc """
@@ -274,7 +274,9 @@ defmodule ExUnit do
     * `:seed` - an integer seed value to randomize the test suite. This seed
       is also mixed with the test module and name to create a new unique seed
       on every test, which is automatically fed into the `:rand` module. This
-      provides randomness between tests, but predictable and reproducible results;
+      provides randomness between tests, but predictable and reproducible
+      results. A `:seed` of `0` will disable randomization and the tests in each
+      file will always run in the order that they were defined in;
 
     * `:slowest` - prints timing information for the N slowest tests. Running
       ExUnit with slow test reporting automatically runs in `trace` mode. It
@@ -350,8 +352,34 @@ defmodule ExUnit do
   """
   @spec run() :: suite_result()
   def run do
+    _ = ExUnit.Server.modules_loaded()
     options = persist_defaults(configuration())
     ExUnit.Runner.run(options, nil)
+  end
+
+  @doc """
+  Starts tests asynchronously while test cases are still loading.
+
+  It returns a task that must be given to `await_run/0` when a result
+  is desired.
+  """
+  @doc since: "1.12.0"
+  @spec async_run() :: Task.t()
+  def async_run() do
+    Task.async(fn ->
+      options = persist_defaults(configuration())
+      ExUnit.Runner.run(options, nil)
+    end)
+  end
+
+  @doc """
+  Awaits for a test suite that has been started with `async_run/0`.
+  """
+  @doc since: "1.12.0"
+  @spec await_run(Task.t()) :: suite_result()
+  def await_run(task) do
+    ExUnit.Server.modules_loaded()
+    Task.await(task, :infinity)
   end
 
   @doc """

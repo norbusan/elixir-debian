@@ -1105,9 +1105,9 @@ defmodule Stream do
   end
 
   @doc """
-  Zips two collections together, lazily.
+  Zips two enumerables together, lazily.
 
-  The zipping finishes as soon as any enumerable completes.
+  The zipping finishes as soon as either enumerable completes.
 
   ## Examples
 
@@ -1118,7 +1118,9 @@ defmodule Stream do
 
   """
   @spec zip(Enumerable.t(), Enumerable.t()) :: Enumerable.t()
-  def zip(left, right), do: zip([left, right])
+  def zip(enumerable1, enumerable2) do
+    zip_with(enumerable1, enumerable2, fn left, right -> {left, right} end)
+  end
 
   @doc """
   Zips corresponding elements from a finite collection of enumerables
@@ -1137,69 +1139,175 @@ defmodule Stream do
   @doc since: "1.4.0"
   @spec zip(enumerables) :: Enumerable.t() when enumerables: [Enumerable.t()] | Enumerable.t()
   def zip(enumerables) do
-    &prepare_zip(enumerables, &1, &2)
+    zip_with(enumerables, &List.to_tuple(&1))
   end
 
-  defp prepare_zip(enumerables, acc, fun) do
-    step = &do_zip_step(&1, &2)
+  @doc """
+  Lazily zips corresponding elements from two enumerables into a new one, transforming them with
+  the `zip_fun` function as it goes.
+
+  The `zip_fun` will be called with the first element from `enumerable1` and the first
+  element from `enumerable2`, then with the second element from each, and so on until
+  either one of the enumerables completes.
+
+  ## Examples
+
+      iex> concat = Stream.concat(1..3, 4..6)
+      iex> Stream.zip_with(concat, concat, fn a, b -> a + b end) |> Enum.to_list()
+      [2, 4, 6, 8, 10, 12]
+
+  """
+  @doc since: "1.12.0"
+  @spec zip_with(Enumerable.t(), Enumerable.t(), (term, term -> term)) :: Enumerable.t()
+  def zip_with(enumerable1, enumerable2, zip_fun)
+      when is_list(enumerable1) and is_list(enumerable2) and is_function(zip_fun, 2) do
+    &zip_pair(enumerable1, enumerable2, &1, &2, zip_fun)
+  end
+
+  def zip_with(enumerable1, enumerable2, zip_fun) when is_function(zip_fun, 2) do
+    zip_with([enumerable1, enumerable2], fn [left, right] -> zip_fun.(left, right) end)
+  end
+
+  defp zip_pair(_list1, _list2, {:halt, acc}, _fun, _zip_fun) do
+    {:halted, acc}
+  end
+
+  defp zip_pair(list1, list2, {:suspend, acc}, fun, zip_fun) do
+    {:suspended, acc, &zip_pair(list1, list2, &1, fun, zip_fun)}
+  end
+
+  defp zip_pair([], _list2, {:cont, acc}, _fun, _zip_fun), do: {:done, acc}
+  defp zip_pair(_list1, [], {:cont, acc}, _fun, _zip_fun), do: {:done, acc}
+
+  defp zip_pair([head1 | tail1], [head2 | tail2], {:cont, acc}, fun, zip_fun) do
+    zip_pair(tail1, tail2, fun.(zip_fun.(head1, head2), acc), fun, zip_fun)
+  end
+
+  @doc """
+  Lazily zips corresponding elements from a finite collection of enumerables into a new
+  enumerable, transforming them with the `zip_fun` function as it goes.
+
+  The first element from each of the enums in `enumerables` will be put into a list which is then passed to
+  the 1-arity `zip_fun` function. Then, the second elements from each of the enums are put into a list and passed to
+  `zip_fun`, and so on until any one of the enums in `enumerables` completes.
+
+  Returns a new enumerable with the results of calling `zip_fun`.
+
+  ## Examples
+
+      iex> concat = Stream.concat(1..3, 4..6)
+      iex> Stream.zip_with([concat, concat], fn [a, b] -> a + b end) |> Enum.to_list()
+      [2, 4, 6, 8, 10, 12]
+
+      iex> concat = Stream.concat(1..3, 4..6)
+      iex> Stream.zip_with([concat, concat, 1..3], fn [a, b, c] -> a + b + c end) |> Enum.to_list()
+      [3, 6, 9]
+
+  """
+  @doc since: "1.12.0"
+  @spec zip_with(enumerables, (Enumerable.t() -> term)) :: Enumerable.t()
+        when enumerables: [Enumerable.t()] | Enumerable.t()
+  def zip_with(enumerables, zip_fun) when is_function(zip_fun, 1) do
+    if is_list(enumerables) and :lists.all(&is_list/1, enumerables) do
+      &zip_list(enumerables, &1, &2, zip_fun)
+    else
+      &zip_enum(enumerables, &1, &2, zip_fun)
+    end
+  end
+
+  defp zip_list(_enumerables, {:halt, acc}, _fun, _zip_fun) do
+    {:halted, acc}
+  end
+
+  defp zip_list(enumerables, {:suspend, acc}, fun, zip_fun) do
+    {:suspended, acc, &zip_list(enumerables, &1, fun, zip_fun)}
+  end
+
+  defp zip_list(enumerables, {:cont, acc}, fun, zip_fun) do
+    case zip_list_heads_tails(enumerables, [], []) do
+      {heads, tails} -> zip_list(tails, fun.(zip_fun.(heads), acc), fun, zip_fun)
+      :error -> {:done, acc}
+    end
+  end
+
+  defp zip_list_heads_tails([[head | tail] | rest], heads, tails) do
+    zip_list_heads_tails(rest, [head | heads], [tail | tails])
+  end
+
+  defp zip_list_heads_tails([[] | _rest], _heads, _tails) do
+    :error
+  end
+
+  defp zip_list_heads_tails([], heads, tails) do
+    {:lists.reverse(heads), :lists.reverse(tails)}
+  end
+
+  defp zip_enum(enumerables, acc, fun, zip_fun) do
+    step = fn x, acc ->
+      {:suspend, :lists.reverse([x | acc])}
+    end
 
     enum_funs =
       Enum.map(enumerables, fn enum ->
         {&Enumerable.reduce(enum, &1, step), [], :cont}
       end)
 
-    do_zip(enum_funs, acc, fun)
+    do_zip_enum(enum_funs, acc, fun, zip_fun)
   end
 
-  # This implementation of do_zip/3 works for any number of
-  # streams to zip, even if right now zip/2 only zips two streams.
-
-  defp do_zip(zips, {:halt, acc}, _fun) do
+  # This implementation of do_zip_enum/4 works for any number of streams to zip
+  defp do_zip_enum(zips, {:halt, acc}, _fun, _zip_fun) do
     do_zip_close(zips)
     {:halted, acc}
   end
 
-  defp do_zip(zips, {:suspend, acc}, fun) do
-    {:suspended, acc, &do_zip(zips, &1, fun)}
+  defp do_zip_enum(zips, {:suspend, acc}, fun, zip_fun) do
+    {:suspended, acc, &do_zip_enum(zips, &1, fun, zip_fun)}
   end
 
-  defp do_zip([], {:cont, acc}, _callback) do
+  defp do_zip_enum([], {:cont, acc}, _callback, _zip_fun) do
     {:done, acc}
   end
 
-  defp do_zip(zips, {:cont, acc}, callback) do
+  defp do_zip_enum(zips, {:cont, acc}, callback, zip_fun) do
     try do
-      do_zip_next_tuple(zips, acc, callback, [], [])
+      do_zip_next(zips, acc, callback, [], [], zip_fun)
     catch
       kind, reason ->
         do_zip_close(zips)
         :erlang.raise(kind, reason, __STACKTRACE__)
     else
       {:next, buffer, acc} ->
-        do_zip(buffer, acc, callback)
+        do_zip_enum(buffer, acc, callback, zip_fun)
 
       {:done, _acc} = other ->
         other
     end
   end
 
-  # do_zip_next_tuple/5 computes the next tuple formed by
+  # do_zip_next/6 computes the next tuple formed by
   # the next element of each zipped stream.
-
-  defp do_zip_next_tuple([{_, [], :halt} | zips], acc, _callback, _yielded_elems, buffer) do
+  defp do_zip_next(
+         [{_, [], :halt} | zips],
+         acc,
+         _callback,
+         _yielded_elems,
+         buffer,
+         _zip_fun
+       ) do
     do_zip_close(:lists.reverse(buffer, zips))
     {:done, acc}
   end
 
-  defp do_zip_next_tuple([{fun, [], :cont} | zips], acc, callback, yielded_elems, buffer) do
+  defp do_zip_next([{fun, [], :cont} | zips], acc, callback, yielded_elems, buffer, zip_fun) do
     case fun.({:cont, []}) do
       {:suspended, [elem | next_acc], fun} ->
         next_buffer = [{fun, next_acc, :cont} | buffer]
-        do_zip_next_tuple(zips, acc, callback, [elem | yielded_elems], next_buffer)
+        do_zip_next(zips, acc, callback, [elem | yielded_elems], next_buffer, zip_fun)
 
       {_, [elem | next_acc]} ->
         next_buffer = [{fun, next_acc, :halt} | buffer]
-        do_zip_next_tuple(zips, acc, callback, [elem | yielded_elems], next_buffer)
+        do_zip_next(zips, acc, callback, [elem | yielded_elems], next_buffer, zip_fun)
 
       {_, []} ->
         # The current zipped stream terminated, so we close all the streams
@@ -1209,26 +1317,28 @@ defmodule Stream do
     end
   end
 
-  defp do_zip_next_tuple([{fun, zip_acc, zip_op} | zips], acc, callback, yielded_elems, buffer) do
+  defp do_zip_next(
+         [{fun, zip_acc, zip_op} | zips],
+         acc,
+         callback,
+         yielded_elems,
+         buffer,
+         zip_fun
+       ) do
     [elem | rest] = zip_acc
     next_buffer = [{fun, rest, zip_op} | buffer]
-    do_zip_next_tuple(zips, acc, callback, [elem | yielded_elems], next_buffer)
+    do_zip_next(zips, acc, callback, [elem | yielded_elems], next_buffer, zip_fun)
   end
 
-  defp do_zip_next_tuple([] = _zips, acc, callback, yielded_elems, buffer) do
+  defp do_zip_next([] = _zips, acc, callback, yielded_elems, buffer, zip_fun) do
     # "yielded_elems" is a reversed list of results for the current iteration of
-    # zipping: it needs to be reversed and converted to a tuple to have the next
-    # tuple in the list resulting from zipping.
-    zipped = List.to_tuple(:lists.reverse(yielded_elems))
-    {:next, :lists.reverse(buffer), callback.(zipped, acc)}
+    # zipping. That is to say, the nth element from each of the enums being zipped.
+    # It needs to be reversed and passed to the zipping function so it can do it's thing.
+    {:next, :lists.reverse(buffer), callback.(zip_fun.(:lists.reverse(yielded_elems)), acc)}
   end
 
   defp do_zip_close(zips) do
     :lists.foreach(fn {fun, _, _} -> fun.({:halt, []}) end, zips)
-  end
-
-  defp do_zip_step(x, acc) do
-    {:suspend, :lists.reverse([x | acc])}
   end
 
   ## Sources
@@ -1248,7 +1358,7 @@ defmodule Stream do
   def cycle(enumerable)
 
   def cycle([]) do
-    raise ArgumentError, "cannot cycle over empty enumerable"
+    raise ArgumentError, "cannot cycle over an empty enumerable"
   end
 
   def cycle(enumerable) when is_list(enumerable) do
@@ -1297,7 +1407,7 @@ defmodule Stream do
     fn acc ->
       case reduce.(acc) do
         {state, []} when state in [:done, :halted] ->
-          raise ArgumentError, "cannot cycle over empty enumerable"
+          raise ArgumentError, "cannot cycle over an empty enumerable"
 
         other ->
           other
@@ -1333,9 +1443,9 @@ defmodule Stream do
   ## Examples
 
       # Although not necessary, let's seed the random algorithm
-      iex> :rand.seed(:exrop, {1, 2, 3})
+      iex> :rand.seed(:exsss, {1, 2, 3})
       iex> Stream.repeatedly(&:rand.uniform/0) |> Enum.take(3)
-      [0.7498295129076106, 0.06161655489244533, 0.7924073127680873]
+      [0.5455598952593053, 0.6039309974353404, 0.6684893034823949]
 
   """
   @spec repeatedly((() -> element)) :: Enumerable.t()
@@ -1584,7 +1694,7 @@ defmodule Stream do
 end
 
 defimpl Enumerable, for: Stream do
-  @compile :inline_list_funs
+  @compile :inline_list_funcs
 
   def count(_lazy), do: {:error, __MODULE__}
 
@@ -1621,7 +1731,7 @@ defimpl Enumerable, for: Stream do
   defp do_done({reason, [acc | _]}, nil), do: {reason, acc}
 
   defp do_done({reason, [acc | t]}, {done, fun}) do
-    [h | _] = Enum.reverse(t)
+    [h | _] = :lists.reverse(t)
 
     case done.([acc, h], fun) do
       {:cont, [acc | _]} -> {reason, acc}
@@ -1635,7 +1745,7 @@ defimpl Inspect, for: Stream do
   import Inspect.Algebra
 
   def inspect(%{enum: enum, funs: funs}, opts) do
-    inner = [enum: enum, funs: Enum.reverse(funs)]
+    inner = [enum: enum, funs: :lists.reverse(funs)]
     concat(["#Stream<", to_doc(inner, opts), ">"])
   end
 end

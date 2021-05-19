@@ -287,8 +287,8 @@ defmodule Keyword do
       {nil, [a: 1]}
 
   """
-  @spec get_and_update(t, key, (value -> {current_value, new_value :: value} | :pop)) ::
-          {current_value, value}
+  @spec get_and_update(t, key, (value | nil -> {current_value, new_value :: value} | :pop)) ::
+          {current_value, new_keywords :: t}
         when current_value: value
   def get_and_update(keywords, key, fun)
       when is_list(keywords) and is_atom(key),
@@ -351,8 +351,8 @@ defmodule Keyword do
       {1, []}
 
   """
-  @spec get_and_update!(t, key, (value -> {current_value, new_value :: value} | :pop)) ::
-          {current_value, t}
+  @spec get_and_update!(t, key, (value | nil -> {current_value, new_value :: value} | :pop)) ::
+          {current_value, new_keywords :: t}
         when current_value: value
   def get_and_update!(keywords, key, fun) do
     get_and_update!(keywords, key, fun, [])
@@ -732,10 +732,16 @@ defmodule Keyword do
       iex> Keyword.equal?([a: 1, b: 2, a: 3], [b: 2, a: 3, a: 1])
       true
 
+  Comparison between values is done with `===/3`,
+  which means integers are not equivalent to floats:
+
+      iex> Keyword.equal?([a: 1.0], [a: 1])
+      false
+
   """
   @spec equal?(t, t) :: boolean
   def equal?(left, right) when is_list(left) and is_list(right) do
-    :lists.sort(left) == :lists.sort(right)
+    :lists.sort(left) === :lists.sort(right)
   end
 
   @doc """
@@ -893,11 +899,11 @@ defmodule Keyword do
     [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  defp update!([{_, _} = e | keywords], key, fun, original) do
-    [e | update!(keywords, key, fun, original)]
+  defp update!([{_, _} = pair | keywords], key, fun, original) do
+    [pair | update!(keywords, key, fun, original)]
   end
 
-  defp update!([], key, _fun, original) when is_atom(key) do
+  defp update!([], key, _fun, original) do
     raise(KeyError, key: key, term: original)
   end
 
@@ -923,18 +929,21 @@ defmodule Keyword do
       [a: 1, b: 11]
 
   """
-  @spec update(t, key, default :: value, (existing_value :: value -> updated_value :: value)) :: t
+  @spec update(t, key, default :: value, (existing_value :: value -> new_value :: value)) :: t
   def update(keywords, key, default, fun)
+      when is_list(keywords) and is_atom(key) and is_function(fun, 1) do
+    update_guarded(keywords, key, default, fun)
+  end
 
-  def update([{key, value} | keywords], key, _default, fun) do
+  defp update_guarded([{key, value} | keywords], key, _default, fun) do
     [{key, fun.(value)} | delete(keywords, key)]
   end
 
-  def update([{_, _} = e | keywords], key, default, fun) do
-    [e | update(keywords, key, default, fun)]
+  defp update_guarded([{_, _} = pair | keywords], key, default, fun) do
+    [pair | update_guarded(keywords, key, default, fun)]
   end
 
-  def update([], key, default, _fun) when is_atom(key) do
+  defp update_guarded([], key, default, _fun) do
     [{key, default}]
   end
 

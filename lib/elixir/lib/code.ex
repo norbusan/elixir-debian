@@ -2,7 +2,7 @@ defmodule Code do
   @moduledoc ~S"""
   Utilities for managing code compilation, code evaluation, and code loading.
 
-  This module complements Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html)
+  This module complements Erlang's [`:code` module](`:code`)
   to add behaviour which is specific to Elixir. Almost all of the functions in this module
   have global side effects on the behaviour of Elixir.
 
@@ -29,6 +29,56 @@ defmodule Code do
   `compile_file/2` must be used when you are interested in the modules defined in a
   file, without tracking. `eval_file/2` should be used when you are interested in
   the result of evaluating the file rather than the modules it defines.
+
+  ## Code loading on the Erlang VM
+
+  Erlang has two modes to load code: interactive and embedded.
+
+  By default, the Erlang VM runs in interactive mode, where modules
+  are loaded as needed. In embedded mode the opposite happens, as all
+  modules need to be loaded upfront or explicitly.
+
+  You can use `ensure_loaded/1` (as well as `ensure_lodead?/1` and
+  `ensure_lodead!/1`) to check if a module is loaded before using it and
+  act.
+
+  ## `ensure_compiled/1` and `ensure_compiled!/1`
+
+  Elixir also includes `ensure_compiled/1` and `ensure_compiled!/1`
+  functions that are a superset of `ensure_loaded/1`.
+
+  Since Elixir's compilation happens in parallel, in some situations
+  you may need to use a module that was not yet compiled, therefore
+  it can't even be loaded.
+
+  When invoked, `ensure_compiled/1` and `ensure_compiled!/1` halt the
+  compilation of the caller until the module becomes available. Note
+  the distinction between `ensure_compiled/1` and `ensure_compiled!/1`
+  is important: if you are using `ensure_compiled!/1`, you are
+  indicating to the compiler that you can only continue if said module
+  is available.
+
+  If you are using `Code.ensure_compiled/1`, you are implying you may
+  continue without the module and therefore Elixir may return
+  `{:error, :unavailable}` for cases where the module is not yet available
+  (but may be available later on).
+
+  For those reasons, developers must typically use `Code.ensure_compiled!/1`.
+  In particular, do not do this:
+
+      case Code.ensure_compiled(module) do
+        {:module, _} -> module
+        {:error, _} -> raise ...
+      end
+
+  Finally, note you only need `ensure_compiled!/1` to check for modules
+  being defined within the same project. It does not apply to modules from
+  dependencies as dependencies are always compiled upfront.
+
+  In most cases, `ensure_loaded/1` is enough. `ensure_compiled!/1`
+  must be used in rare cases, usually involving macros that need to
+  invoke a module for callback information. The use of `ensure_compiled/1`
+  is even less likely.
 
   ## Compilation tracers
 
@@ -154,6 +204,259 @@ defmodule Code do
   @doc false
   def loaded_files do
     required_files()
+  end
+
+  @doc """
+  Receives a string and returns the cursor context.
+
+  This function receives a string with incomplete Elixir code,
+  representing a cursor position, and based on the string, it
+  provides contextual information about said position. The
+  return of this function can then be used to provide tips,
+  suggestions, and autocompletion functionality.
+
+  This function provides a best-effort detection and may not be
+  accurate under certain circumstances. See the "Limitations"
+  section below.
+
+  Consider adding a catch-all clause when handling the return
+  type of this function as new cursor information may be added
+  in future releases.
+
+  ## Examples
+
+      iex> Code.cursor_context("")
+      :expr
+
+      iex> Code.cursor_context("hello_wor")
+      {:local_or_var, 'hello_wor'}
+
+  ## Return values
+
+    * `{:alias, charlist}` - the context is an alias, potentially
+      a nested one, such as `Hello.Wor` or `HelloWor`
+
+    * `{:dot, inside_dot, charlist}` - the context is a dot
+      where `inside_dot` is either a `{:var, charlist}`, `{:alias, charlist}`,
+      `{:module_attribute, charlist}`, `{:unquoted_atom, charlist}` or a `dot`
+      itself. If a var is given, this may either be a remote call or a map
+      field access. Examples are `Hello.wor`, `:hello.wor`, `hello.wor`,
+      `Hello.nested.wor`, `hello.nested.wor`, and `@hello.world`
+
+    * `{:dot_arity, inside_dot, charlist}` - the context is a dot arity
+      where `inside_dot` is either a `{:var, charlist}`, `{:alias, charlist}`,
+      `{:module_attribute, charlist}`, `{:unquoted_atom, charlist}` or a `dot`
+      itself. If a var is given, it must be a remote arity. Examples are
+      `Hello.world/`, `:hello.world/`, `hello.world/2`, and `@hello.world/2`
+
+    * `{:dot_call, inside_dot, charlist}` - the context is a dot
+      call. This means parentheses or space have been added after the expression.
+      where `inside_dot` is either a `{:var, charlist}`, `{:alias, charlist}`,
+      `{:module_attribute, charlist}`, `{:unquoted_atom, charlist}` or a `dot`
+      itself. If a var is given, it must be a remote call. Examples are
+      `Hello.world(`, `:hello.world(`, `Hello.world `, `hello.world(`, `hello.world `,
+      and `@hello.world(`
+
+    * `:expr` - may be any expression. Autocompletion may suggest an alias,
+      local or var
+
+    * `{:local_or_var, charlist}` - the context is a variable or a local
+      (import or local) call, such as `hello_wor`
+
+    * `{:local_arity, charlist}` - the context is a local (import or local)
+      call, such as `hello_world/`
+
+    * `{:local_call, charlist}` - the context is a local (import or local)
+      call, such as `hello_world(` and `hello_world `
+
+    * `{:module_attribute, charlist}` - the context is a module attribute, such
+      as `@hello_wor`
+
+    * `:none` - no context possible
+
+    * `:unquoted_atom` - the context is an unquoted atom. This can be either
+      previous atoms or all available `:erlang` modules
+
+  ## Limitations
+
+    * There is no context for operators
+    * The current algorithm only considers the last line of the input
+    * Context does not yet track strings, sigils, etc.
+    * Arguments of functions calls are not currently recognized
+
+  """
+  @doc since: "1.12.0"
+  @spec cursor_context(List.Chars.t(), keyword()) ::
+          {:alias, charlist}
+          | {:dot, inside_dot, charlist}
+          | {:dot_arity, inside_dot, charlist}
+          | {:dot_call, inside_dot, charlist}
+          | :expr
+          | {:local_or_var, charlist}
+          | {:local_arity, charlist}
+          | {:local_call, charlist}
+          | {:module_attribute, charlist}
+          | :none
+          | {:unquoted_atom, charlist}
+        when inside_dot:
+               {:alias, charlist}
+               | {:dot, inside_dot, charlist}
+               | {:module_attribute, charlist}
+               | {:unquoted_atom, charlist}
+               | {:var, charlist}
+  def cursor_context(string, opts \\ [])
+
+  def cursor_context(binary, opts) when is_binary(binary) and is_list(opts) do
+    binary =
+      case :binary.matches(binary, "\n") do
+        [] ->
+          binary
+
+        matches ->
+          {position, _} = List.last(matches)
+          binary_part(binary, position + 1, byte_size(binary) - position - 1)
+      end
+
+    do_cursor_context(String.to_charlist(binary), opts)
+  end
+
+  def cursor_context(charlist, opts) when is_list(charlist) and is_list(opts) do
+    chunked = Enum.chunk_by(charlist, &(&1 == ?\n))
+
+    case List.last(chunked, []) do
+      [?\n | _] -> do_cursor_context([], opts)
+      rest -> do_cursor_context(rest, opts)
+    end
+  end
+
+  def cursor_context(other, opts) do
+    cursor_context(to_charlist(other), opts)
+  end
+
+  @operators '\\<>+-*/:=|&~^@%'
+  @non_closing_punctuation '.,([{;'
+  @closing_punctuation ')]}'
+  @space '\t\s'
+  @closing_identifier '?!'
+
+  @operators_and_non_closing_puctuation @operators ++ @non_closing_punctuation
+  @non_identifier @closing_identifier ++
+                    @operators ++ @non_closing_punctuation ++ @closing_punctuation ++ @space
+
+  defp do_cursor_context(list, _opts) do
+    reverse = Enum.reverse(list)
+
+    case strip_spaces(reverse, 0) do
+      # It is empty
+      {[], _} ->
+        :expr
+
+      {[?: | _], 0} ->
+        {:unquoted_atom, ''}
+
+      {[?@ | _], 0} ->
+        {:module_attribute, ''}
+
+      {[?. | rest], _} ->
+        dot(rest, '')
+
+      # It is a local or remote call with parens
+      {[?( | rest], _} ->
+        call_to_cursor_context(rest)
+
+      # A local arity definition
+      {[?/ | rest], _} ->
+        case identifier_to_cursor_context(rest) do
+          {:local_or_var, acc} -> {:local_arity, acc}
+          {:dot, base, acc} -> {:dot_arity, base, acc}
+          _ -> :none
+        end
+
+      # Starting a new expression
+      {[h | _], _} when h in @operators_and_non_closing_puctuation ->
+        :expr
+
+      # It is a local or remote call without parens
+      {rest, spaces} when spaces > 0 ->
+        call_to_cursor_context(rest)
+
+      # It is an identifier
+      _ ->
+        identifier_to_cursor_context(reverse)
+    end
+  end
+
+  defp strip_spaces([h | rest], count) when h in @space, do: strip_spaces(rest, count + 1)
+  defp strip_spaces(rest, count), do: {rest, count}
+
+  defp call_to_cursor_context(reverse) do
+    case identifier_to_cursor_context(reverse) do
+      {:local_or_var, acc} -> {:local_call, acc}
+      {:dot, base, acc} -> {:dot_call, base, acc}
+      _ -> :none
+    end
+  end
+
+  defp identifier_to_cursor_context(reverse) do
+    case identifier(reverse) do
+      # Parse :: first to avoid ambiguity with atoms
+      {:alias, false, '::' ++ _, _} -> :none
+      {kind, _, '::' ++ _, acc} -> alias_or_local_or_var(kind, acc)
+      # Now handle atoms, any other atom is unexpected
+      {_kind, _, ':' ++ _, acc} -> {:unquoted_atom, acc}
+      {:atom, _, _, _} -> :none
+      # Parse .. first to avoid ambiguity with dots
+      {:alias, false, _, _} -> :none
+      {kind, _, '..' ++ _, acc} -> alias_or_local_or_var(kind, acc)
+      # Module attributes
+      {:alias, _, '@' ++ _, _} -> :none
+      {:identifier, _, '@' ++ _, acc} -> {:module_attribute, acc}
+      # Everything else
+      {:alias, _, '.' ++ rest, acc} -> nested_alias(rest, acc)
+      {:identifier, _, '.' ++ rest, acc} -> dot(rest, acc)
+      {kind, _, _, acc} -> alias_or_local_or_var(kind, acc)
+      :none -> :none
+    end
+  end
+
+  defp nested_alias(rest, acc) do
+    case identifier_to_cursor_context(rest) do
+      {:alias, prev} -> {:alias, prev ++ '.' ++ acc}
+      _ -> :none
+    end
+  end
+
+  defp dot(rest, acc) do
+    case identifier_to_cursor_context(rest) do
+      {:local_or_var, prev} -> {:dot, {:var, prev}, acc}
+      {:unquoted_atom, _} = prev -> {:dot, prev, acc}
+      {:alias, _} = prev -> {:dot, prev, acc}
+      {:dot, _, _} = prev -> {:dot, prev, acc}
+      {:module_attribute, _} = prev -> {:dot, prev, acc}
+      _ -> :none
+    end
+  end
+
+  defp alias_or_local_or_var(:alias, acc), do: {:alias, acc}
+  defp alias_or_local_or_var(:identifier, acc), do: {:local_or_var, acc}
+  defp alias_or_local_or_var(_, _), do: :none
+
+  defp identifier([?? | rest]), do: check_identifier(rest, [??])
+  defp identifier([?! | rest]), do: check_identifier(rest, [?!])
+  defp identifier(rest), do: check_identifier(rest, [])
+
+  defp check_identifier([h | _], _acc) when h in @non_identifier, do: :none
+  defp check_identifier(rest, acc), do: rest_identifier(rest, acc)
+
+  defp rest_identifier([h | rest], acc) when h not in @non_identifier do
+    rest_identifier(rest, [h | acc])
+  end
+
+  defp rest_identifier(rest, acc) do
+    case String.Tokenizer.tokenize(acc) do
+      {kind, _, [], _, ascii_only?, _} -> {kind, ascii_only?, rest, acc}
+      _ -> :none
+    end
   end
 
   @doc """
@@ -306,21 +609,33 @@ defmodule Code do
 
   ## Examples
 
-      iex> Code.eval_string("a + b", [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
-      {3, [a: 1, b: 2]}
+      iex> {result, binding} = Code.eval_string("a + b", [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 1, b: 2]
 
-      iex> Code.eval_string("c = a + b", [a: 1, b: 2], __ENV__)
-      {3, [a: 1, b: 2, c: 3]}
+      iex> {result, binding} = Code.eval_string("c = a + b", [a: 1, b: 2], __ENV__)
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 1, b: 2, c: 3]
 
-      iex> Code.eval_string("a = a + b", [a: 1, b: 2])
-      {3, [a: 3, b: 2]}
+      iex> {result, binding} = Code.eval_string("a = a + b", [a: 1, b: 2])
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 3, b: 2]
 
   For convenience, you can pass `__ENV__/0` as the `opts` argument and
   all imports, requires and aliases defined in the current environment
   will be automatically carried over:
 
-      iex> Code.eval_string("a + b", [a: 1, b: 2], __ENV__)
-      {3, [a: 1, b: 2]}
+      iex> {result, binding} = Code.eval_string("a + b", [a: 1, b: 2], __ENV__)
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 1, b: 2]
 
   """
   @spec eval_string(List.Chars.t(), binding, Macro.Env.t() | keyword) :: {term, binding}
@@ -358,9 +673,8 @@ defmodule Code do
 
     * `:line_length` - the line length to aim for when formatting
       the document. Defaults to 98. Note this value is used as
-      reference but it is not enforced by the formatter as sometimes
-      user intervention is required. See "Running the formatter"
-      section
+      guideline but there are situations where it is not enforced.
+      See the "Line length" section below for more information
 
     * `:locals_without_parens` - a keyword list of name and arity
       pairs that should be kept without parens whenever possible.
@@ -368,17 +682,12 @@ defmodule Code do
       that name. The formatter already includes a list of functions
       and this option augments this list.
 
-    * `:rename_deprecated_at` - rename all known deprecated functions
-      at the given version to their non-deprecated equivalent. It
-      expects a valid `Version` which is usually the minimum Elixir
-      version supported by the project.
-
     * `:force_do_end_blocks` (since v1.9.0) - when `true`, converts all
       inline usages of `do: ...`,  `else: ...` and friends into `do/end`
       blocks. Defaults to `false`. Note that this option is convergent:
-      once you set it to `true`, all keywords will be converted. If you
-      set it to `false` later on, `do/end` blocks won't be converted
-      back to keywords.
+      once you set it to `true`, **all keywords** will be converted.
+      If you set it to `false` later on, `do/end` blocks won't be
+      converted back to keywords.
 
   ## Design principles
 
@@ -386,8 +695,6 @@ defmodule Code do
 
   First, the formatter never changes the semantics of the code by
   default. This means the input AST and the output AST are equivalent.
-  Optional behaviour, such as `:rename_deprecated_at`, is allowed to
-  break this guarantee.
 
   The second principle is to provide as little configuration as possible.
   This eases the formatter adoption by removing contention points while
@@ -413,29 +720,8 @@ defmodule Code do
   do not recommend to run the formatter blindly in an existing codebase.
   Instead you should format and sanity check each formatted file.
 
-  Let's see some examples. The code below:
-
-      "this is a very long string ... #{inspect(some_value)}"
-
-  may be formatted as:
-
-      "this is a very long string ... #{
-        inspect(some_value)
-      }"
-
-  This happens because the only place the formatter can introduce a
-  new line without changing the code semantics is in the interpolation.
-  In those scenarios, we recommend developers to directly adjust the
-  code. Here we can use the binary concatenation operator `<>/2`:
-
-      "this is a very long string " <>
-        "... #{inspect(some_value)}"
-
-  The string concatenation makes the code fit on a single line and also
-  gives more options to the formatter.
-
-  A similar example is when the formatter breaks a function definition
-  over multiple clauses:
+  For example, the formatter may break a long function definition over
+  multiple clauses:
 
       def my_function(
         %User{name: name, age: age, ...},
@@ -499,6 +785,40 @@ defmodule Code do
   optimal formatting. To help better understand how to control the formatter,
   we describe in the next sections the cases where the formatter keeps the
   user encoding and how to control multiline expressions.
+
+  ## Line length
+
+  Another point about the formatter is that the `:line_length` configuration
+  is a guideline. In many cases, it is not possible for the formatter to break
+  your code apart, which means it will go over the line length. For example,
+  if you have a long string:
+
+      "this is a very long string that will go over the line length"
+
+  The formatter doesn't know how to break it apart without changing the
+  code underlying syntax representation, so it is up to you to step in:
+
+      "this is a very long string " <>
+         "that will go over the line length"
+
+  The string concatenation makes the code fit on a single line and also
+  gives more options to the formatter.
+
+  This may also appear in do/end blocks, where the `do` keyword (or `->`)
+  may go over the line lenth because there is no opportunity for the
+  formatter to introduce a line break in a readable way. For example,
+  if you do:
+
+      case very_long_expression() do
+
+  And only the `do` keyword is above the line length, Elixir **will not**
+  emit this:
+
+      case very_long_expression()
+      do
+
+  So it prefers to not touch the line at all and leave `do` above the
+  line limit.
 
   ## Keeping user's formatting
 
@@ -646,6 +966,10 @@ defmodule Code do
   are considered equivalent (the nesting is discarded alongside most of
   user formatting). In such cases, the code formatter will always format to
   the latter.
+
+  ## Newlines
+
+  The formatter converts all newlines in code from `\r\n` to `\n`.
   """
   @doc since: "1.6.0"
   @spec format_string!(binary, keyword) :: iodata
@@ -682,15 +1006,21 @@ defmodule Code do
   ## Examples
 
       iex> contents = quote(do: var!(a) + var!(b))
-      iex> Code.eval_quoted(contents, [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
-      {3, [a: 1, b: 2]}
+      iex> {result, binding} = Code.eval_quoted(contents, [a: 1, b: 2], file: __ENV__.file, line: __ENV__.line)
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 1, b: 2]
 
   For convenience, you can pass `__ENV__/0` as the `opts` argument and
   all options will be automatically extracted from the current environment:
 
       iex> contents = quote(do: var!(a) + var!(b))
-      iex> Code.eval_quoted(contents, [a: 1, b: 2], __ENV__)
-      {3, [a: 1, b: 2]}
+      iex> {result, binding} = Code.eval_quoted(contents, [a: 1, b: 2], __ENV__)
+      iex> result
+      3
+      iex> Enum.sort(binding)
+      [a: 1, b: 2]
 
   """
   @spec eval_quoted(Macro.t(), binding, Macro.Env.t() | keyword) :: {term, binding}
@@ -1182,39 +1512,7 @@ defmodule Code do
   If it succeeds in loading the module, it returns `{:module, module}`.
   If not, returns `{:error, reason}` with the error reason.
 
-  ## Code loading on the Erlang VM
-
-  Erlang has two modes to load code: interactive and embedded.
-
-  By default, the Erlang VM runs in interactive mode, where modules
-  are loaded as needed. In embedded mode the opposite happens, as all
-  modules need to be loaded upfront or explicitly.
-
-  Therefore, this function is used to check if a module is loaded
-  before using it and allows one to react accordingly. For example, the `URI`
-  module uses this function to check if a specific parser exists for a given
-  URI scheme.
-
-  ## `ensure_compiled/1`
-
-  Elixir also contains an `ensure_compiled/1` function that is a
-  superset of `ensure_loaded/1`.
-
-  Since Elixir's compilation happens in parallel, in some situations
-  you may need to use a module that was not yet compiled, therefore
-  it can't even be loaded.
-
-  When invoked, `ensure_compiled/1` halts the compilation of the caller
-  until the module given to `ensure_compiled/1` becomes available or
-  all files for the current project have been compiled. If compilation
-  finishes and the module is not available, an error tuple is returned.
-
-  `ensure_compiled/1` does not apply to dependencies, as dependencies
-  must be compiled upfront.
-
-  In most cases, `ensure_loaded/1` is enough. `ensure_compiled/1`
-  must be used in rare cases, usually involving macros that need to
-  invoke a module for callback information.
+  See the module documentation for more information on code loading.
 
   ## Examples
 
@@ -1250,13 +1548,60 @@ defmodule Code do
   end
 
   @doc """
+  Same as `ensure_loaded/1` but raises if the module cannot be loaded.
+  """
+  @spec ensure_loaded!(module) :: module
+  def ensure_loaded!(module) do
+    case ensure_loaded(module) do
+      {:module, module} ->
+        module
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "could not load module #{inspect(module)} due to reason #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Similar to `ensure_compiled!/1` but indicates you can continue without said module.
+
+  While `ensure_compiled!/1` indicates to the Elixir compiler you can
+  only continue when said module is available, this function indicates
+  you may continue compilation without said module.
+
+  If it succeeds in loading the module, it returns `{:module, module}`.
+  If not, returns `{:error, reason}` with the error reason.
+  If the module being checked is currently in a compiler deadlock,
+  this function returns `{:error, :unavailable}`. Unavailable doesn't
+  necessarily mean the module doesn't exist, just that it is not currently
+  available, but it (or may not) become available in the future.
+
+  Therefore, if you can only continue if the module is available, use
+  `ensure_compiled!/1` instead. In particular, do not do this:
+
+      case Code.ensure_compiled(module) do
+        {:module, _} -> module
+        {:error, _} -> raise ...
+      end
+
+  See the module documentation for more information on code loading.
+  """
+  @spec ensure_compiled(module) ::
+          {:module, module}
+          | {:error, :embedded | :badfile | :nofile | :on_load_failure | :unavailable}
+  def ensure_compiled(module) when is_atom(module) do
+    ensure_compiled(module, :soft)
+  end
+
+  @doc """
   Ensures the given module is compiled and loaded.
 
   If the module is already loaded, it works as no-op. If the module was
-  not compiled yet, `ensure_compiled/1` halts the compilation of the caller
-  until the module given to `ensure_compiled/1` becomes available or
+  not compiled yet, `ensure_compiled!/1` halts the compilation of the caller
+  until the module given to `ensure_compiled!/1` becomes available or
   all files for the current project have been compiled. If compilation
-  finishes and the module is not available, an error tuple is returned.
+  finishes and the module is not available or is in a deadlock, an error
+  is raised.
 
   Given this function halts compilation, use it carefully. In particular,
   avoid using it to guess which modules are in the system. Overuse of this
@@ -1264,25 +1609,26 @@ defmodule Code do
   if the other is compiled. This returns a specific unavailable error code,
   where we cannot successfully verify a module is available or not.
 
-  If it succeeds in loading the module, it returns `{:module, module}`.
-  If not, returns `{:error, reason}` with the error reason.
-
-  If the module being checked is currently in a compiler deadlock,
-  this function returns `{:error, :unavailable}`. Unavailable doesn't
-  necessarily mean the module doesn't exist, just that it is not currently
-  available, but it (or may not) become available in the future.
-
-  Check `ensure_loaded/1` for more information on module loading
-  and when to use `ensure_loaded/1` or `ensure_compiled/1`.
+  See the module documentation for more information on code loading.
   """
-  @spec ensure_compiled(module) ::
-          {:module, module}
-          | {:error, :embedded | :badfile | :nofile | :on_load_failure | :unavailable}
-  def ensure_compiled(module) when is_atom(module) do
+  @doc since: "1.12.0"
+  @spec ensure_compiled!(module) :: module
+  def ensure_compiled!(module) do
+    case ensure_compiled(module, :hard) do
+      {:module, module} ->
+        module
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "could not load module #{inspect(module)} due to reason #{inspect(reason)}"
+    end
+  end
+
+  defp ensure_compiled(module, mode) do
     case :code.ensure_loaded(module) do
       {:error, :nofile} = error ->
         if can_await_module_compilation?() do
-          case Kernel.ErrorHandler.ensure_compiled(module, :module, :soft) do
+          case Kernel.ErrorHandler.ensure_compiled(module, :module, mode) do
             :found -> {:module, module}
             :deadlock -> {:error, :unavailable}
             :not_found -> {:error, :nofile}
@@ -1326,7 +1672,7 @@ defmodule Code do
   file.
 
   It returns the term stored in the documentation chunk in the format defined by
-  [EEP 48](http://erlang.org/eep/eeps/eep-0048.html) or `{:error, reason}` if
+  [EEP 48](https://erlang.org/eep/eeps/eep-0048.html) or `{:error, reason}` if
   the chunk is not available.
 
   ## Examples
@@ -1429,7 +1775,7 @@ defmodule Code do
   @doc ~S"""
   Deprecated function to retrieve old documentation format.
 
-  Elixir v1.7 adopts [EEP 48](http://erlang.org/eep/eeps/eep-0048.html)
+  Elixir v1.7 adopts [EEP 48](https://erlang.org/eep/eeps/eep-0048.html)
   which is a new documentation format meant to be shared across all
   BEAM languages. The old format, used by `Code.get_docs/2`, is no
   longer available, and therefore this function always returns `nil`.

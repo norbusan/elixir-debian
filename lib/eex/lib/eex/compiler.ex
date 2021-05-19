@@ -41,8 +41,16 @@ defmodule EEx.Compiler do
   # Generates the buffers by handling each expression from the tokenizer.
   # It returns Macro.t/0 or it raises.
 
-  defp generate_buffer([{:text, _line, _column, chars} | rest], buffer, scope, state) do
-    buffer = state.engine.handle_text(buffer, IO.chardata_to_string(chars))
+  defp generate_buffer([{:text, line, column, chars} | rest], buffer, scope, state) do
+    buffer =
+      if function_exported?(state.engine, :handle_text, 3) do
+        meta = [line: line, column: column]
+        state.engine.handle_text(buffer, meta, IO.chardata_to_string(chars))
+      else
+        # TODO: Remove this branch on Elixir v2.0
+        state.engine.handle_text(buffer, IO.chardata_to_string(chars))
+      end
+
     generate_buffer(rest, buffer, scope, state)
   end
 
@@ -59,6 +67,13 @@ defmodule EEx.Compiler do
          scope,
          state
        ) do
+    if mark != '=' do
+      message =
+        "the contents of this expression won't be output unless the EEx block starts with \"<%=\""
+
+      :elixir_errors.erl_warn(start_line, state.file, message)
+    end
+
     {contents, line, rest} = look_ahead_middle(rest, start_line, chars)
 
     {contents, rest} =

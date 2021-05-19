@@ -163,7 +163,7 @@ defmodule Application do
   In the sections above, we have configured an application in the
   `application/0` section of the `mix.exs` file. Ultimately, Mix will use
   this configuration to create an [*application resource
-  file*](http://erlang.org/doc/man/app.html), which is a file called
+  file*](https://erlang.org/doc/man/application.html), which is a file called
   `APP_NAME.app`. For example, the application resource file of the OTP
   application `ex_unit` is called `ex_unit.app`.
 
@@ -267,11 +267,10 @@ defmodule Application do
   ## Further information
 
   For further details on applications please check the documentation of the
-  [`application`](http://www.erlang.org/doc/man/application.html) Erlang module,
-  and the
-  [Applications](http://www.erlang.org/doc/design_principles/applications.html)
+  [`:application` Erlang module](`:application`), and the
+  [Applications](https://erlang.org/doc/design_principles/applications.html)
   section of the [OTP Design Principles User's
-  Guide](http://erlang.org/doc/design_principles/users_guide.html).
+  Guide](https://erlang.org/doc/design_principles/users_guide.html).
   """
 
   @doc """
@@ -499,7 +498,8 @@ defmodule Application do
   Giving a path is useful to let Elixir know that only certain paths
   in a large configuration are compile time dependent.
   """
-  # TODO: Warn on v1.14 if get_env/fetch_env/fetch_env! is used at compile time instead of compile_env
+  # TODO: Warn on v1.14 if get_env/fetch_env/fetch_env! is used at
+  # compile time instead of compile_env
   @doc since: "1.10.0"
   @spec compile_env(app, key | list, value) :: value
   defmacro compile_env(app, key_or_path, default \\ nil) when is_atom(app) do
@@ -694,9 +694,6 @@ defmodule Application do
     :application.set_env(app, key, value, opts)
   end
 
-  # TODO: Remove this once we support Erlang/OTP 22+ exclusively.
-  @compile {:no_warn_undefined, {:application, :set_env, 2}}
-
   @doc """
   Puts the environment for multiple apps at the same time.
 
@@ -705,28 +702,14 @@ defmodule Application do
     * have the same application listed more than once
     * have the same key inside the same application listed more than once
 
-  If those conditions are not met, the behaviour is undefined
-  (on Erlang/OTP 21 and earlier) or will raise (on Erlang/OTP 22
-  and later).
+  If those conditions are not met, it will raise.
 
   It receives the same options as `put_env/4`. Returns `:ok`.
   """
   @doc since: "1.9.0"
   @spec put_all_env([{app, [{key, value}]}], timeout: timeout, persistent: boolean) :: :ok
   def put_all_env(config, opts \\ []) when is_list(config) and is_list(opts) do
-    # TODO: Remove function exported? check when we require Erlang/OTP 22+
-    if function_exported?(:application, :set_env, 2) do
-      :application.set_env(config, opts)
-    else
-      for app_keyword <- config,
-          {app, keyword} = app_keyword,
-          key_value <- keyword,
-          {key, value} = key_value do
-        :application.set_env(app, key, value, opts)
-      end
-
-      :ok
-    end
+    :application.set_env(config, opts)
   end
 
   @doc """
@@ -743,6 +726,7 @@ defmodule Application do
   defp maybe_warn_on_app_env_key(_app, key) when is_atom(key),
     do: :ok
 
+  # TODO: Remove this deprecation warning on 2.0+ and allow list lookups as in compile_env.
   defp maybe_warn_on_app_env_key(app, key) do
     message = "passing non-atom as application env key is deprecated, got: #{inspect(key)}"
     IO.warn_once({Application, :key, app, key}, message, _stacktrace_drop_levels = 2)
@@ -887,7 +871,7 @@ defmodule Application do
       #=> "bar-123"
 
   For more information on code paths, check the `Code` module in
-  Elixir and also Erlang's [`:code` module](http://www.erlang.org/doc/man/code.html).
+  Elixir and also Erlang's [`:code` module](`:code`).
   """
   @spec app_dir(app) :: String.t()
   def app_dir(app) when is_atom(app) do

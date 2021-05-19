@@ -49,8 +49,8 @@ defmodule ExUnit.EventManager do
     notify(manager, {:suite_started, opts})
   end
 
-  def suite_finished(manager, run_us, load_us) do
-    notify(manager, {:suite_finished, run_us, load_us})
+  def suite_finished(manager, times_us) do
+    notify(manager, {:suite_finished, times_us})
   end
 
   def module_started(manager, test_module) do
@@ -63,6 +63,10 @@ defmodule ExUnit.EventManager do
     # TODO: Remove case_finished on v2.0
     notify(manager, {:case_finished, Map.put(test_module, :__struct__, ExUnit.TestCase)})
     notify(manager, {:module_finished, test_module})
+  end
+
+  def sigquit(manager, current) do
+    notify(manager, {:sigquit, current})
   end
 
   def test_started(manager, test) do

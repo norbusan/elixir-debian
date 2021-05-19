@@ -108,7 +108,17 @@ compile(Line, Module, Block, Vars, E) ->
 
     PersistedAttributes = ets:lookup_element(DataBag, persisted_attributes, 2),
     Attributes = attributes(DataSet, DataBag, PersistedAttributes),
-    {AllDefinitions, Unreachable} = elixir_def:fetch_definitions(File, Module),
+    {AllDefinitions, Private} = elixir_def:fetch_definitions(File, Module),
+
+    OnLoadAttribute = lists:keyfind(on_load, 1, Attributes),
+    NewPrivate = validate_on_load_attribute(OnLoadAttribute, AllDefinitions, Private, File, Line),
+
+    DialyzerAttribute = lists:keyfind(dialyzer, 1, Attributes),
+    validate_dialyzer_attribute(DialyzerAttribute, AllDefinitions, File, Line),
+
+    Unreachable = elixir_locals:warn_unused_local(File, Module, AllDefinitions, NewPrivate),
+    elixir_locals:ensure_no_undefined_local(File, Module, AllDefinitions),
+    elixir_locals:ensure_no_import_conflict(File, Module, AllDefinitions),
 
     %% We stop tracking locals here to avoid race conditions in case after_load
     %% evaluates code in a separate process that may write to locals table.
@@ -120,9 +130,6 @@ compile(Line, Module, Block, Vars, E) ->
 
     RawCompileOpts = bag_lookup_element(DataBag, {accumulate, compile}, 2),
     CompileOpts = validate_compile_opts(RawCompileOpts, AllDefinitions, Unreachable, File, Line),
-
-    OnLoadAttribute = lists:keyfind(on_load, 1, Attributes),
-    validate_on_load_attribute(OnLoadAttribute, AllDefinitions, File, Line),
 
     ModuleMap = #{
       struct => get_struct(DataSet),
@@ -190,16 +197,26 @@ validate_inlines([Inline | Inlines], Defs, Unreachable, Acc) ->
   end;
 validate_inlines([], _Defs, _Unreachable, Acc) -> {ok, Acc}.
 
-validate_on_load_attribute({on_load, Def}, Defs, File, Line) ->
+validate_on_load_attribute({on_load, Def}, Defs, Private, File, Line) ->
   case lists:keyfind(Def, 1, Defs) of
     false ->
       elixir_errors:form_error([{line, Line}], File, ?MODULE, {undefined_on_load, Def});
-    {_, def, _, _} ->
-      ok;
+    {_, Kind, _, _} when Kind == def; Kind == defp ->
+      lists:keydelete(Def, 1, Private);
     {_, WrongKind, _, _} ->
       elixir_errors:form_error([{line, Line}], File, ?MODULE, {wrong_kind_on_load, Def, WrongKind})
   end;
-validate_on_load_attribute(false, _Defs, _File, _Line) -> ok.
+validate_on_load_attribute(false, _Module, Private, _File, _Line) -> Private.
+
+validate_dialyzer_attribute({dialyzer, Dialyzer}, Defs, File, Line) ->
+  [case lists:keyfind(Fun, 1, Defs) of
+    false ->
+      elixir_errors:form_error([{line, Line}], File, ?MODULE, {bad_dialyzer, Key, Fun});
+    _ ->
+      ok
+   end || {Key, Funs} <- lists:flatten([Dialyzer]), Fun <- lists:flatten([Funs])];
+validate_dialyzer_attribute(false, _Defs, _File, _Line) ->
+  ok.
 
 is_behaviour(DataBag) ->
   ets:member(DataBag, {accumulate, callback}) orelse ets:member(DataBag, {accumulate, macrocallback}).
@@ -390,7 +407,7 @@ warn_unused_attributes(File, DataSet, DataBag, PersistedAttrs) ->
    || [Key, Line] <- ets:select(DataSet, Query)].
 
 get_struct(Set) ->
-  case ets:lookup(Set, struct) of
+  case ets:lookup(Set, '__struct__') of
     [] -> nil;
     [{_, Struct, _}] ->
       case ets:lookup(Set, enforce_keys) of
@@ -490,10 +507,12 @@ format_error({module_in_definition, Module, File, Line}) ->
     [elixir_aliases:inspect(Module), elixir_utils:relative_to_cwd(File), Line]);
 format_error({bad_inline, {Name, Arity}}) ->
   io_lib:format("inlined function ~ts/~B undefined", [Name, Arity]);
+format_error({bad_dialyzer, Key, {Name, Arity}}) ->
+  io_lib:format("undefined function ~ts/~B given to @dialyzer :~ts", [Name, Arity, Key]);
 format_error({undefined_on_load, {Name, Arity}}) ->
   io_lib:format("@on_load function ~ts/~B is undefined", [Name, Arity]);
 format_error({wrong_kind_on_load, {Name, Arity}, WrongKind}) ->
-  io_lib:format("expected @on_load function ~ts/~B to be defined as \"def\", got \"~ts\"",
+  io_lib:format("expected @on_load function ~ts/~B to be a function, got \"~ts\"",
                 [Name, Arity, WrongKind]);
 format_error({parse_transform, Module}) ->
   io_lib:format("@compile {:parse_transform, ~ts} is deprecated. Elixir will no longer support "

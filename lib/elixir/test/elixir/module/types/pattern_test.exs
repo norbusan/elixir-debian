@@ -4,7 +4,7 @@ defmodule Module.Types.PatternTest do
   use ExUnit.Case, async: true
 
   alias Module.Types
-  alias Module.Types.Pattern
+  alias Module.Types.{Unify, Pattern}
 
   defmacrop quoted_pattern(patterns) do
     quote do
@@ -53,11 +53,11 @@ defmodule Module.Types.PatternTest do
   end
 
   defp lift_result({:ok, types, context}) when is_list(types) do
-    {:ok, Types.lift_types(types, context)}
+    {:ok, Unify.lift_types(types, context)}
   end
 
   defp lift_result({:ok, type, context}) do
-    {:ok, Types.lift_type(type, context)}
+    {:ok, [type] |> Unify.lift_types(context) |> hd()}
   end
 
   defp lift_result({:error, {type, reason, _context}}) do
@@ -121,7 +121,7 @@ defmodule Module.Types.PatternTest do
                {:ok,
                 {:map,
                  [
-                   {:required, :integer, {:union, [{:var, 0}, :dynamic]}},
+                   {:required, :integer, {:var, 0}},
                    {:optional, :dynamic, :dynamic}
                  ]}}
 
@@ -306,14 +306,55 @@ defmodule Module.Types.PatternTest do
       assert quoted_head([x = y, y = z, z], [is_atom(z)]) ==
                {:ok, [:atom, :atom, :atom]}
 
+      assert quoted_head([x, y], [is_atom(x) or is_integer(y)]) ==
+               {:ok, [{:var, 0}, {:var, 1}]}
+
+      assert quoted_head([x], [is_atom(x) or is_atom(x)]) ==
+               {:ok, [:atom]}
+
+      assert quoted_head([x, y], [(is_atom(x) and is_atom(y)) or (is_atom(x) and is_integer(y))]) ==
+               {:ok, [:atom, union: [:atom, :integer]]}
+
+      assert quoted_head([x, y], [is_atom(x) or is_integer(x)]) ==
+               {:ok, [union: [:atom, :integer], var: 0]}
+
+      assert quoted_head([x, y], [is_atom(y) or is_integer(y)]) ==
+               {:ok, [{:var, 0}, {:union, [:atom, :integer]}]}
+
+      assert quoted_head([x = y], [is_atom(y) or is_integer(y)]) ==
+               {:ok, [{:union, [:atom, :integer]}]}
+
+      assert quoted_head([x = y], [is_atom(x) or is_integer(x)]) ==
+               {:ok, [{:union, [:atom, :integer]}]}
+
+      assert quoted_head([x = y], [is_atom(x) or is_integer(x)]) ==
+               {:ok, [{:union, [:atom, :integer]}]}
+
+      assert quoted_head([x], [true == false or is_integer(x)]) ==
+               {:ok, [var: 0]}
+
       assert {:error, {:unable_unify, {:binary, :integer, _}}} =
                quoted_head([x], [is_binary(x) and is_integer(x)])
 
       assert {:error, {:unable_unify, {:tuple, :atom, _}}} =
                quoted_head([x], [is_tuple(x) and is_atom(x)])
 
-      assert {:error, {:unable_unify, {{:union, [atom: true, atom: false]}, :tuple, _}}} =
+      assert {:error, {:unable_unify, {{:atom, true}, :tuple, _}}} =
                quoted_head([x], [is_tuple(is_atom(x))])
+    end
+
+    test "guard and" do
+      assert quoted_head([], [(true and 1) > 0]) == {:ok, []}
+
+      assert quoted_head(
+               [struct],
+               [is_map_key(struct, :map) and map_size(:erlang.map_get(:map, struct))]
+             ) == {:ok, [{:map, [{:optional, :dynamic, :dynamic}]}]}
+    end
+
+    test "nested calls with interesections in guards" do
+      assert quoted_head([x], [:erlang.rem(x, 2)]) == {:ok, [:integer]}
+      assert quoted_head([x], [:erlang.rem(x + x, 2)]) == {:ok, [{:union, [:integer, :float]}]}
     end
 
     test "erlang-only guards" do
@@ -327,16 +368,13 @@ defmodule Module.Types.PatternTest do
       assert {:error, {:unable_unify, {{:atom, :foo}, {:list, :dynamic}, _}}} =
                quoted_head([x], [length(:foo)])
 
-      assert {:error,
-              {:unable_unify, {{:union, [atom: true, atom: false]}, {:list, :dynamic}, _}}} =
+      assert {:error, {:unable_unify, {{:atom, true}, {:list, :dynamic}, _}}} =
                quoted_head([x], [length(is_tuple(x))])
 
-      assert {:error, {:unable_unify, {{:union, [atom: true, atom: false]}, :tuple, _}}} =
+      assert {:error, {:unable_unify, {{:atom, true}, :tuple, _}}} =
                quoted_head([x], [elem(is_tuple(x), 0)])
 
-      assert {:error,
-              {:unable_unify,
-               {{:union, [atom: true, atom: false]}, {:union, [:integer, :float]}, _}}} =
+      assert {:error, {:unable_unify, {{:atom, true}, {:union, [:integer, :float]}, _}}} =
                quoted_head([x], [elem({}, is_tuple(x))])
 
       assert quoted_head([x], [elem({}, 1)]) == {:ok, [var: 0]}
@@ -356,9 +394,11 @@ defmodule Module.Types.PatternTest do
                (length(x) == 0 and is_list(x)) or (elem(x, 1) and is_tuple(x))
              ]) == {:ok, [{:list, :dynamic}]}
 
-      assert quoted_head([x, y], [elem(x, 1) and is_atom(y)]) == {:ok, [:tuple, :atom]}
-
       assert quoted_head([x], [elem(x, 1) or is_atom(x)]) == {:ok, [:tuple]}
+
+      assert quoted_head([x], [is_atom(x) or elem(x, 1)]) == {:ok, [{:union, [:atom, :tuple]}]}
+
+      assert quoted_head([x, y], [elem(x, 1) and is_atom(y)]) == {:ok, [:tuple, :atom]}
 
       assert quoted_head([x, y], [elem(x, 1) or is_atom(y)]) == {:ok, [:tuple, {:var, 0}]}
 
@@ -408,6 +448,14 @@ defmodule Module.Types.PatternTest do
                {{:map, [{:required, {:atom, true}, {:atom, true}}]},
                 {:map, [{:required, {:atom, true}, {:atom, false}}]},
                 _}}} = quoted_head([%{true: false} = foo, %{true: true} = foo])
+    end
+
+    test "binary in guards" do
+      assert quoted_head([a, b], [byte_size(a <> b) > 0]) ==
+               {:ok, [:binary, :binary]}
+
+      assert quoted_head([map], [byte_size(map.a <> map.b) > 0]) ==
+               {:ok, [map: [{:optional, :dynamic, :dynamic}]]}
     end
 
     test "struct var guard" do

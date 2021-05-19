@@ -11,11 +11,45 @@ defmodule Config.Provider do
   the file system. For more information on runtime configuration,
   see `mix release`.
 
-  ## Sample config provider
+  ## Multiple config files
 
-  For example, imagine you need to load some configuration from
-  a JSON file and load that into the system. Said configuration
-  provider would look like:
+  One common use of config providers is to specify multiple
+  configuration files in a release. Elixir ships with one provider,
+  called `Config.Reader`, which is capable of handling Elixir's
+  built-in config files.
+
+  For example, imagine you want to list some basic configuration
+  on Mix's built-in `config/runtime.exs` file, but you also want
+  some additional configuration files. To do so, you can do this
+  in your `mix.exs`:
+
+      releases: [
+        demo: [
+          config_providers: [
+            {Config.Reader, {:system, "RELEASE_ROOT", "/extra_config.exs"}}
+          ]
+        ]
+      ]
+
+  You can place this `extra_config.exs` file in your release in
+  multiple ways:
+
+    1. If it is available on the host when assembling the release,
+      you can place it on "rel/overlays/extra_config.exs" and it
+      will be automatically copied to the release root
+
+    2. If it is available on the target during deployment, you can
+      simply copy it to the release root as a step in your deployment
+
+  Now once the system boots, it will load both `config/runtime.exs`
+  and `extra_config.exs` early in the boot process.
+
+  ## Custom config provider
+
+  You can also implement custom config providers, similar to how
+  `Config.Reader` works. For example, imagine you need to load
+  some configuration from a JSON file and load that into the system.
+  Said configuration provider would look like:
 
       defmodule JSONConfigProvider do
         @behaviour Config.Provider
@@ -39,19 +73,17 @@ defmodule Config.Provider do
         end
       end
 
-  Then when specifying your release, you can specify the provider in
+  Then, when specifying your release, you can specify the provider in
   the release configuration:
 
       releases: [
         demo: [
-          # ...,
-          config_providers: [{JSONConfigProvider, "/etc/config.json"}]
+          config_providers: [
+            {JSONConfigProvider, "/etc/config.json"}
+          ]
         ]
       ]
 
-  Now once the system boots, it will invoke the provider early in
-  the boot process, save the merged configuration to the disk, and
-  reboot the system with the new values in place.
   """
 
   @type config :: keyword
@@ -93,7 +125,7 @@ defmodule Config.Provider do
   Loads configuration (typically during system boot).
 
   It receives the current `config` and the `state` returned by
-  `c:init/1`. Then you typically read the extra configuration
+  `c:init/1`. Then, you typically read the extra configuration
   from an external source and merge it into the received `config`.
   Merging should be done with `Config.Reader.merge/2`, as it
   performs deep merge. It should return the updated config.

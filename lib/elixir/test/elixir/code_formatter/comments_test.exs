@@ -241,7 +241,7 @@ defmodule Code.Formatter.CommentsTest do
     end
 
     test "with comment inside before and after" do
-      assert_same ~S"""
+      bad = ~S"""
       IO.puts(
         "Hello #{
           # comment
@@ -250,13 +250,36 @@ defmodule Code.Formatter.CommentsTest do
       )
       """
 
-      assert_same ~S"""
+      good = ~S"""
+      IO.puts(
+        # comment
+        "Hello #{world}"
+      )
+      """
+
+      assert_format bad, good
+
+      bad = ~S"""
       IO.puts(
         "Hello #{
           world
           # comment
         }"
       )
+      """
+
+      good = ~S"""
+      IO.puts(
+        "Hello #{world}"
+        # comment
+      )
+      """
+
+      assert_format bad, good
+
+      assert_same ~S"""
+      IO.puts("Hello #{hello
+      world}")
       """
     end
   end
@@ -331,6 +354,30 @@ defmodule Code.Formatter.CommentsTest do
                world
                # comment
              )
+      """
+    end
+  end
+
+  describe "access" do
+    test "before and after single arg" do
+      assert_same ~S"""
+      foo[
+        # bar
+        baz
+        # bat
+      ]
+      """
+    end
+
+    test "before and after keywords" do
+      assert_same ~S"""
+      foo[
+        # bar
+        one: :two,
+        # baz
+        three: :four
+        # bat
+      ]
       """
     end
   end

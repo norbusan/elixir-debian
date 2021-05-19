@@ -43,11 +43,8 @@ defmodule Mix.Compilers.Elixir do
       stale_local_deps(manifest, modified, all_local_exports)
 
     prev_paths = for source(source: source) <- all_sources, into: MapSet.new(), do: source
-
-    removed =
-      prev_paths
-      |> MapSet.difference(all_paths)
-      |> MapSet.to_list()
+    removed = prev_paths |> MapSet.difference(all_paths) |> MapSet.to_list()
+    {sources, removed_modules} = remove_removed_sources(all_sources, removed)
 
     {modules, exports, changed, sources_stats} =
       if force do
@@ -61,17 +58,15 @@ defmodule Mix.Compilers.Elixir do
           prev_paths,
           removed,
           stale_local_mods,
-          stale_local_exports,
+          Map.merge(stale_local_exports, removed_modules),
           dest
         )
       end
 
     stale = changed -- removed
 
-    sources =
-      removed
-      |> Enum.reduce(all_sources, &List.keydelete(&2, &1, source(:source)))
-      |> update_stale_sources(stale, sources_stats)
+    {sources, removed_modules} =
+      update_stale_sources(sources, stale, removed_modules, sources_stats)
 
     if opts[:all_warnings], do: show_warnings(sources)
 
@@ -88,7 +83,7 @@ defmodule Mix.Compilers.Elixir do
 
         # Stores state for keeping track which files were compiled
         # and the dependencies between them.
-        put_compiler_info({modules, exports, sources, modules, %{}})
+        put_compiler_info({modules, exports, sources, modules, removed_modules})
 
         try do
           compile_path(stale, dest, timestamp, opts)
@@ -208,8 +203,8 @@ defmodule Mix.Compilers.Elixir do
           into: %{},
           do: {module, true}
 
-    # Plus the sources that have changed on disk or any modules associated with them need to
-    # be recompiled
+    # Sources that have changed on disk or
+    # any modules associated with them need to be recompiled
     changed =
       for source(source: source, external: external, size: size, modules: modules) <-
             all_sources,
@@ -248,7 +243,7 @@ defmodule Mix.Compilers.Elixir do
     verbose = opts[:verbose] || false
 
     compile_opts = [
-      each_cycle: fn -> each_cycle(dest) end,
+      each_cycle: fn -> each_cycle(dest, timestamp) end,
       each_file: &each_file(&1, &2, cwd, verbose),
       each_module: &each_module(&1, &2, &3, cwd),
       each_long_compilation: &each_long_compilation(&1, cwd, long_compilation_threshold),
@@ -279,11 +274,18 @@ defmodule Mix.Compilers.Elixir do
     Mix.ProjectStack.compile_env(all_compile_env)
   end
 
-  defp each_cycle(compile_path) do
+  defp each_cycle(compile_path, timestamp) do
     {modules, _exports, sources, pending_modules, pending_exports} = get_compiler_info()
 
     {pending_modules, exports, changed} =
       update_stale_entries(pending_modules, sources, [], %{}, pending_exports, compile_path)
+
+    # For each changed file, mark it as changed.
+    # If compilation fails mid-cycle, they will
+    # be picked next time around.
+    for file <- changed do
+      File.touch!(file, timestamp)
+    end
 
     if changed == [] do
       runtime_modules = dependent_runtime_modules(sources, modules, pending_modules)
@@ -295,8 +297,13 @@ defmodule Mix.Compilers.Elixir do
           module(module, sources: source_files -- changed)
         end
 
-      sources = update_stale_sources(sources, changed)
-      put_compiler_info({modules, exports, sources, pending_modules, %{}})
+      # If we have a compile time dependency to a module, as soon as its file
+      # change, we will detect the compile time dependency and recompile. However,
+      # the whole goal of pending exports is to delay this decision, so we need to
+      # track which modules were removed and start them as our pending exports and
+      # remove the pending exports as we notice they have not gone stale.
+      {sources, removed_modules} = update_stale_sources(sources, changed)
+      put_compiler_info({modules, exports, sources, pending_modules, removed_modules})
       {:compile, changed, []}
     end
   end
@@ -338,6 +345,7 @@ defmodule Mix.Compilers.Elixir do
 
   defp each_module(file, module, _binary, cwd) do
     {modules, exports, sources, pending_modules, pending_exports} = get_compiler_info()
+
     kind = detect_kind(module)
     file = Path.relative_to(file, cwd)
     external = get_external_resources(module, cwd)
@@ -347,9 +355,9 @@ defmodule Mix.Compilers.Elixir do
 
     pending_exports =
       if old_export && old_export != new_export do
-        Map.put(pending_exports, module, true)
-      else
         pending_exports
+      else
+        Map.delete(pending_exports, module)
       end
 
     {module_sources, existing_module?} =
@@ -401,13 +409,13 @@ defmodule Mix.Compilers.Elixir do
   end
 
   defp detect_kind(module) do
-    protocol_metadata = Module.get_attribute(module, :protocol_impl)
+    protocol_metadata = Module.get_attribute(module, :__impl__)
 
     cond do
       is_list(protocol_metadata) and protocol_metadata[:protocol] ->
         {:impl, protocol_metadata[:protocol]}
 
-      is_list(Module.get_attribute(module, :protocol)) ->
+      is_list(Module.get_attribute(module, :__protocol__)) ->
         :protocol
 
       true ->
@@ -461,23 +469,47 @@ defmodule Mix.Compilers.Elixir do
 
   ## Resolution
 
-  # Store empty sources for the changed ones as the compiler appends data
-  defp update_stale_sources(sources, changed) do
-    Enum.reduce(changed, sources, fn file, acc ->
-      {source(size: size), acc} = List.keytake(acc, file, source(:source))
-      [source(source: file, size: size) | acc]
+  defp remove_removed_sources(sources, removed) do
+    Enum.reduce(removed, {sources, %{}}, fn file, {acc_sources, acc_modules} ->
+      {source(modules: modules), acc_sources} = List.keytake(acc_sources, file, source(:source))
+
+      acc_modules = Enum.reduce(modules, acc_modules, &Map.put(&2, &1, true))
+      {acc_sources, acc_modules}
     end)
   end
 
-  defp update_stale_sources(sources, stale, sources_stats) do
-    Enum.reduce(stale, sources, fn file, acc ->
+  # Initial definition of empty records for changed sources
+  # as the compiler appends data. This may include new files,
+  # so we rely on sources_stats to avoid multiple FS lookups.
+  defp update_stale_sources(sources, stale, removed_modules, sources_stats) do
+    Enum.reduce(stale, {sources, removed_modules}, fn file, {acc_sources, acc_modules} ->
       %{^file => {_, size}} = sources_stats
-      List.keystore(acc, file, source(:source), source(source: file, size: size))
+
+      {modules, acc_sources} =
+        case List.keytake(acc_sources, file, source(:source)) do
+          {source(modules: modules), acc_sources} -> {modules, acc_sources}
+          nil -> {[], acc_sources}
+        end
+
+      acc_modules = Enum.reduce(modules, acc_modules, &Map.put(&2, &1, true))
+      {[source(source: file, size: size) | acc_sources], acc_modules}
+    end)
+  end
+
+  # Define empty records for the sources that needs
+  # to be recompiled (but were not changed on disk)
+  defp update_stale_sources(sources, changed) do
+    Enum.reduce(changed, {sources, %{}}, fn file, {acc_sources, acc_modules} ->
+      {source(size: size, modules: modules), acc_sources} =
+        List.keytake(acc_sources, file, source(:source))
+
+      acc_modules = Enum.reduce(modules, acc_modules, &Map.put(&2, &1, true))
+      {[source(source: file, size: size) | acc_sources], acc_modules}
     end)
   end
 
   # This function receives the manifest entries and some source
-  # files that have changed. It then, recursively, figures out
+  # files that have changed. Then it recursively figures out
   # all the files that changed (via the module dependencies) and
   # return the non-changed entries and the removed sources.
   defp update_stale_entries(modules, _sources, [], stale_mods, stale_exports, _compile_path)
@@ -594,7 +626,7 @@ defmodule Mix.Compilers.Elixir do
         defmacros = :lists.sort(Module.definitions_in(module, :defmacro))
 
         struct =
-          case Module.get_attribute(module, :struct) do
+          case Module.get_attribute(module, :__struct__) do
             %{} = entry -> {entry, List.wrap(Module.get_attribute(module, :enforce_keys))}
             _ -> nil
           end
@@ -656,8 +688,8 @@ defmodule Mix.Compilers.Elixir do
       _ ->
         {[], [], %{}}
     else
-      {@manifest_vsn, modules, sources, local_structs} ->
-        {modules, sources, local_structs}
+      {@manifest_vsn, modules, sources, local_exports} ->
+        {modules, sources, local_exports}
 
       # From v5 and later
       {vsn, modules, _sources} when is_integer(vsn) ->

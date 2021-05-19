@@ -4,11 +4,11 @@ defmodule Protocol do
 
   A protocol specifies an API that should be defined by its
   implementations. A protocol is defined with `Kernel.defprotocol/2`
-  and its implementations with `Kernel.defimpl/2`.
+  and its implementations with `Kernel.defimpl/3`.
 
-  ## Examples
+  ## A real case
 
-  In Elixir, we have two verbs for checking how many items there
+  In Elixir, we have two nouns for checking how many items there
   are in a data structure: `length` and `size`.  `length` means the
   information must be computed. For example, `length(list)` needs to
   traverse the whole list to calculate its length. On the other hand,
@@ -53,7 +53,7 @@ defmodule Protocol do
 
   It is possible to implement protocols for all Elixir types:
 
-    * Structs (see below)
+    * Structs (see the "Protocols and Structs" section below)
     * `Tuple`
     * `Atom`
     * `List`
@@ -65,7 +65,7 @@ defmodule Protocol do
     * `Map`
     * `Port`
     * `Reference`
-    * `Any` (see below)
+    * `Any` (see the "Fallback to `Any`" section below)
 
   ## Protocols and Structs
 
@@ -79,7 +79,7 @@ defmodule Protocol do
       end
 
   When implementing a protocol for a struct, the `:for` option can
-  be omitted if the `defimpl` call is inside the module that defines
+  be omitted if the `defimpl/3` call is inside the module that defines
   the struct:
 
       defmodule User do
@@ -134,13 +134,13 @@ defmodule Protocol do
         def reverse(term), do: Enum.reverse(term)
       end
 
-  Inside `defimpl/2`, you can use `@protocol` to access the protocol
+  Inside `defimpl/3`, you can use `@protocol` to access the protocol
   being implemented and `@for` to access the module it is being
   defined for.
 
   ## Types
 
-  Defining a protocol automatically defines a type named `t`, which
+  Defining a protocol automatically defines a zero-arity type named `t`, which
   can be used as follows:
 
       @spec print_size(Size.t()) :: :ok
@@ -177,7 +177,7 @@ defmodule Protocol do
     * `impl_for/1` - returns the module that implements the protocol for the given argument,
       `nil` otherwise
 
-    * `impl_for!/1` - same as above but raises an error if an implementation is
+    * `impl_for!/1` - same as above but raises `Protocol.UndefinedError` if an implementation is
       not found
 
   For example, for the `Enumerable` protocol we have:
@@ -191,15 +191,17 @@ defmodule Protocol do
       iex> Enumerable.impl_for(42)
       nil
 
-  In addition, every protocol implementation module contains the `__impl__/1` function. The
-  function takes one of the following atoms:
+  In addition, every protocol implementation module contains the `__impl__/1`
+  function. The function takes one of the following atoms:
 
-      * `:for` - returns the module responsible for the data structure of the protocol implementation
+    * `:for` - returns the module responsible for the data structure of the
+      protocol implementation
 
-      * `:protocol` - returns the protocol module for which this implementation is provided
+    * `:protocol` - returns the protocol module for which this implementation
+    is provided
 
-  For example, the module implementing the `Enumerable` protocol for lists is `Enumerable.List`.
-  Therefore, we can invoke `__impl__/1` on this module:
+  For example, the module implementing the `Enumerable` protocol for lists is
+  `Enumerable.List`. Therefore, we can invoke `__impl__/1` on this module:
 
       iex(1)> Enumerable.List.__impl__(:for)
       List
@@ -209,22 +211,17 @@ defmodule Protocol do
 
   ## Consolidation
 
-  In order to cope with code loading in development, protocols in
-  Elixir provide a slow implementation of protocol dispatching specific
-  to development.
-
-  In order to speed up dispatching in production environments, where
-  all implementations are known up-front, Elixir provides a feature
-  called *protocol consolidation*. Consolidation directly links protocols
-  to their implementations in a way that invoking a function from a
+  In order to speed up protocol dispatching, whenever all protocol implementations
+  are known up-front, typically after all Elixir code in a project is compiled,
+  Elixir provides a feature called *protocol consolidation*. Consolidation directly
+  links protocols to their implementations in a way that invoking a function from a
   consolidated protocol is equivalent to invoking two remote functions.
 
-  Protocol consolidation is applied by default to all Mix projects during
-  compilation. This may be an issue during test. For instance, if you want
-  to implement a protocol during test, the implementation will have no
-  effect, as the protocol has already been consolidated. One possible
-  solution is to include compilation directories that are specific to your
-  test environment in your mix.exs:
+  Protocol consolidation is applied by default to all Mix projects during compilation.
+  This may be an issue during test. For instance, if you want to implement a protocol
+  during test, the implementation will have no effect, as the protocol has already been
+  consolidated. One possible solution is to include compilation directories that are
+  specific to your test environment in your mix.exs:
 
       def project do
         ...
@@ -311,9 +308,11 @@ defmodule Protocol do
   end
 
   defp assert_protocol!(module, extra) do
-    case Code.ensure_compiled(module) do
-      {:module, ^module} -> :ok
-      _ -> raise ArgumentError, "#{inspect(module)} is not available" <> extra
+    try do
+      Code.ensure_compiled!(module)
+    rescue
+      e in ArgumentError ->
+        raise ArgumentError, e.message <> extra
     end
 
     try do
@@ -340,9 +339,11 @@ defmodule Protocol do
   defp assert_impl!(protocol, base, extra) do
     impl = Module.concat(protocol, base)
 
-    case Code.ensure_compiled(impl) do
-      {:module, ^impl} -> :ok
-      _ -> raise ArgumentError, "#{inspect(impl)} is not available" <> extra
+    try do
+      Code.ensure_compiled!(impl)
+    rescue
+      e in ArgumentError ->
+        raise ArgumentError, e.message <> extra
     end
 
     try do
@@ -397,17 +398,19 @@ defmodule Protocol do
       end
 
       Derivable.ok(%ImplStruct{})
-      {:ok, %ImplStruct{a: 0, b: 0}, %ImplStruct{a: 0, b: 0}, []}
+      #=> {:ok, %ImplStruct{a: 0, b: 0}, %ImplStruct{a: 0, b: 0}, []}
 
-  Explicit derivations can now be called via `__deriving__`:
+  Explicit derivations can now be called via `__deriving__/3`:
 
-      # Explicitly derived via `__deriving__`
+      # Explicitly derived via `__deriving__/3`
       Derivable.ok(%ImplStruct{a: 1, b: 1})
+      #=> {:ok, %ImplStruct{a: 1, b: 1}, %ImplStruct{a: 0, b: 0}, []}
 
-      # Explicitly derived by API via `__deriving__`
+      # Explicitly derived by API via `__deriving__/3`
       require Protocol
       Protocol.derive(Derivable, ImplStruct, :oops)
       Derivable.ok(%ImplStruct{a: 1, b: 1})
+      #=> {:ok, %ImplStruct{a: 1, b: 1}, %ImplStruct{a: 0, b: 0}, :oops}
 
   """
   defmacro derive(protocol, module, options \\ []) do
@@ -439,7 +442,7 @@ defmodule Protocol do
   @spec extract_protocols([charlist | String.t()]) :: [atom]
   def extract_protocols(paths) do
     extract_matching_by_attribute(paths, 'Elixir.', fn module, attributes ->
-      case attributes[:protocol] do
+      case attributes[:__protocol__] do
         [fallback_to_any: _] -> module
         _ -> nil
       end
@@ -470,7 +473,7 @@ defmodule Protocol do
     prefix = Atom.to_charlist(protocol) ++ '.'
 
     extract_matching_by_attribute(paths, prefix, fn _mod, attributes ->
-      case attributes[:protocol_impl] do
+      case attributes[:__impl__] do
         [protocol: ^protocol, for: for] -> for
         _ -> nil
       end
@@ -561,7 +564,7 @@ defmodule Protocol do
         chunks = :lists.filter(fn {_name, value} -> value != :missing_chunk end, chunks)
         chunks = :lists.map(fn {name, value} -> {List.to_string(name), value} end, chunks)
 
-        case attributes[:protocol] do
+        case attributes[:__protocol__] do
           [fallback_to_any: any] ->
             {:ok, {any, definitions}, specs, {info, chunks}}
 
@@ -681,14 +684,16 @@ defmodule Protocol do
         # We don't allow function definition inside protocols
         import Kernel,
           except: [
-            defmacrop: 1,
-            defmacrop: 2,
-            defmacro: 1,
-            defmacro: 2,
+            def: 1,
+            def: 2,
             defp: 1,
             defp: 2,
-            def: 1,
-            def: 2
+            defguard: 1,
+            defguardp: 1,
+            defmacro: 1,
+            defmacro: 2,
+            defmacrop: 1,
+            defmacrop: 2
           ]
 
         # Import the new dsl that holds the new def
@@ -795,8 +800,8 @@ defmodule Protocol do
 
       # Store information as an attribute so it
       # can be read without loading the module.
-      Module.register_attribute(__MODULE__, :protocol, persist: true)
-      @protocol [fallback_to_any: !!@fallback_to_any]
+      Module.register_attribute(__MODULE__, :__protocol__, persist: true)
+      @__protocol__ [fallback_to_any: !!@fallback_to_any]
 
       @doc false
       @spec __protocol__(:module) :: __MODULE__
@@ -855,8 +860,8 @@ defmodule Protocol do
 
         unquote(block)
 
-        Module.register_attribute(__MODULE__, :protocol_impl, persist: true)
-        @protocol_impl [protocol: @protocol, for: @for]
+        Module.register_attribute(__MODULE__, :__impl__, persist: true)
+        @__impl__ [protocol: @protocol, for: @for]
 
         unquote(impl)
       end
@@ -897,8 +902,8 @@ defmodule Protocol do
       else
         quoted =
           quote do
-            Module.register_attribute(__MODULE__, :protocol_impl, persist: true)
-            @protocol_impl [protocol: unquote(protocol), for: unquote(for)]
+            Module.register_attribute(__MODULE__, :__impl__, persist: true)
+            @__impl__ [protocol: unquote(protocol), for: unquote(for)]
 
             @doc false
             @spec __impl__(:target) :: unquote(impl)

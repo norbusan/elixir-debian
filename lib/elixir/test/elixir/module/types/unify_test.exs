@@ -10,10 +10,10 @@ defmodule Module.Types.UnifyTest do
     |> lift_result()
   end
 
-  defp unify_directed_lift(left, right) do
+  defp unify_directed_lift(left, right, context \\ new_context()) do
     stack = %{new_stack() | context: :expr}
 
-    unify(left, right, stack, new_context())
+    unify(left, right, stack, context)
     |> lift_result()
   end
 
@@ -34,12 +34,14 @@ defmodule Module.Types.UnifyTest do
   end
 
   defp lift_result({:ok, type, context}) do
-    {:ok, Types.lift_type(type, context)}
+    {:ok, lift_type(type, context)}
   end
 
   defp lift_result({:error, {type, reason, _context}}) do
     {:error, {type, reason}}
   end
+
+  defp lift_type(type, context), do: [type] |> lift_types(context) |> hd()
 
   describe "unify/3" do
     test "literal" do
@@ -122,12 +124,6 @@ defmodule Module.Types.UnifyTest do
                {:map, [{:required, :integer, :atom}]}
              ) ==
                {:ok, {:map, [{:required, :integer, :atom}]}}
-
-      assert unify_lift(
-               {:map, [{:required, {:atom, :foo}, {:atom, :bar}}]},
-               {:map, [{:required, {:atom, :foo}, :atom}]}
-             ) ==
-               {:ok, {:map, [{:required, {:atom, :foo}, {:atom, :bar}}]}}
 
       assert {:error,
               {:unable_unify,
@@ -257,6 +253,139 @@ defmodule Module.Types.UnifyTest do
              ) == {:ok, {:map, [{:optional, {:atom, :foo}, :integer}]}}
     end
 
+    test "map with subtyped and multiple matching keys" do
+      assert {:error, _} =
+               unify_directed_lift(
+                 {:map,
+                  [
+                    {:required, {:atom, :foo}, :integer},
+                    {:required, :atom, {:union, [:integer, :boolean]}}
+                  ]},
+                 {:map, [{:required, :atom, :integer}]}
+               )
+
+      assert unify_directed_lift(
+               {:map,
+                [
+                  {:required, {:atom, :foo}, :integer},
+                  {:required, :atom, {:union, [:integer, :boolean]}}
+                ]},
+               {:map, [{:required, :atom, {:union, [:integer, :boolean]}}]}
+             ) ==
+               {:ok,
+                {:map,
+                 [
+                   {:required, {:atom, :foo}, :integer},
+                   {:required, :atom, {:union, [:integer, :boolean]}}
+                 ]}}
+
+      assert {:error, _} =
+               unify_directed_lift(
+                 {:map, [{:required, :atom, :integer}]},
+                 {:map,
+                  [
+                    {:required, {:atom, :foo}, :integer},
+                    {:required, :atom, {:union, [:integer, :boolean]}}
+                  ]}
+               )
+
+      assert {:error, _} =
+               unify_directed_lift(
+                 {:map, [{:required, :atom, {:union, [:integer, :boolean]}}]},
+                 {:map,
+                  [
+                    {:required, {:atom, :foo}, :integer},
+                    {:required, :atom, {:union, [:integer, :boolean]}}
+                  ]}
+               )
+
+      assert unify_directed_lift(
+               {:map, [{:required, :atom, :integer}]},
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]}
+             ) == {:ok, {:map, [{:required, :atom, :integer}]}}
+
+      assert unify_directed_lift(
+               {:map, [{:required, :atom, {:union, [:integer, :boolean]}}]},
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]}
+             ) == {:ok, {:map, [{:required, :atom, {:union, [:integer, :boolean]}}]}}
+
+      assert unify_directed_lift(
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]},
+               {:map, [{:required, :atom, :integer}]}
+             ) == {:ok, {:map, [{:required, {:atom, :foo}, :integer}]}}
+
+      # TODO: FIX ME
+      # assert unify_directed_lift(
+      #          {:map,
+      #           [
+      #             {:optional, {:atom, :foo}, :integer},
+      #             {:optional, :atom, {:union, [:integer, :boolean]}}
+      #           ]},
+      #          {:map, [{:required, :atom, {:union, [:integer, :boolean]}}]}
+      #        ) ==
+      #          {:ok,
+      #           {:map,
+      #            [
+      #              {:required, {:atom, :foo}, :integer},
+      #              {:required, :atom, {:union, [:integer, :boolean]}}
+      #            ]}}
+
+      assert {:error, _} =
+               unify_directed_lift(
+                 {:map,
+                  [
+                    {:optional, {:atom, :foo}, :integer},
+                    {:optional, :atom, {:union, [:integer, :boolean]}}
+                  ]},
+                 {:map, [{:optional, :atom, :integer}]}
+               )
+
+      assert unify_directed_lift(
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]},
+               {:map, [{:optional, :atom, {:union, [:integer, :boolean]}}]}
+             ) ==
+               {:ok,
+                {:map,
+                 [
+                   {:optional, {:atom, :foo}, :integer},
+                   {:optional, :atom, {:union, [:integer, :boolean]}}
+                 ]}}
+
+      assert unify_directed_lift(
+               {:map, [{:optional, :atom, :integer}]},
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]}
+             ) == {:ok, {:map, [{:optional, :atom, :integer}]}}
+
+      assert unify_directed_lift(
+               {:map, [{:optional, :atom, {:union, [:integer, :boolean]}}]},
+               {:map,
+                [
+                  {:optional, {:atom, :foo}, :integer},
+                  {:optional, :atom, {:union, [:integer, :boolean]}}
+                ]}
+             ) == {:ok, {:map, [{:optional, :atom, {:union, [:integer, :boolean]}}]}}
+    end
+
     test "union" do
       assert unify_lift({:union, []}, {:union, []}) == {:ok, {:union, []}}
       assert unify_lift({:union, [:integer]}, {:union, [:integer]}) == {:ok, {:union, [:integer]}}
@@ -268,9 +397,9 @@ defmodule Module.Types.UnifyTest do
                {:ok, {:union, [:integer, :atom]}}
 
       assert unify_lift({:union, [:atom]}, {:union, [{:atom, :bar}]}) ==
-               {:ok, {:union, [{:atom, :bar}]}}
+               {:ok, {:atom, :bar}}
 
-      assert {:error, {:unable_unify, {{:union, [:integer]}, {:union, [:atom]}, _}}} =
+      assert {:error, {:unable_unify, {:integer, {:union, [:atom]}, _}}} =
                unify_lift({:union, [:integer]}, {:union, [:atom]})
     end
 
@@ -286,14 +415,14 @@ defmodule Module.Types.UnifyTest do
       assert {{:var, 1}, var_context} = new_var({:bar, [version: 1], nil}, var_context)
 
       assert {:ok, {:var, 0}, context} = unify({:var, 0}, :integer, var_context)
-      assert Types.lift_type({:var, 0}, context) == :integer
+      assert lift_type({:var, 0}, context) == :integer
 
       assert {:ok, {:var, 0}, context} = unify(:integer, {:var, 0}, var_context)
-      assert Types.lift_type({:var, 0}, context) == :integer
+      assert lift_type({:var, 0}, context) == :integer
 
       assert {:ok, {:var, _}, context} = unify({:var, 0}, {:var, 1}, var_context)
-      assert {:var, _} = Types.lift_type({:var, 0}, context)
-      assert {:var, _} = Types.lift_type({:var, 1}, context)
+      assert {:var, _} = lift_type({:var, 0}, context)
+      assert {:var, _} = lift_type({:var, 1}, context)
 
       assert {:ok, {:var, 0}, context} = unify({:var, 0}, :integer, var_context)
       assert {:ok, {:var, 1}, context} = unify({:var, 1}, :integer, context)
@@ -323,7 +452,7 @@ defmodule Module.Types.UnifyTest do
       assert {:ok, {:tuple, 1, [{:var, 0}]}, context} =
                unify({:tuple, 1, [{:var, 0}]}, {:tuple, 1, [:integer]}, var_context)
 
-      assert Types.lift_type({:var, 0}, context) == :integer
+      assert lift_type({:var, 0}, context) == :integer
 
       assert {:ok, {:var, 0}, context} = unify({:var, 0}, :integer, var_context)
       assert {:ok, {:var, 1}, context} = unify({:var, 1}, :integer, context)
@@ -333,7 +462,7 @@ defmodule Module.Types.UnifyTest do
 
       assert {:ok, {:var, 1}, context} = unify({:var, 1}, {:tuple, 1, [{:var, 0}]}, var_context)
       assert {:ok, {:var, 0}, context} = unify({:var, 0}, :integer, context)
-      assert Types.lift_type({:var, 1}, context) == {:tuple, 1, [:integer]}
+      assert lift_type({:var, 1}, context) == {:tuple, 1, [:integer]}
 
       assert {:ok, {:var, 0}, context} = unify({:var, 0}, :integer, var_context)
       assert {:ok, {:var, 1}, context} = unify({:var, 1}, :binary, context)
@@ -342,7 +471,28 @@ defmodule Module.Types.UnifyTest do
                unify_lift({:tuple, 1, [{:var, 0}]}, {:tuple, 1, [{:var, 1}]}, context)
     end
 
-    # TODO: Vars inside unions
+    # TODO: Vars inside right unions
+
+    test "vars inside left unions" do
+      assert {{:var, 0}, var_context} = new_var({:foo, [version: 0], nil}, new_context())
+
+      assert {:ok, {:var, 0}, context} =
+               unify({:union, [{:var, 0}, :integer]}, :integer, var_context)
+
+      assert lift_type({:var, 0}, context) == :integer
+
+      assert {:ok, {:var, 0}, context} =
+               unify({:union, [{:var, 0}, :integer]}, {:union, [:integer, :atom]}, var_context)
+
+      assert lift_type({:var, 0}, context) == {:union, [:integer, :atom]}
+
+      assert {:error, {:unable_unify, {:integer, {:union, [:binary, :atom]}, _}}} =
+               unify_directed_lift(
+                 {:union, [{:var, 0}, :integer]},
+                 {:union, [:binary, :atom]},
+                 var_context
+               )
+    end
 
     test "recursive type" do
       assert {{:var, 0}, var_context} = new_var({:foo, [version: 0], nil}, new_context())
@@ -441,6 +591,12 @@ defmodule Module.Types.UnifyTest do
       refute subtype?({:tuple, 1, [:atom]}, {:tuple, 1, [{:atom, :foo}]}, new_context())
       refute subtype?({:tuple, 1, [:atom]}, {:tuple, 2, [:atom, :atom]}, new_context())
       refute subtype?({:tuple, 2, [:atom, :atom]}, {:tuple, 1, [:atom]}, new_context())
+
+      refute subtype?(
+               {:tuple, 2, [{:atom, :a}, :integer]},
+               {:tuple, 2, [{:atom, :b}, :integer]},
+               new_context()
+             )
     end
 
     test "with maps" do

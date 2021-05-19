@@ -7,11 +7,22 @@ defmodule Mix.Compilers.ApplicationTracer do
   def init({stale_deps, opts}) do
     config = Mix.Project.config()
     manifest = manifest(config)
+    modified = Mix.Utils.last_modified(manifest)
 
-    if Mix.Utils.stale?([Mix.Project.config_mtime()], [manifest]) do
-      build_manifest(config, manifest)
-    else
-      read_manifest(manifest, stale_deps) || build_manifest(config, manifest)
+    cond do
+      Mix.Utils.stale?([Mix.Project.config_mtime()], [modified]) ->
+        build_manifest(config, manifest)
+
+      table = read_manifest(manifest, stale_deps) ->
+        for %{app: app, scm: scm, opts: opts} <- Mix.Dep.cached(),
+            not scm.fetchable?,
+            Mix.Utils.last_modified(Path.join([opts[:build], "ebin", "#{app}.app"])) > modified do
+          delete_app(table, app)
+          store_app(table, app)
+        end
+
+      true ->
+        build_manifest(config, manifest)
     end
 
     setup_warnings_table(config)
@@ -25,8 +36,10 @@ defmodule Mix.Compilers.ApplicationTracer do
     :ok
   end
 
-  # Also skip __impl__ calls inside protocols as they are meant
-  # to invert dependencies.
+  # Skip protocol implementations too as the goal of protocols
+  # is to invert the dependency graph. Perhaps it would be best
+  # to skip tracing altogether if env.module is a protocol but
+  # currently there is no cheap way to track this information.
   def trace({_, _, _, :__impl__, _}, _env) do
     :ok
   end
@@ -58,10 +71,10 @@ defmodule Mix.Compilers.ApplicationTracer do
     warnings =
       :ets.foldl(
         fn {module, function, arity, env_module, env_function, env_file, env_line}, acc ->
-          # If the module is either preloaded, it is always available.
-          # If the module is non existing, the compiler will warn, so we don't.
+          # If the module is preloaded, it is always available, so we skip it.
+          # If the module is non existing, the compiler will warn, so we skip it.
           # If the module belongs to this application (from another compiler), we skip it.
-          # If the module is excluded, we skip it too.
+          # If the module is excluded, we skip it.
           with path when is_list(path) <- :code.which(module),
                {:ok, module_app} <- app(path),
                true <- module_app != app,
@@ -181,25 +194,11 @@ defmodule Mix.Compilers.ApplicationTracer do
     table
   end
 
-  # TODO: Update from Elixir v1.15 onwards.
-  #
-  # We support extra_applications: [mix: :optional] from v1.11,
-  # so those using IEx, Mix and ExUnit can declare it as an
-  # optional apps under extra_applications from v1.15.
-  #
-  # For Mix, this means removing it from the list below.
-  #
-  # For ExUnit, we always include it but we should no longer
-  # load it. Then only "mix test" will load ex_unit, which
-  # means that ExUnit deps won't warn when testing code but
-  # it will when compiling. Similar for IEx.
-  #
-  # When we do these changes, we should improve the warning
-  # messages for mix/ex_unit/iex to point to optional apps.
   defp extra_apps(config) do
     case Keyword.get(config, :language, :elixir) do
       :elixir ->
         Application.ensure_loaded(:ex_unit)
+        Application.ensure_loaded(:iex)
         [:ex_unit, :iex, :mix]
 
       :erlang ->
@@ -216,9 +215,7 @@ defmodule Mix.Compilers.ApplicationTracer do
       Map.has_key?(seen, app) ->
         seen
 
-      modules = Application.spec(app, :modules) ->
-        :ets.insert(table, Enum.map(modules, &{&1}))
-
+      store_app(table, app) ->
         seen
         |> Map.put(app, true)
         |> store_apps(table, Application.spec(app, :applications))
@@ -226,6 +223,19 @@ defmodule Mix.Compilers.ApplicationTracer do
 
       true ->
         seen
+    end
+  end
+
+  defp delete_app(table, app) do
+    :ets.match_delete(table, {:"$_", app})
+  end
+
+  defp store_app(table, app) do
+    if modules = Application.spec(app, :modules) do
+      :ets.insert(table, Enum.map(modules, &{&1, app}))
+      true
+    else
+      false
     end
   end
 end

@@ -34,6 +34,14 @@ Writing code is only the first of many steps to publish a package. We strongly r
 
 Projects are often made available to other developers [by publishing a Hex package](https://hex.pm/docs/publish). Hex also [supports private packages for organizations](https://hex.pm/pricing). If ExDoc is configured for the Mix project, publishing a package on Hex will also automatically publish the generated documentation to [HexDocs](https://hexdocs.pm).
 
+## Dependency handling
+
+When your library is published and used as a dependency, its [lockfile](https://hexdocs.pm/mix/Mix.Project.html#module-configuration) (usually named `mix.lock`) is _ignored by the host project_. Running `mix deps.get` in the host project attempts to get the latest possible versions of your library’s dependencies, as specified by the requirements in the `deps` section of your `mix.exs`. These versions might be greater than those stored in your `mix.lock` (and hence used in your tests / CI).
+
+On the other hand, contributors of your library, need a deterministic build, which implies the presence of `mix.lock` in your Version Control System (VCS).
+
+The best practice of handling `mix.lock` file therefore would be to keep it in VCS, and run two different Continuous Integration (CI) workflows: the usual deterministic one, and another one, that starts with `mix deps.unlock --all` and always compiles your library and runs tests against latest versions of dependencies. The latter one might be even run nightly or otherwise recurrently to stay notified about any possible issue in regard to dependencies updates.
+
 ## Anti-patterns
 
 In this section we document common anti-patterns to avoid when writing libraries.
@@ -170,7 +178,15 @@ end
 
 That's because by reading the application in the module body and storing it in a module attribute, we are effectively reading the configuration at compile-time, which may become an issue when configuring the system later.
 
-If, for some reason, you must read the application environment at compile time, use `Application.compile_env/2`. Read [the "Compile-time environment" section of the Application docs](Application.html#module-compile-time-environment) for more information.
+If, for some reason, you must read the application environment at compile time, use `Application.compile_env/2`. Read [the "Compile-time environment" section of the `Application` module documentation](Application.html#module-compile-time-environment) for more information.
+
+### Avoid defining modules that are not in your "namespace"
+
+Even though Elixir does not formally have the concept of namespaces, a library should use its name as a "prefix" for all of its modules (except for special cases like mix tasks). For example if the library's OTP application name is `:my_lib`, then all of its modules should start with the `MyLib` prefix, for example `MyLib.User`, `MyLib.SubModule`, and `MyLib.Application`.
+
+This is important because the Erlang VM can only load one instance of a module at a time. So if there are multiple libraries that define the same module, then they are incompatible with each other due to this limitation. By always using the library name as a prefix, it avoids module name clashes due to the unique prefix.
+
+Furthermore, when writing a library that is an extension of another library, you should avoid defining modules inside the parent's library namespace. For example, if you are writing a package that adds authentication to [`Plug`](https://github.com/elixir-plug/plug) called `plug_auth`, its modules should be namespaced under `PlugAuth` instead of `Plug.Auth`, so it avoid conflicts with `Plug` if it were to ever define its own authentication functionality.
 
 ### Avoid `use` when an `import` is enough
 
@@ -218,7 +234,7 @@ While there are situations where `use SomeModule` is necessary, `use` should be 
 
 Although the previous section could be summarized as "avoid macros", both topics are important enough to deserve their own sections.
 
-To quote [the official guide on Macros](https://elixir-lang.org/getting-started/meta/macros.html):
+To quote [the official guide on macros](https://elixir-lang.org/getting-started/meta/macros.html):
 
 > Even though Elixir attempts its best to provide a safe environment for macros, the major responsibility of writing clean code with macros falls on developers. Macros are harder to write than ordinary Elixir functions and it's considered to be bad style to use them when they're not necessary. So write macros responsibly.
 >

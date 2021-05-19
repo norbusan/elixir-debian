@@ -309,6 +309,14 @@ defmodule Code.Formatter.IntegrationTest do
     """
   end
 
+  test "do/end inside binary" do
+    assert_same """
+    <<if true do
+        "hello"
+      end::binary>>
+    """
+  end
+
   test "anonymous function with parens around integer argument" do
     bad = """
     fn (1) -> "hello" end
@@ -537,6 +545,64 @@ defmodule Code.Formatter.IntegrationTest do
 
     assert_format bad, ~S"""
     "this works" \\ &String.upcase/1 \\ &String.downcase/1
+    """
+  end
+
+  test "comment inside operator with when" do
+    bad = """
+    raise function(x) ::
+            # Comment
+            any
+    """
+
+    assert_format bad, """
+    # Comment
+    raise function(x) ::
+            any
+    """
+
+    bad = """
+    raise function(x) ::
+            # Comment
+            any
+          when x: any
+    """
+
+    assert_format bad, """
+    raise function(x) ::
+            any
+          # Comment
+          when x: any
+    """
+
+    bad = """
+    @spec function(x) ::
+            # Comment
+            any
+          when x: any
+    """
+
+    assert_format bad, """
+    @spec function(x) ::
+            any
+          # Comment
+          when x: any
+    """
+
+    bad = """
+    @spec function(x) ::
+            # Comment
+            any
+          when x
+          when y
+    """
+
+    assert_format bad, """
+    @spec function(x) ::
+            any
+          # Comment
+          when x
+          when y
     """
   end
 end

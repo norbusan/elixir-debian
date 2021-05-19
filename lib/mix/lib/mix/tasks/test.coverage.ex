@@ -139,7 +139,7 @@ defmodule Mix.Tasks.Test.Coverage do
     {:ok, pid} = :cover.start()
 
     for compile_path <- compile_paths do
-      case :cover.compile_beam_directory(to_charlist(compile_path)) do
+      case :cover.compile_beam(beams(compile_path)) do
         results when is_list(results) ->
           :ok
 
@@ -152,6 +152,28 @@ defmodule Mix.Tasks.Test.Coverage do
     end
 
     pid
+  end
+
+  # Pick beams from the compile_path but if by any chance it is a protocol,
+  # gets its path from the code server (which will most likely point to
+  # the consolidation directory as long as it is enabled).
+  defp beams(dir) do
+    consolidation_dir = Mix.Project.consolidation_path()
+
+    consolidated =
+      case File.ls(consolidation_dir) do
+        {:ok, files} -> files
+        _ -> []
+      end
+
+    for file <- File.ls!(dir), Path.extname(file) == ".beam" do
+      with true <- file in consolidated,
+           [_ | _] = path <- :code.which(file |> Path.rootname() |> String.to_atom()) do
+        path
+      else
+        _ -> String.to_charlist(Path.join(dir, file))
+      end
+    end
   end
 
   defp export_cover_results(name, opts) do

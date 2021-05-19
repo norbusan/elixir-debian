@@ -478,6 +478,22 @@ defmodule ModuleTest do
     end
   end
 
+  test "get_definition/2 and delete_definition/2" do
+    in_module do
+      def foo(a, b), do: a + b
+
+      assert {:v1, :def, _,
+              [
+                {_, [{:a, _, nil}, {:b, _, nil}], [],
+                 {{:., _, [:erlang, :+]}, _, [{:a, _, nil}, {:b, _, nil}]}}
+              ]} = Module.get_definition(__MODULE__, {:foo, 2})
+
+      assert Module.delete_definition(__MODULE__, {:foo, 2})
+      assert Module.get_definition(__MODULE__, {:foo, 2}) == nil
+      refute Module.delete_definition(__MODULE__, {:foo, 2})
+    end
+  end
+
   test "make_overridable/2 with invalid arguments" do
     contents =
       quote do
@@ -489,10 +505,10 @@ defmodule ModuleTest do
         "tuple, got: {:foo, 256}"
 
     assert_raise ArgumentError, message, fn ->
-      Module.create(Foo, contents, __ENV__)
+      Module.create(MakeOverridable, contents, __ENV__)
     end
   after
-    purge(Foo)
+    purge(MakeOverridable)
   end
 
   test "raise when called with already compiled module" do
@@ -563,5 +579,20 @@ defmodule ModuleTest do
         refute Module.has_attribute?(__MODULE__, :foo)
       end
     end
+  end
+
+  test "@on_load" do
+    Process.register(self(), :on_load_test_process)
+
+    defmodule OnLoadTest do
+      @on_load :on_load
+
+      defp on_load do
+        send(:on_load_test_process, :on_loaded)
+        :ok
+      end
+    end
+
+    assert_received :on_loaded
   end
 end

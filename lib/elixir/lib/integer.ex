@@ -65,6 +65,55 @@ defmodule Integer do
   defguard is_even(integer) when is_integer(integer) and (integer &&& 1) == 0
 
   @doc """
+  Computes `base` raised to power of `exponent`.
+
+  Both `base` and `exponent` must be integers.
+  The exponent must be zero or positive.
+
+  See `Float.pow/2` for exponentiation of negative
+  exponents as well as floats.
+
+  ## Examples
+
+      iex> Integer.pow(2, 0)
+      1
+      iex> Integer.pow(2, 1)
+      2
+      iex> Integer.pow(2, 10)
+      1024
+      iex> Integer.pow(2, 11)
+      2048
+      iex> Integer.pow(2, 64)
+      0x10000000000000000
+
+      iex> Integer.pow(3, 4)
+      81
+      iex> Integer.pow(4, 3)
+      64
+
+      iex> Integer.pow(-2, 3)
+      -8
+      iex> Integer.pow(-2, 4)
+      16
+
+      iex> Integer.pow(2, -2)
+      ** (ArithmeticError) bad argument in arithmetic expression
+
+  """
+  @doc since: "1.12.0"
+  @spec pow(integer, non_neg_integer) :: integer
+  def pow(base, exponent) when is_integer(base) and is_integer(exponent) do
+    if exponent < 0, do: :erlang.error(:badarith, [base, exponent])
+    guarded_pow(base, exponent)
+  end
+
+  # https://en.wikipedia.org/wiki/Exponentiation_by_squaring
+  defp guarded_pow(_, 0), do: 1
+  defp guarded_pow(b, 1), do: b
+  defp guarded_pow(b, e) when (e &&& 1) == 0, do: guarded_pow(b * b, e >>> 1)
+  defp guarded_pow(b, e), do: b * guarded_pow(b * b, e >>> 1)
+
+  @doc """
   Computes the modulo remainder of an integer division.
 
   `Integer.mod/2` uses floored division, which means that
@@ -226,7 +275,7 @@ defmodule Integer do
       ** (ArgumentError) invalid base 38
 
   """
-  @spec parse(binary, 2..36) :: {integer, binary} | :error
+  @spec parse(binary, 2..36) :: {integer, remainder_of_binary :: binary} | :error
   def parse(binary, base \\ 10)
 
   def parse(_binary, base) when base not in 2..36 do
@@ -269,12 +318,12 @@ defmodule Integer do
 
   defp count_digits_nosign(<<_::bits>>, _, count), do: count
 
-  # TODO: Remove Integer.to_string/1 once the minimum supported version is
-  #       Erlang/OTP 22, since it is covered by the now BIF Integer.to_string/2.
-  #       Please reapply commit 2622fd6b0aa419a983a899a1fbdb5deefba3d85d.
   @doc """
   Returns a binary which corresponds to the text representation
-  of `integer`.
+  of `integer` in the given `base`.
+
+  `base` can be an integer between 2 and 36. If no `base` is given,
+  it defaults to `10`.
 
   Inlined by the compiler.
 
@@ -292,22 +341,6 @@ defmodule Integer do
       iex> Integer.to_string(0123)
       "123"
 
-  """
-  @spec to_string(integer) :: String.t()
-  def to_string(integer) do
-    :erlang.integer_to_binary(integer)
-  end
-
-  @doc """
-  Returns a binary which corresponds to the text representation
-  of `integer` in the given `base`.
-
-  `base` can be an integer between 2 and 36.
-
-  Inlined by the compiler.
-
-  ## Examples
-
       iex> Integer.to_string(100, 16)
       "64"
 
@@ -319,15 +352,16 @@ defmodule Integer do
 
   """
   @spec to_string(integer, 2..36) :: String.t()
-  def to_string(integer, base) do
+  def to_string(integer, base \\ 10) do
     :erlang.integer_to_binary(integer, base)
   end
 
-  # TODO: Remove Integer.to_charlist/1 once the minimum supported version is
-  #       Erlang/OTP 22, since it is covered by the now BIF Integer.to_charlist/2.
-  #       Please reapply commit 2622fd6b0aa419a983a899a1fbdb5deefba3d85d.
   @doc """
-  Returns a charlist which corresponds to the text representation of the given `integer`.
+  Returns a charlist which corresponds to the text representation
+  of `integer` in the given `base`.
+
+  `base` can be an integer between 2 and 36. If no `base` is given,
+  it defaults to `10`.
 
   Inlined by the compiler.
 
@@ -345,21 +379,6 @@ defmodule Integer do
       iex> Integer.to_charlist(0123)
       '123'
 
-  """
-  @spec to_charlist(integer) :: charlist
-  def to_charlist(integer) do
-    :erlang.integer_to_list(integer)
-  end
-
-  @doc """
-  Returns a charlist which corresponds to the text representation of `integer` in the given `base`.
-
-  `base` can be an integer between 2 and 36.
-
-  Inlined by the compiler.
-
-  ## Examples
-
       iex> Integer.to_charlist(100, 16)
       '64'
 
@@ -371,7 +390,7 @@ defmodule Integer do
 
   """
   @spec to_charlist(integer, 2..36) :: charlist
-  def to_charlist(integer, base) do
+  def to_charlist(integer, base \\ 10) do
     :erlang.integer_to_list(integer, base)
   end
 
@@ -413,6 +432,58 @@ defmodule Integer do
   defp gcd_positive(0, integer2), do: integer2
   defp gcd_positive(integer1, 0), do: integer1
   defp gcd_positive(integer1, integer2), do: gcd_positive(integer2, rem(integer1, integer2))
+
+  @doc """
+  Returns the extended greatest common divisor of the two given integers.
+
+  It uses the Extended Euclidean algorithm to return a three-element tuple with the `gcd`
+  and the coefficients `m` and `n` of Bézout's identity such that:
+
+      gcd(a, b) = m*a + n*b
+
+  By convention, `extended_gcd(0, 0)` returns `{0, 0, 0}`.
+
+  ## Examples
+
+      iex> Integer.extended_gcd(240, 46)
+      {2, -9, 47}
+      iex> Integer.extended_gcd(46, 240)
+      {2, 47, -9}
+      iex> Integer.extended_gcd(-46, 240)
+      {2, -47, -9}
+      iex> Integer.extended_gcd(-46, -240)
+      {2, -47, 9}
+
+      iex> Integer.extended_gcd(14, 21)
+      {7, -1, 1}
+
+      iex> Integer.extended_gcd(10, 0)
+      {10, 1, 0}
+      iex> Integer.extended_gcd(0, 10)
+      {10, 0, 1}
+      iex> Integer.extended_gcd(0, 0)
+      {0, 0, 0}
+
+  """
+  @doc since: "1.12.0"
+  @spec extended_gcd(integer, integer) :: {non_neg_integer, integer, integer}
+  def extended_gcd(0, 0), do: {0, 0, 0}
+  def extended_gcd(0, n), do: {n, 0, 1}
+  def extended_gcd(n, 0), do: {n, 1, 0}
+
+  def extended_gcd(integer1, integer2) when is_integer(integer1) and is_integer(integer2) do
+    extended_gcd(integer2, integer1, 0, 1, 1, 0)
+  end
+
+  defp extended_gcd(r1, r0, s1, s0, t1, t0) do
+    div = div(r0, r1)
+
+    case r0 - div * r1 do
+      0 when r1 > 0 -> {r1, s1, t1}
+      0 when r1 < 0 -> {-r1, -s1, -t1}
+      r2 -> extended_gcd(r2, r1, s0 - div * s1, s1, t0 - div * t1, t1)
+    end
+  end
 
   @doc false
   @deprecated "Use Integer.to_charlist/1 instead"

@@ -11,7 +11,8 @@ defmodule Mix.Compilers.Test do
     runtime_references: [],
     external: []
 
-  @compile {:no_warn_undefined, ExUnit.Server}
+  # Necessary to avoid warnings during bootstrap
+  @compile {:no_warn_undefined, ExUnit}
   @stale_manifest "compile.test_stale"
   @manifest_vsn 1
 
@@ -34,7 +35,7 @@ defmodule Mix.Compilers.Test do
     if test_files == [] do
       :noop
     else
-      task = Task.async(ExUnit, :run, [])
+      task = ExUnit.async_run()
 
       try do
         case Kernel.ParallelCompiler.require(test_files, parallel_require_callbacks) do
@@ -42,8 +43,7 @@ defmodule Mix.Compilers.Test do
           {:error, _, _} -> exit({:shutdown, 1})
         end
 
-        ExUnit.Server.modules_loaded()
-        %{failures: failures} = results = Task.await(task, :infinity)
+        %{failures: failures} = results = ExUnit.await_run(task)
 
         if failures == 0 do
           agent_write_manifest(stale_manifest_pid)

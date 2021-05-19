@@ -98,42 +98,43 @@ defmodule IEx do
 
   ## Pasting multiline expressions into IEx
 
-  IEx evaluates its input line by line in an eagerly fashion which means
-  that if at the end of a line the code seen so far is a complete expression
-  IEx will evaluate it at that point. This behaviour may produce errors for
-  expressions that have been formatted across multiple lines which is often
-  the case for piped expressions. Consider the following expression using
-  the `|>/2` operator:
+  IEx evaluates its input line by line in an eager fashion. If at the end of a
+  line the code seen so far is a complete expression, IEx will evaluate it at
+  that point.
 
-      iex(1)> [1, [2], 3] |> List.flatten()
-      [1, 2, 3]
+      iex(1)> [1, [2], 3]
+      [1, [2], 3]
 
-  When written in multiline form and pasted into IEx this valid expression
-  produces a syntax error:
+  To prevent this behaviour breaking valid code where the subsequent line
+  begins with a binary operator, such as `|>/2` or `++/2` , IEx automatically
+  treats such lines as if they were prepended with `IEx.Helpers.v/0`, which
+  returns the value of the previous expression, if available.
 
       iex(1)> [1, [2], 3]
       [1, [2], 3]
       iex(2)> |> List.flatten()
-      ** (SyntaxError) iex:2: syntax error before: '|>'
-
-  As IEx evaluates its input line by line, it will first encounter
-  `[1, [2], 3]`. As a list is a valid expression, IEx will evaluate
-  it immediately before looking at the next input line. Only then
-  will IEx attempt to evaluate the now incomplete expression
-  `|> List.flatten()`, which on its own is missing its left operand.
-  The evaluation thus fails with the above syntax error.
-
-  In order to help IEx understand that an expression consists of multiple
-  lines we can wrap it into parentheses:
-
-      iex(1)> (
-      ...(1)> [1, [2], 3]
-      ...(1)> |> List.flatten()
-      ...(1)> )
       [1, 2, 3]
 
-  Note that this not only works with single expressions but also with
-  arbitrary code blocks.
+  The above is equivalent to:
+
+      iex(1)> [1, [2], 3]
+      [1, [2], 3]
+      iex(2)> v() |> List.flatten()
+      [1, 2, 3]
+
+  If there are no previous expressions in the history, the pipe operator will
+  fail:
+
+      iex(1)> |> List.flatten()
+      ** (RuntimeError) v(-1) is out of bounds
+
+  Note however the above does not work for `+/2` and `-/2`, as they
+  are ambiguous with the unary `+/1` and `-/1`:
+
+      iex(1)> 1
+      1
+      iex(2)> + 2
+      2
 
   ## The BREAK menu
 
@@ -222,7 +223,7 @@ defmodule IEx do
   First of all, we can only connect to a shell if we give names
   both to the current shell and the shell we want to connect to.
 
-  Let's give it a try. First start a new shell:
+  Let's give it a try. First, start a new shell:
 
       $ iex --sname foo
       iex(foo@HOST)1>
@@ -311,7 +312,7 @@ defmodule IEx do
   results in:
 
       $ iex
-      Erlang/OTP 21 [...]
+      Erlang/OTP 22 [...]
 
       hello world
       Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
@@ -335,7 +336,7 @@ defmodule IEx do
   Now run the shell:
 
       $ iex
-      Erlang/OTP 21 [...]
+      Erlang/OTP 22 [...]
 
       Interactive Elixir - press Ctrl+C to exit (type h() ENTER for help)
       iex(1)> [1, 2, 3, 4, 5]
@@ -356,6 +357,7 @@ defmodule IEx do
     * `:continuation_prompt`
     * `:alive_prompt`
     * `:alive_continuation_prompt`
+    * `:parser`
 
   They are discussed individually in the sections below.
 
@@ -452,6 +454,18 @@ defmodule IEx do
     * `%prefix`  - a prefix given by `IEx.Server`
     * `%node`    - the name of the local node
 
+  ## Parser
+
+  This is an option determining the parser to use for IEx.
+
+  The parser is a "mfargs", which is a tuple with three elements:
+  the module name, the function name, and extra arguments to
+  be appended. The parser receives at least three arguments, the
+  current input as a string, the parsing options as a keyword list,
+  and the buffer as a string. It must return `{:ok, expr, buffer}`
+  or `{:incomplete, buffer}`.
+
+  If the parser raises, the buffer is reset to an empty string.
   """
   @spec configure(keyword()) :: :ok
   def configure(options) do

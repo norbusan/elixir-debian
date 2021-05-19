@@ -270,7 +270,7 @@ defmodule Macro do
   def pipe(expr, {:fn, _, _}, _integer) do
     raise ArgumentError,
           "cannot pipe #{to_string(expr)} into an anonymous function without" <>
-            " calling the function; use something like (fn ... end).() or" <>
+            " calling the function; use Kernel.then/2 instead or" <>
             " define the anonymous function as a regular private function"
   end
 
@@ -341,7 +341,7 @@ defmodule Macro do
   variables using `Macro.var/2`.
 
   Note the arguments are not unique. If you later on want
-  to access this same varibles, you can invoke this function
+  to access the same variables, you can invoke this function
   with the same inputs. Use `generate_unique_arguments/2` to
   generate a unique arguments that can't be overridden.
 
@@ -391,8 +391,8 @@ defmodule Macro do
   by the atoms `var` and `context`.
 
   Note this variable is not unique. If you later on want
-  to access this same varible, you can invoke `var/2`
-  again with the same argument. Use `unique_var/2` to
+  to access this same variable, you can invoke `var/2`
+  again with the same arguments. Use `unique_var/2` to
   generate a unique variable that can't be overridden.
 
   ## Examples
@@ -478,10 +478,14 @@ defmodule Macro do
   end
 
   defp do_traverse_args(args, acc, pre, post) when is_list(args) do
-    Enum.map_reduce(args, acc, fn x, acc ->
-      {x, acc} = pre.(x, acc)
-      do_traverse(x, acc, pre, post)
-    end)
+    :lists.mapfoldl(
+      fn x, acc ->
+        {x, acc} = pre.(x, acc)
+        do_traverse(x, acc, pre, post)
+      end,
+      acc,
+      args
+    )
   end
 
   @doc """
@@ -541,9 +545,14 @@ defmodule Macro do
       iex> Macro.decompose_call(quote(do: 42))
       :error
 
+      iex> Macro.decompose_call(quote(do: {:foo, [], []}))
+      :error
+
   """
   @spec decompose_call(t()) :: {atom, [t()]} | {t(), atom, [t()]} | :error
   def decompose_call(ast)
+
+  def decompose_call({:{}, _, args}) when is_list(args), do: :error
 
   def decompose_call({{:., _, [remote, function]}, _, args})
       when is_tuple(remote) or is_atom(remote),
@@ -631,13 +640,15 @@ defmodule Macro do
   expanding structs defined under the module being compiled.
 
   It will raise `CompileError` if the struct is not available.
+  From Elixir v1.12, calling this function also adds an export
+  dependency on the given struct.
   """
   @doc since: "1.8.0"
   @spec struct!(module, Macro.Env.t()) :: %{__struct__: module} when module: module()
   def struct!(module, env) when is_atom(module) do
     if module == env.module do
-      Module.get_attribute(module, :struct)
-    end || :elixir_map.load_struct([line: env.line], module, [], env)
+      Module.get_attribute(module, :__struct__)
+    end || :elixir_map.load_struct([line: env.line], module, [], [], env)
   end
 
   @doc """
@@ -714,8 +725,8 @@ defmodule Macro do
   and return a version with it unescaped.
   """
   @spec unescape_string(String.t()) :: String.t()
-  def unescape_string(chars) do
-    :elixir_interpolation.unescape_chars(chars)
+  def unescape_string(string) do
+    :elixir_interpolation.unescape_string(string)
   end
 
   @doc ~S"""
@@ -730,8 +741,9 @@ defmodule Macro do
   representing the code point of the character it wants to unescape.
   Here is the default mapping function implemented by Elixir:
 
-      def unescape_map(unicode), do: true
-      def unescape_map(hex), do: true
+      def unescape_map(:newline), do: true
+      def unescape_map(:unicode), do: true
+      def unescape_map(:hex), do: true
       def unescape_map(?0), do: ?0
       def unescape_map(?a), do: ?\a
       def unescape_map(?b), do: ?\b
@@ -748,9 +760,9 @@ defmodule Macro do
   If the `unescape_map/1` function returns `false`, the char is
   not escaped and the backslash is kept in the string.
 
-  Hexadecimals and Unicode code points will be escaped if the map
-  function returns `true` for `?x`. Unicode code points if the map
-  function returns `true` for `?u`.
+  Newlines, Unicode, and hexadecimals code points will be escaped if
+  the map returns `true` respectively for `:newline`, `:unicode`, and
+  `:hex`.
 
   ## Examples
 
@@ -760,25 +772,23 @@ defmodule Macro do
 
   """
   @spec unescape_string(String.t(), (non_neg_integer -> non_neg_integer | false)) :: String.t()
-  def unescape_string(chars, map) do
-    :elixir_interpolation.unescape_chars(chars, map)
+  def unescape_string(string, map) do
+    :elixir_interpolation.unescape_string(string, map)
   end
 
   @doc false
   @deprecated "Traverse over the arguments using Enum.map/2 instead"
   def unescape_tokens(tokens) do
-    case :elixir_interpolation.unescape_tokens(tokens) do
-      {:ok, unescaped_tokens} -> unescaped_tokens
-      {:error, reason} -> raise ArgumentError, to_string(reason)
+    for token <- tokens do
+      if is_binary(token), do: unescape_string(token), else: token
     end
   end
 
   @doc false
   @deprecated "Traverse over the arguments using Enum.map/2 instead"
   def unescape_tokens(tokens, map) do
-    case :elixir_interpolation.unescape_tokens(tokens, map) do
-      {:ok, unescaped_tokens} -> unescaped_tokens
-      {:error, reason} -> raise ArgumentError, to_string(reason)
+    for token <- tokens do
+      if is_binary(token), do: unescape_string(token, map), else: token
     end
   end
 
@@ -959,7 +969,7 @@ defmodule Macro do
 
   def to_string({target, _, args} = ast, fun) when is_list(args) do
     with :error <- unary_call(ast, fun),
-         :error <- binary_call(ast, fun),
+         :error <- op_call(ast, fun),
          :error <- sigil_call(ast, fun) do
       {list, last} = split_last(args)
 
@@ -1077,8 +1087,6 @@ defmodule Macro do
           "\#{" <> to_string(arg, fun) <> "}"
 
         binary when is_binary(binary) ->
-          binary = inspect_no_limit(binary)
-          binary = binary_part(binary, 1, byte_size(binary) - 2)
           escape_sigil(binary, left)
       end)
 
@@ -1133,7 +1141,14 @@ defmodule Macro do
     :error
   end
 
-  defp binary_call({op, _, [left, right]} = ast, fun) when is_atom(op) do
+  defp op_call({:"..//", _, [left, middle, right]} = ast, fun) do
+    left = op_to_string(left, fun, :.., :left)
+    middle = op_to_string(middle, fun, :.., :right)
+    right = op_to_string(right, fun, :"//", :right)
+    {:ok, fun.(ast, left <> ".." <> middle <> "//" <> right)}
+  end
+
+  defp op_call({op, _, [left, right]} = ast, fun) when is_atom(op) do
     case Identifier.binary_op(op) do
       {_, _} ->
         left = op_to_string(left, fun, op, :left)
@@ -1146,7 +1161,7 @@ defmodule Macro do
     end
   end
 
-  defp binary_call(_, _) do
+  defp op_call(_, _) do
     :error
   end
 
@@ -1664,7 +1679,8 @@ defmodule Macro do
   end
 
   defp do_underscore(<<h, t, rest::binary>>, _)
-       when h >= ?A and h <= ?Z and not (t >= ?A and t <= ?Z) and t != ?. and t != ?_ do
+       when h >= ?A and h <= ?Z and not (t >= ?A and t <= ?Z) and not (t >= ?0 and t <= ?9) and
+              t != ?. and t != ?_ do
     <<?_, to_lower_char(h), t>> <> do_underscore(rest, t)
   end
 
@@ -1718,6 +1734,9 @@ defmodule Macro do
 
   defp do_camelize(<<?_, h, t::binary>>) when h >= ?a and h <= ?z,
     do: <<to_upper_char(h)>> <> do_camelize(t)
+
+  defp do_camelize(<<p, ?_, h, t::binary>>) when p >= ?0 and p <= ?9 and h >= ?0 and h <= ?9,
+    do: <<p, ?_, h>> <> do_camelize(t)
 
   defp do_camelize(<<?_, h, t::binary>>) when h >= ?0 and h <= ?9, do: <<h>> <> do_camelize(t)
   defp do_camelize(<<?_>>), do: <<>>

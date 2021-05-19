@@ -27,10 +27,7 @@ defmodule Task.Supervisor do
   @typedoc "Option values used by `start_link`"
   @type option ::
           DynamicSupervisor.option()
-          # :permanent | :transient | :temporary here because :supervisor.restart() is not exported
-          | {:restart, :permanent | :transient | :temporary}
-          # :brutal_kill | timeout() here because :supervisor.shutdown() is not exported
-          | {:shutdown, :brutal_kill | timeout()}
+          | DynamicSupervisor.init_option()
 
   @doc false
   def child_spec(opts) when is_list(opts) do
@@ -72,7 +69,7 @@ defmodule Task.Supervisor do
       described under the `Name Registration` section in the `GenServer` module
       docs;
 
-    * `:max_restarts`, `:max_seconds` and `:max_children` - as specified in
+    * `:max_restarts`, `:max_seconds`, and `:max_children` - as specified in
       `DynamicSupervisor`;
 
   This function could also receive `:restart` and `:shutdown` as options
@@ -382,10 +379,14 @@ defmodule Task.Supervisor do
   @doc """
   Starts a task as a child of the given `supervisor`.
 
+      Task.Supervisor.start_child(MyTaskSupervisor, fn ->
+        IO.puts "I am running in a task"
+      end)
+
   Note that the spawned process is not linked to the caller, but
   only to the supervisor. This command is useful in case the
-  task needs to perform side-effects (like I/O) and does not need
-  to report back to the caller.
+  task needs to perform side-effects (like I/O) and you have no
+  interest on its results nor if it completes successfully.
 
   ## Options
 

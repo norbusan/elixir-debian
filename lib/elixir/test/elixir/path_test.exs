@@ -50,6 +50,16 @@ defmodule PathTest do
       assert Path.absname("\\\\host\\path") == "//host/path"
       assert Path.absname("\\/host\\path") == "//host/path"
       assert Path.absname("/\\host\\path") == "//host/path"
+
+      assert Path.absname("c:/") == "c:/"
+      assert Path.absname("c:/host/path") == "c:/host/path"
+
+      cwd = File.cwd!()
+      assert Path.absname(cwd |> String.split("/") |> hd()) == cwd
+
+      <<letter, _::binary>> = cwd
+      random = Enum.random(Enum.to_list(?c..?z) -- [letter])
+      assert Path.absname(<<random, ?:>>) == <<random, ?:, ?/>>
     end
 
     test "relative/1" do
@@ -193,7 +203,9 @@ defmodule PathTest do
     assert Path.relative_to("/usr/local/foo", "/usr/local") == "foo"
     assert Path.relative_to("/usr/local/foo", "/") == "usr/local/foo"
     assert Path.relative_to("/usr/local/foo", "/etc") == "/usr/local/foo"
-    assert Path.relative_to("/usr/local/foo", "/usr/local/foo") == "/usr/local/foo"
+    assert Path.relative_to("/usr/local/foo", "/usr/local/foo") == "."
+    assert Path.relative_to("/usr/local/foo/", "/usr/local/foo") == "."
+    assert Path.relative_to("/usr/local/foo", "/usr/local/foo/") == "."
 
     assert Path.relative_to("usr/local/foo", "usr/local") == "foo"
     assert Path.relative_to("usr/local/foo", "etc") == "usr/local/foo"
