@@ -21,6 +21,12 @@ defmodule KernelTest do
     end
   end
 
+  test "op ambiguity" do
+    max = 1
+    assert max == 1
+    assert max(1, 2) == 2
+  end
+
   describe "=/2" do
     test "can be reassigned" do
       var = 1
@@ -208,6 +214,7 @@ defmodule KernelTest do
 
     user = struct(User, name: "meg")
     assert user == %User{name: "meg"}
+    assert struct(user, %{name: "meg"}) == user
 
     assert struct(user, unknown: "key") == user
     assert struct(user, %{name: "john"}) == %User{name: "john"}
@@ -417,6 +424,14 @@ defmodule KernelTest do
     assert exception_or_map?(%RuntimeError{}, RuntimeError) == true
   end
 
+  test "then/2" do
+    assert 1 |> then(fn x -> x * 2 end) == 2
+
+    assert_raise BadArityError, fn ->
+      1 |> then(fn x, y -> x * y end)
+    end
+  end
+
   test "if/2 boolean optimization does not leak variables during expansion" do
     if false do
       :ok
@@ -474,6 +489,10 @@ defmodule KernelTest do
     def fun_in(x) when x in @at_range, do: :at_range
     def fun_in(x) when x in [9 | [10, 11]], do: :list_cons
     def fun_in(x) when x in [12 | @at_list2], do: :list_cons_at
+    def fun_in(x) when x in 21..15//1, do: raise("oops positive")
+    def fun_in(x) when x in 15..21//-1, do: raise("oops negative")
+    def fun_in(x) when x in 15..21//2, do: :range_step_2
+    def fun_in(x) when x in 15..21//1, do: :range_step_1
     def fun_in(_), do: :none
 
     test "in function guard" do
@@ -491,6 +510,10 @@ defmodule KernelTest do
       assert fun_in(12) == :list_cons_at
       assert fun_in(13) == :list_cons_at
       assert fun_in(14) == :list_cons_at
+      assert fun_in(15) == :range_step_2
+      assert fun_in(16) == :range_step_1
+      assert fun_in(17) == :range_step_2
+      assert fun_in(22) == :none
 
       assert fun_in(0.0) == :none
       assert fun_in(1.0) == :none
@@ -505,12 +528,15 @@ defmodule KernelTest do
       assert fun_in(12.0) == :none
       assert fun_in(13.0) == :none
       assert fun_in(14.0) == :none
+      assert fun_in(15.0) == :none
+      assert fun_in(16.0) == :none
+      assert fun_in(17.0) == :none
     end
 
     def dynamic_in(x, y, z) when x in y..z, do: true
     def dynamic_in(_x, _y, _z), do: false
 
-    test "in dynamic function guard" do
+    test "in dynamic range function guard" do
       assert dynamic_in(1, 1, 3)
       assert dynamic_in(2, 1, 3)
       assert dynamic_in(3, 1, 3)
@@ -527,6 +553,33 @@ defmodule KernelTest do
       refute dynamic_in(2, 1.0, 3)
       refute dynamic_in(2, 1, 3.0)
       refute dynamic_in(2.0, 1, 3)
+    end
+
+    def dynamic_step_in(x, y, z, w) when x in y..z//w, do: true
+    def dynamic_step_in(_x, _y, _z, _w), do: false
+
+    test "in dynamic range with step function guard" do
+      assert dynamic_step_in(1, 1, 3, 1)
+      assert dynamic_step_in(2, 1, 3, 1)
+      assert dynamic_step_in(3, 1, 3, 1)
+
+      refute dynamic_step_in(1, 1, 3, -1)
+      refute dynamic_step_in(2, 1, 3, -1)
+      refute dynamic_step_in(3, 1, 3, -1)
+
+      assert dynamic_step_in(1, 3, 1, -1)
+      assert dynamic_step_in(2, 3, 1, -1)
+      assert dynamic_step_in(3, 3, 1, -1)
+
+      refute dynamic_step_in(1, 3, 1, 1)
+      refute dynamic_step_in(2, 3, 1, 1)
+      refute dynamic_step_in(3, 3, 1, 1)
+
+      assert dynamic_step_in(1, 1, 3, 2)
+      refute dynamic_step_in(2, 1, 3, 2)
+      assert dynamic_step_in(3, 1, 3, 2)
+      assert dynamic_step_in(3, 1, 4, 2)
+      refute dynamic_step_in(4, 1, 4, 2)
     end
 
     defmacrop case_in(x, y) do
@@ -706,13 +759,13 @@ defmodule KernelTest do
 
       result = expand_to_string(quote(do: rand() in [1 | some_call()]))
       assert result =~ "var = rand()"
-      assert result =~ "{arg0} = {some_call()}"
-      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :lists.member(var, arg0))"
+      assert result =~ "{arg1} = {some_call()}"
+      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, 1), :lists.member(var, arg1))"
 
       result = expand_to_string(quote(do: rand() in [{1}, {2}, {3} | some_call()]))
       assert result =~ "var = rand()"
-      assert result =~ "{arg0, arg1, arg2, arg3} = {{1}, {2}, {3}, some_call()}"
-      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, arg2), :lists.member(var, arg3)))"
+      assert result =~ "{arg1, arg2, arg3, arg4} = {{1}, {2}, {3}, some_call()}"
+      assert result =~ ":erlang.orelse(:erlang.\"=:=\"(var, arg3), :lists.member(var, arg4)))"
     end
 
     defp quote_case_in(left, right) do
@@ -731,7 +784,7 @@ defmodule KernelTest do
                """
 
       assert expand_to_string(quote(do: foo in [foo])) =~
-               ~r/{arg0} = {foo}\n\s+:erlang."=:="\(foo, arg0\)\n/
+               ~r/{arg1} = {foo}\n\s+:erlang."=:="\(foo, arg1\)\n/
 
       assert expand_to_string(quote(do: foo in 0..1)) ==
                ":erlang.andalso(:erlang.is_integer(foo), :erlang.andalso(:erlang.>=(foo, 0), :erlang.\"=<\"(foo, 1)))"
@@ -1277,13 +1330,20 @@ defmodule KernelTest do
     end
   end
 
+  test "tap/1" do
+    import ExUnit.CaptureIO
+
+    assert capture_io(fn ->
+             tap("foo", &IO.puts/1)
+           end) == "foo\n"
+
+    assert 1 = tap(1, fn x -> x + 1 end)
+  end
+
   test "tl/1" do
     assert tl([:one]) == []
     assert tl([1, 2, 3]) == [2, 3]
-
-    assert_raise ArgumentError, "argument error", fn ->
-      tl(empty_list())
-    end
+    assert_raise ArgumentError, fn -> tl(empty_list()) end
 
     assert tl([:a | :b]) == :b
     assert tl([:a, :b | :c]) == [:b | :c]
@@ -1291,11 +1351,7 @@ defmodule KernelTest do
 
   test "hd/1" do
     assert hd([1, 2, 3, 4]) == 1
-
-    assert_raise ArgumentError, "argument error", fn ->
-      hd(empty_list())
-    end
-
+    assert_raise ArgumentError, fn -> hd(empty_list()) end
     assert hd([1 | 2]) == 1
   end
 
@@ -1345,6 +1401,10 @@ defmodule KernelTest do
 
     assert_raise ArgumentError, ~r"reason: :invalid_format", fn ->
       Code.eval_string(~s{~U[2015-01-13 13:00]})
+    end
+
+    assert_raise ArgumentError, ~r"reason: :invalid_format", fn ->
+      Code.eval_string(~s{~U[20150113 130007Z]})
     end
 
     assert_raise ArgumentError, ~r"reason: :missing_offset", fn ->

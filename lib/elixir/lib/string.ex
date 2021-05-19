@@ -69,7 +69,7 @@ defmodule String do
   ## Code points and grapheme cluster
 
   The functions in this module act according to the Unicode
-  Standard, version 12.1.0.
+  Standard, version 13.0.0.
 
   As per the standard, a code point is a single Unicode Character,
   which may be represented by one or more bytes.
@@ -133,7 +133,7 @@ defmodule String do
     * `Kernel.bit_size/1` and `Kernel.byte_size/1` - size related functions
     * `Kernel.is_bitstring/1` and `Kernel.is_binary/1` - type-check function
     * Plus a number of functions for working with binaries (bytes)
-      in the [`:binary` module](http://www.erlang.org/doc/man/binary.html)
+      in the [`:binary` module](`:binary`)
 
   There are many situations where using the `String` module can
   be avoided in favor of binary functions or pattern matching.
@@ -286,7 +286,7 @@ defmodule String do
   @typedoc "Pattern used in functions like `replace/4` and `split/3`"
   @type pattern :: t | [t] | :binary.cp()
 
-  @conditional_mappings [:greek]
+  @conditional_mappings [:greek, :turkic]
 
   @doc """
   Checks if a string contains only printable characters up to `character_limit`.
@@ -470,11 +470,11 @@ defmodule String do
   @spec split(t, pattern | Regex.t(), keyword) :: [t]
   def split(string, pattern, options \\ [])
 
-  def split(string, %Regex{} = pattern, options) when is_binary(string) do
+  def split(string, %Regex{} = pattern, options) when is_binary(string) and is_list(options) do
     Regex.split(pattern, string, options)
   end
 
-  def split(string, "", options) when is_binary(string) do
+  def split(string, "", options) when is_binary(string) and is_list(options) do
     parts = Keyword.get(options, :parts, :infinity)
     index = parts_to_index(parts)
     trim = Keyword.get(options, :trim, false)
@@ -486,7 +486,7 @@ defmodule String do
     end
   end
 
-  def split(string, pattern, options) when is_binary(string) do
+  def split(string, pattern, options) when is_binary(string) and is_list(options) do
     parts = Keyword.get(options, :parts, :infinity)
     trim = Keyword.get(options, :trim, false)
 
@@ -559,7 +559,7 @@ defmodule String do
   @spec splitter(t, pattern, keyword) :: Enumerable.t()
   def splitter(string, pattern, options \\ [])
 
-  def splitter(string, "", options) do
+  def splitter(string, "", options) when is_binary(string) and is_list(options) do
     if Keyword.get(options, :trim, false) do
       Stream.unfold(string, &next_grapheme/1)
     else
@@ -567,7 +567,7 @@ defmodule String do
     end
   end
 
-  def splitter(string, pattern, options) do
+  def splitter(string, pattern, options) when is_binary(string) and is_list(options) do
     pattern = maybe_compile_pattern(pattern)
     trim = Keyword.get(options, :trim, false)
     Stream.unfold(string, &do_splitter(&1, pattern, trim))
@@ -626,11 +626,13 @@ defmodule String do
   @spec split_at(t, integer) :: {t, t}
   def split_at(string, position)
 
-  def split_at(string, position) when is_integer(position) and position >= 0 do
+  def split_at(string, position)
+      when is_binary(string) and is_integer(position) and position >= 0 do
     do_split_at(string, position)
   end
 
-  def split_at(string, position) when is_integer(position) and position < 0 do
+  def split_at(string, position)
+      when is_binary(string) and is_integer(position) and position < 0 do
     position = length(string) + position
 
     case position >= 0 do
@@ -645,7 +647,7 @@ defmodule String do
   end
 
   @doc ~S"""
-  Returns `true` if `string1` is canonically equivalent to 'string2'.
+  Returns `true` if `string1` is canonically equivalent to `string2`.
 
   It performs Normalization Form Canonical Decomposition (NFD) on the
   strings before comparing them. This function is equivalent to:
@@ -672,7 +674,7 @@ defmodule String do
 
   """
   @spec equivalent?(t, t) :: boolean
-  def equivalent?(string1, string2) do
+  def equivalent?(string1, string2) when is_binary(string1) and is_binary(string2) do
     normalize(string1, :nfd) == normalize(string2, :nfd)
   end
 
@@ -728,28 +730,28 @@ defmodule String do
   """
   def normalize(string, form)
 
-  def normalize(string, :nfd) do
+  def normalize(string, :nfd) when is_binary(string) do
     case :unicode.characters_to_nfd_binary(string) do
       string when is_binary(string) -> string
       {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfd)
     end
   end
 
-  def normalize(string, :nfc) do
+  def normalize(string, :nfc) when is_binary(string) do
     case :unicode.characters_to_nfc_binary(string) do
       string when is_binary(string) -> string
       {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfc)
     end
   end
 
-  def normalize(string, :nfkd) do
+  def normalize(string, :nfkd) when is_binary(string) do
     case :unicode.characters_to_nfkd_binary(string) do
       string when is_binary(string) -> string
       {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfkd)
     end
   end
 
-  def normalize(string, :nfkc) do
+  def normalize(string, :nfkc) when is_binary(string) do
     case :unicode.characters_to_nfkc_binary(string) do
       string when is_binary(string) -> string
       {:error, good, <<head, rest::binary>>} -> good <> <<head>> <> normalize(rest, :nfkc)
@@ -759,10 +761,10 @@ defmodule String do
   @doc """
   Converts all characters in the given string to uppercase according to `mode`.
 
-  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  `mode` may be `:default`, `:ascii`, `:greek` or `:turkic`. The `:default` mode considers
   all non-conditional transformations outlined in the Unicode standard. `:ascii`
   uppercases only the letters a to z. `:greek` includes the context sensitive
-  mappings found in Greek.
+  mappings found in Greek. `:turkic` properly handles the letter i with the dotless variant.
 
   ## Examples
 
@@ -782,8 +784,16 @@ defmodule String do
       iex> String.upcase("olá", :ascii)
       "OLá"
 
+  And `:turkic` properly handles the letter i with the dotless variant:
+
+      iex> String.upcase("ıi")
+      "II"
+
+      iex> String.upcase("ıi", :turkic)
+      "Iİ"
+
   """
-  @spec upcase(t, :default | :ascii | :greek) :: t
+  @spec upcase(t, :default | :ascii | :greek | :turkic) :: t
   def upcase(string, mode \\ :default)
 
   def upcase("", _mode) do
@@ -798,7 +808,7 @@ defmodule String do
     IO.iodata_to_binary(upcase_ascii(string))
   end
 
-  def upcase(string, mode) when mode in @conditional_mappings do
+  def upcase(string, mode) when is_binary(string) and mode in @conditional_mappings do
     String.Casing.upcase(string, [], mode)
   end
 
@@ -811,10 +821,10 @@ defmodule String do
   @doc """
   Converts all characters in the given string to lowercase according to `mode`.
 
-  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  `mode` may be `:default`, `:ascii`, `:greek` or `:turkic`. The `:default` mode considers
   all non-conditional transformations outlined in the Unicode standard. `:ascii`
   lowercases only the letters A to Z. `:greek` includes the context sensitive
-  mappings found in Greek.
+  mappings found in Greek. `:turkic` properly handles the letter i with the dotless variant.
 
   ## Examples
 
@@ -834,7 +844,7 @@ defmodule String do
       iex> String.downcase("OLÁ", :ascii)
       "olÁ"
 
-  And `:greek` properly handles the context sensitive sigma in Greek:
+  The `:greek` mode properly handles the context sensitive sigma in Greek:
 
       iex> String.downcase("ΣΣ")
       "σσ"
@@ -842,8 +852,16 @@ defmodule String do
       iex> String.downcase("ΣΣ", :greek)
       "σς"
 
+  And `:turkic` properly handles the letter i with the dotless variant:
+
+      iex> String.downcase("Iİ")
+      "ii̇"
+
+      iex> String.downcase("Iİ", :turkic)
+      "ıi"
+
   """
-  @spec downcase(t, :default | :ascii | :greek) :: t
+  @spec downcase(t, :default | :ascii | :greek | :turkic) :: t
   def downcase(string, mode \\ :default)
 
   def downcase("", _mode) do
@@ -858,7 +876,7 @@ defmodule String do
     IO.iodata_to_binary(downcase_ascii(string))
   end
 
-  def downcase(string, mode) when mode in @conditional_mappings do
+  def downcase(string, mode) when is_binary(string) and mode in @conditional_mappings do
     String.Casing.downcase(string, [], mode)
   end
 
@@ -872,10 +890,10 @@ defmodule String do
   Converts the first character in the given string to
   uppercase and the remainder to lowercase according to `mode`.
 
-  `mode` may be `:default`, `:ascii` or `:greek`. The `:default` mode considers
+  `mode` may be `:default`, `:ascii`, `:greek` or `:turkic`. The `:default` mode considers
   all non-conditional transformations outlined in the Unicode standard. `:ascii`
-  lowercases only the letters A to Z. `:greek` includes the context sensitive
-  mappings found in Greek.
+  capitalizes only the letters A to Z. `:greek` includes the context sensitive
+  mappings found in Greek. `:turkic` properly handles the letter i with the dotless variant.
 
   ## Examples
 
@@ -889,7 +907,7 @@ defmodule String do
       "Olá"
 
   """
-  @spec capitalize(t, :default | :ascii | :greek) :: t
+  @spec capitalize(t, :default | :ascii | :greek | :turkic) :: t
   def capitalize(string, mode \\ :default)
 
   def capitalize(<<char, rest::binary>>, :ascii) do
@@ -1163,7 +1181,8 @@ defmodule String do
 
   """
   @spec trim_leading(t, t) :: t
-  def trim_leading(string, to_trim) do
+  def trim_leading(string, to_trim)
+      when is_binary(string) and is_binary(to_trim) do
     replace_leading(string, to_trim, "")
   end
 
@@ -1193,7 +1212,8 @@ defmodule String do
 
   """
   @spec trim_trailing(t, t) :: t
-  def trim_trailing(string, to_trim) do
+  def trim_trailing(string, to_trim)
+      when is_binary(string) and is_binary(to_trim) do
     replace_trailing(string, to_trim, "")
   end
 
@@ -1208,7 +1228,7 @@ defmodule String do
 
   """
   @spec trim(t) :: t
-  def trim(string) do
+  def trim(string) when is_binary(string) do
     string
     |> trim_leading()
     |> trim_trailing()
@@ -1225,7 +1245,7 @@ defmodule String do
 
   """
   @spec trim(t, t) :: t
-  def trim(string, to_trim) do
+  def trim(string, to_trim) when is_binary(string) and is_binary(to_trim) do
     string
     |> trim_leading(to_trim)
     |> trim_trailing(to_trim)
@@ -1562,7 +1582,7 @@ defmodule String do
   one single grapheme.
   """
   @spec reverse(t) :: t
-  def reverse(string) do
+  def reverse(string) when is_binary(string) do
     do_reverse(next_grapheme(string), [])
   end
 
@@ -1575,7 +1595,7 @@ defmodule String do
   @compile {:inline, duplicate: 2}
 
   @doc """
-  Returns a string `subject` duplicated `n` times.
+  Returns a string `subject` repeated `n` times.
 
   Inlined by the compiler.
 
@@ -1592,7 +1612,7 @@ defmodule String do
 
   """
   @spec duplicate(t, non_neg_integer) :: t
-  def duplicate(subject, n) do
+  def duplicate(subject, n) when is_binary(subject) and is_integer(n) and n >= 0 do
     :binary.copy(subject, n)
   end
 
@@ -1692,11 +1712,12 @@ defmodule String do
 
   """
   @spec valid?(t) :: boolean
-  def valid?(string)
-
-  def valid?(<<_::utf8, t::binary>>), do: valid?(t)
-  def valid?(<<>>), do: true
+  def valid?(<<string::binary>>), do: valid_utf8?(string)
   def valid?(_), do: false
+
+  defp valid_utf8?(<<_::utf8, rest::bits>>), do: valid_utf8?(rest)
+  defp valid_utf8?(<<>>), do: true
+  defp valid_utf8?(_), do: false
 
   @doc false
   @deprecated "Use String.valid?/1 instead"
@@ -1741,7 +1762,7 @@ defmodule String do
 
   def chunk("", _), do: []
 
-  def chunk(string, trait) when trait in [:valid, :printable] do
+  def chunk(string, trait) when is_binary(string) and trait in [:valid, :printable] do
     {cp, _} = next_codepoint(string)
     pred_fn = make_chunk_pred(trait)
     do_chunk(string, pred_fn.(cp), pred_fn)
@@ -1809,7 +1830,7 @@ defmodule String do
 
   """
   @spec next_grapheme(t) :: {grapheme, t} | nil
-  def next_grapheme(binary) do
+  def next_grapheme(binary) when is_binary(binary) do
     case next_grapheme_size(binary) do
       {size, rest} -> {binary_part(binary, 0, size), rest}
       nil -> nil
@@ -1852,7 +1873,7 @@ defmodule String do
 
   """
   @spec first(t) :: grapheme | nil
-  def first(string) do
+  def first(string) when is_binary(string) do
     case next_grapheme(string) do
       {char, _} -> char
       nil -> nil
@@ -1873,7 +1894,7 @@ defmodule String do
 
   """
   @spec last(t) :: grapheme | nil
-  def last(string) do
+  def last(string) when is_binary(string) do
     do_last(next_grapheme(string), nil)
   end
 
@@ -1922,11 +1943,11 @@ defmodule String do
   """
   @spec at(t, integer) :: grapheme | nil
 
-  def at(string, position) when is_integer(position) and position >= 0 do
+  def at(string, position) when is_binary(string) and is_integer(position) and position >= 0 do
     do_at(string, position)
   end
 
-  def at(string, position) when is_integer(position) and position < 0 do
+  def at(string, position) when is_binary(string) and is_integer(position) and position < 0 do
     position = length(string) + position
 
     case position >= 0 do
@@ -1984,7 +2005,9 @@ defmodule String do
     ""
   end
 
-  def slice(string, start, length) when start >= 0 and length >= 0 do
+  def slice(string, start, length)
+      when is_binary(string) and is_integer(start) and is_integer(length) and start >= 0 and
+             length >= 0 do
     case String.Unicode.split_at(string, start) do
       {_, nil} ->
         ""
@@ -1995,7 +2018,9 @@ defmodule String do
     end
   end
 
-  def slice(string, start, length) when start < 0 and length >= 0 do
+  def slice(string, start, length)
+      when is_binary(string) and is_integer(start) and is_integer(length) and start < 0 and
+             length >= 0 do
     start = length(string) + start
 
     case start >= 0 do
@@ -2027,19 +2052,24 @@ defmodule String do
       iex> String.slice("elixir", 1..10)
       "lixir"
 
-      iex> String.slice("elixir", 10..3)
-      ""
-
       iex> String.slice("elixir", -4..-1)
-      "ixir"
-
-      iex> String.slice("elixir", 2..-1)
       "ixir"
 
       iex> String.slice("elixir", -4..6)
       "ixir"
 
-      iex> String.slice("elixir", -1..-4)
+  For ranges where `start > stop`, you need to explicit
+  mark them as increasing:
+
+      iex> String.slice("elixir", 2..-1//1)
+      "ixir"
+
+      iex> String.slice("elixir", 1..-2//1)
+      "lixi"
+
+  If values are out of bounds, it returns an empty string:
+
+      iex> String.slice("elixir", 10..3)
       ""
 
       iex> String.slice("elixir", -10..-7)
@@ -2053,22 +2083,31 @@ defmodule String do
 
   """
   @spec slice(t, Range.t()) :: t
-
-  def slice(string, range)
-
-  def slice("", _.._), do: ""
-
-  def slice(string, first..-1) when first >= 0 do
-    case String.Unicode.split_at(string, first) do
-      {_, nil} ->
-        ""
-
-      {start_bytes, _} ->
-        binary_part(string, start_bytes, byte_size(string) - start_bytes)
+  def slice(string, first..last//step = range) when is_binary(string) do
+    # TODO: Deprecate negative steps on Elixir v1.16
+    # TODO: There are two features we can add to slicing ranges:
+    # 1. We can allow the step to be any positive number
+    # 2. We can allow slice and reverse at the same time. However, we can't
+    #    implement so right now. First we will have to raise if a decreasing
+    #    range is given on Elixir v2.0.
+    if step == 1 or (step == -1 and first > last) do
+      slice_range(string, first, last)
+    else
+      raise ArgumentError,
+            "String.slice/2 does not accept ranges with custom steps, got: #{inspect(range)}"
     end
   end
 
-  def slice(string, first..last) when first >= 0 and last >= 0 do
+  defp slice_range("", _, _), do: ""
+
+  defp slice_range(string, first, -1) when first >= 0 do
+    case String.Unicode.split_at(string, first) do
+      {_, nil} -> ""
+      {start_bytes, _} -> binary_part(string, start_bytes, byte_size(string) - start_bytes)
+    end
+  end
+
+  defp slice_range(string, first, last) when first >= 0 and last >= 0 do
     if last >= first do
       slice(string, first, last - first + 1)
     else
@@ -2076,9 +2115,8 @@ defmodule String do
     end
   end
 
-  def slice(string, first..last) do
-    {bytes, length} = do_acc_bytes(next_grapheme_size(string), [], 0)
-
+  defp slice_range(string, first, last) do
+    {bytes, length} = acc_bytes(next_grapheme_size(string), [], 0)
     first = add_if_negative(first, length)
     last = add_if_negative(last, length)
 
@@ -2088,21 +2126,25 @@ defmodule String do
       last = min(last + 1, length)
       bytes = Enum.drop(bytes, length - last)
       first = last - first
-      {length_bytes, start_bytes} = Enum.split(bytes, first)
-      binary_part(string, Enum.sum(start_bytes), Enum.sum(length_bytes))
+      {length_bytes, start_bytes} = split_bytes(bytes, 0, first)
+      binary_part(string, start_bytes, length_bytes)
     end
+  end
+
+  defp acc_bytes({size, rest}, bytes, length) do
+    acc_bytes(next_grapheme_size(rest), [size | bytes], length + 1)
+  end
+
+  defp acc_bytes(nil, bytes, length) do
+    {bytes, length}
   end
 
   defp add_if_negative(value, to_add) when value < 0, do: value + to_add
   defp add_if_negative(value, _to_add), do: value
 
-  defp do_acc_bytes({size, rest}, bytes, length) do
-    do_acc_bytes(next_grapheme_size(rest), [size | bytes], length + 1)
-  end
-
-  defp do_acc_bytes(nil, bytes, length) do
-    {bytes, length}
-  end
+  defp split_bytes(rest, acc, 0), do: {acc, Enum.sum(rest)}
+  defp split_bytes([], acc, _), do: {acc, 0}
+  defp split_bytes([head | tail], acc, count), do: split_bytes(tail, head + acc, count - 1)
 
   @doc """
   Returns `true` if `string` starts with any of the prefixes given.
@@ -2214,7 +2256,7 @@ defmodule String do
 
   """
   @spec match?(t, Regex.t()) :: boolean
-  def match?(string, regex) do
+  def match?(string, regex) when is_binary(string) do
     Regex.match?(regex, string)
   end
 
@@ -2281,7 +2323,7 @@ defmodule String do
   strings.
 
   In case you need to work with bytes, take a look at the
-  [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+  [`:binary` module](`:binary`).
 
   ## Examples
 
@@ -2325,7 +2367,7 @@ defmodule String do
 
   """
   @spec to_atom(String.t()) :: atom
-  def to_atom(string) do
+  def to_atom(string) when is_binary(string) do
     :erlang.binary_to_atom(string, :utf8)
   end
 
@@ -2342,12 +2384,9 @@ defmodule String do
       iex> String.to_existing_atom("my_atom")
       :my_atom
 
-      iex> String.to_existing_atom("this_atom_will_never_exist")
-      ** (ArgumentError) argument error
-
   """
   @spec to_existing_atom(String.t()) :: atom
-  def to_existing_atom(string) do
+  def to_existing_atom(string) when is_binary(string) do
     :erlang.binary_to_existing_atom(string, :utf8)
   end
 
@@ -2373,7 +2412,7 @@ defmodule String do
 
   """
   @spec to_integer(String.t()) :: integer
-  def to_integer(string) do
+  def to_integer(string) when is_binary(string) do
     :erlang.binary_to_integer(string)
   end
 
@@ -2389,7 +2428,7 @@ defmodule String do
 
   """
   @spec to_integer(String.t(), 2..36) :: integer
-  def to_integer(string, base) do
+  def to_integer(string, base) when is_binary(string) and is_integer(base) do
     :erlang.binary_to_integer(string, base)
   end
 
@@ -2415,7 +2454,7 @@ defmodule String do
 
   """
   @spec to_float(String.t()) :: float
-  def to_float(string) do
+  def to_float(string) when is_binary(string) do
     :erlang.binary_to_float(string)
   end
 
@@ -2452,7 +2491,7 @@ defmodule String do
   def bag_distance(_string, ""), do: 0.0
   def bag_distance("", _string), do: 0.0
 
-  def bag_distance(string1, string2) do
+  def bag_distance(string1, string2) when is_binary(string1) and is_binary(string2) do
     {bag1, length1} = string_to_bag(string1, %{}, 0)
     {bag2, length2} = string_to_bag(string2, %{}, 0)
 
@@ -2518,7 +2557,7 @@ defmodule String do
   def jaro_distance(_string, ""), do: 0.0
   def jaro_distance("", _string), do: 0.0
 
-  def jaro_distance(string1, string2) do
+  def jaro_distance(string1, string2) when is_binary(string1) and is_binary(string2) do
     {chars1, len1} = chars_and_length(string1)
     {chars2, len2} = chars_and_length(string2)
 
@@ -2605,7 +2644,7 @@ defmodule String do
   """
   @doc since: "1.3.0"
   @spec myers_difference(t, t) :: [{:eq | :ins | :del, t}]
-  def myers_difference(string1, string2) do
+  def myers_difference(string1, string2) when is_binary(string1) and is_binary(string2) do
     graphemes(string1)
     |> List.myers_difference(graphemes(string2))
     |> Enum.map(fn {kind, chars} -> {kind, IO.iodata_to_binary(chars)} end)

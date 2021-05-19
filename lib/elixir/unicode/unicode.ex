@@ -1,17 +1,20 @@
 # How to update the Unicode files
 #
-# 1. Update PropList.txt by copying original as is
-# 2. Update SpecialCasing.txt by copying original and removing conditional mappings
-# 3. Update GraphemeBreakProperty.txt by copying original as is
-# 4. Copy Extended_Pictographic from emoji-data at the end of GraphemeBreakProperty.txt
-# 5. Update GraphemeBreakTest.txt by copying original as is
-# 6. Update String.Unicode.version/0 and on String module docs
-# 7. make unicode
-# 8. elixir lib/elixir/unicode/graphemes_test.exs
+# Unicode files can be found in https://www.unicode.org/Public/
+#
+# 1. Replace UnicodeData.txt by copying original
+# 2. Replace PropList.txt by copying original
+# 3. Replace SpecialCasing.txt by copying original and removing conditional mappings
+# 4. Replace GraphemeBreakTest.txt by copying original auxiliary/GraphemeBreakTest.txt
+# 5. Replace GraphemeBreakProperty.txt by copying original auxiliary/GraphemeBreakProperty.txt
+# 6. Append Extended_Pictographic from emoji/emoji-data.txt to the end of GraphemeBreakProperty.txt
+# 7. Update String.Unicode.version/0 and on String module docs
+# 8. make unicode
+# 9. elixir lib/elixir/unicode/graphemes_test.exs
 
 defmodule String.Unicode do
   @moduledoc false
-  def version, do: {12, 1, 0}
+  def version, do: {13, 0, 0}
 
   cluster_path = Path.join(__DIR__, "GraphemeBreakProperty.txt")
   regex = ~r/(?:^([0-9A-F]+)(?:\.\.([0-9A-F]+))?)\s+;\s(\w+)/m
@@ -19,7 +22,7 @@ defmodule String.Unicode do
   cluster =
     cluster_path
     |> File.read!()
-    |> String.split("\n", trim: true)
+    |> String.split(["\r\n", "\n"], trim: true)
     |> Enum.reduce(%{}, fn line, acc ->
       case Regex.run(regex, line, capture: :all_but_first) do
         ["D800", "DFFF", _class] ->
@@ -304,15 +307,17 @@ defmodule String.Unicode do
     nil
   end
 
-  def codepoints(binary) when is_binary(binary) do
-    do_codepoints(next_codepoint(binary))
+  def codepoints(string) when is_binary(string) do
+    do_codepoints(string)
   end
 
-  defp do_codepoints({c, rest}) do
-    [c | do_codepoints(next_codepoint(rest))]
+  defp do_codepoints(<<codepoint::utf8, rest::bits>>) do
+    [<<codepoint::utf8>> | do_codepoints(rest)]
   end
 
-  defp do_codepoints(nil) do
-    []
+  defp do_codepoints(<<byte, rest::bits>>) do
+    [<<byte>> | do_codepoints(rest)]
   end
+
+  defp do_codepoints(<<>>), do: []
 end

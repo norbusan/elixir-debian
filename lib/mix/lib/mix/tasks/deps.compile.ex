@@ -197,11 +197,29 @@ defmodule Mix.Tasks.Deps.Compile do
     config_path = Path.join(dep_path, "mix.rebar.config")
     lib_path = Path.join(config[:env_path], "lib/*/ebin")
 
-    env = [{"REBAR_CONFIG", config_path}, {"TERM", "dumb"}]
-    cmd = "#{rebar_cmd(dep)} bare compile --paths=#{inspect(lib_path)}"
+    env = [
+      {"REBAR_CONFIG", config_path},
+      {"TERM", "dumb"}
+    ]
+
+    cmd = "#{rebar_cmd(dep)} bare compile --paths #{lib_path}"
 
     File.mkdir_p!(dep_path)
     File.write!(config_path, rebar_config(dep))
+
+    # We need to copy/symlink include/priv in case it is
+    # needed for compiling the dependency itself. Later on
+    # we will build the whole structure and also symlink/copy
+    # ebin.
+    #
+    # Note both configurations are necessary when using the
+    # bare compiler with compiler output dir, otherwise includes
+    # and priv files can't be found. For example, without those
+    # options, we were unable to compile certifi, which uses
+    # both parse transforms and reads from priv at compilation.
+    Mix.Utils.symlink_or_copy(Path.join(opts[:dest], "include"), Path.join(dep_path, "include"))
+    Mix.Utils.symlink_or_copy(Path.join(opts[:dest], "priv"), Path.join(dep_path, "priv"))
+
     do_command(dep, config, cmd, false, env)
   end
 

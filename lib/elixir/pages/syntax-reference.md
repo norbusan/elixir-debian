@@ -21,7 +21,7 @@ Integers (`1234`) and floats (`123.4`) in Elixir are represented as a sequence o
 
 ### Atoms
 
-Unquoted atoms start with a colon (`:`) which must be immediately followed by an underscore or a Unicode letter. The atom may continue using a sequence of Unicode letters, numbers, underscores, and `@`. Atoms may end in `!` or `?`. See [Unicode Syntax](unicode-syntax.md) for a formal specification. Valid unquoted atoms are: `:ok`, `:ISO8601`, and `:integer?`.
+Unquoted atoms start with a colon (`:`) which must be immediately followed by a Unicode letter or an underscore. The atom may continue using a sequence of Unicode letters, numbers, underscores, and `@`. Atoms may end in `!` or `?`. See [Unicode syntax](unicode-syntax.md) for a formal specification. Valid unquoted atoms are: `:ok`, `:ISO8601`, and `:integer?`.
 
 If the colon is immediately followed by a pair of double- or single-quotes surrounding the atom name, the atom is considered quoted. In contrast with an unquoted atom, this one can be made of any Unicode character (not only letters), such as `:'🌢 Elixir'`, `:"++olá++"`, and `:"123"`.
 
@@ -84,13 +84,13 @@ Structs built on the map syntax by passing the struct name between `%` and `{`. 
 
 ### Variables
 
-Variables in Elixir must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode letters, numbers, and underscores. Variables may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.md) for a formal specification.
+Variables in Elixir must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The variable may continue using a sequence of Unicode letters, numbers, and underscores. Variables may end in `?` or `!`. See [Unicode syntax](unicode-syntax.md) for a formal specification.
 
 [Elixir's naming conventions](naming-conventions.md) recommend variables to be in `snake_case` format.
 
 ### Non-qualified calls (local calls)
 
-Non-qualified calls, such as `add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscore. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.md) for a formal specification.
+Non-qualified calls, such as `add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscore. Calls may end in `?` or `!`. See [Unicode syntax](unicode-syntax.md) for a formal specification.
 
 Parentheses for non-qualified calls are optional, except for zero-arity calls, which would then be ambiguous with variables. If parentheses are used, they must immediately follow the function name *without spaces*. For example, `add (1, 2)` is a syntax error, since `(1, 2)` is treated as an invalid block which is attempted to be given as a single argument to `add`.
 
@@ -102,7 +102,7 @@ As many programming languages, Elixir also support operators as non-qualified ca
 
 ### Qualified calls (remote calls)
 
-Qualified calls, such as `Math.add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscores. Calls may end in `?` or `!`. See [Unicode Syntax](unicode-syntax.md) for a formal specification.
+Qualified calls, such as `Math.add(1, 2)`, must start with an underscore or a Unicode letter that is not in uppercase or titlecase. The call may continue using a sequence of Unicode letters, numbers, and underscores. Calls may end in `?` or `!`. See [Unicode syntax](unicode-syntax.md) for a formal specification.
 
 [Elixir's naming conventions](naming-conventions.md) recommend calls to be in `snake_case` format.
 
@@ -425,7 +425,15 @@ end
 
 The above is treated the same as `sum(1, 2, 3)` by the parser.
 
-The same applies to qualified calls such as `Foo.bar(1, 2, 3)`, which is the same as `Foo.bar 1, 2, 3`. However, remember parentheses are not optional for non-qualified calls with no arguments, such as `sum()`. Removing the parentheses for `sum` causes it to be represented as the variable `sum`, which means they would be no longer equivalent.
+The same applies to qualified calls such as `Foo.bar(1, 2, 3)`, which is equivalent to `Foo.bar 1, 2, 3`. There are, however, some situations where parentheses are required:
+
+  * when calling anonymous functions, such as `f.(1, 2)`;
+
+  * for non-qualified calls with no arguments, such as `sum()`. Removing the parentheses for `sum` causes it to be represented as the variable `sum`;
+
+  * for dynamic qualified calls with no arguments. `data.key` means accessing a field named `key` in the map given by `data`. `mod.fun()`, with parens, means calling a function named `fun` in the module `mod`;
+
+In practice, developers prefer to add parentheses to most of their calls. They are skipped mainly in Elixir's control-flow constructs, such as `defmodule`, `if`, `case`, etc, and in certain DSLs.
 
 ### Keywords
 

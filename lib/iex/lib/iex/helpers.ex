@@ -71,11 +71,13 @@ defmodule IEx.Helpers do
   Recompiles the current Mix application.
 
   This helper only works when IEx is started with a Mix
-  project, for example, `iex -S mix`. The application is
-  not restarted after compilation, which means any long
-  running process may crash as any changed module will be
-  temporarily removed and recompiled, without going through
-  the proper code changes callback.
+  project, for example, `iex -S mix`. Note this function
+  simply recompiles Elixir modules, without reloading
+  configuration and without restarting applications.
+
+  Therefore, any long running process may crash on recompilation,
+  as changed modules will be temporarily removed and recompiled,
+  without going through the proper code change callback.
 
   If you want to reload a single module, consider using
   `r(ModuleName)` instead.
@@ -497,16 +499,21 @@ defmodule IEx.Helpers do
     |> Enum.map_join(", ", &inspect/1)
   end
 
-  @runtime_info_topics [:system, :memory, :allocators, :limits, :applications]
+  @runtime_info_topics [:system, :memory, :limits, :applications]
   @doc """
   Prints VM/runtime information such as versions, memory usage and statistics.
+
   Additional topics are available via `runtime_info/1`.
+
+  For more metrics, info, and debugging facilities, see the
+  [Recon](https://github.com/ferd/recon) project.
   """
   @doc since: "1.5.0"
   def runtime_info(), do: runtime_info([:system, :memory, :limits])
 
   @doc """
   Just like `runtime_info/0`, except accepts topic or a list of topics.
+
   For example, topic `:applications` will list the applications loaded.
   """
   @doc since: "1.5.0"
@@ -560,31 +567,6 @@ defmodule IEx.Helpers do
     print_memory("Processes", :processes)
   end
 
-  defp print_runtime_info_topic(:allocators) do
-    print_pane("Allocators")
-
-    areas = :erlang.system_info(:allocated_areas)
-
-    print_allocator(areas, "Atom Space", :atom_space)
-    print_allocator(areas, "Atom Table", :atom_table)
-    print_allocator(areas, "BIF Timer", :bif_timer)
-    print_allocator(areas, "Bits Bufs Size", :bits_bufs_size)
-    print_allocator(areas, "Dist Table", :dist_table)
-    print_allocator(areas, "ETS Misc", :ets_misc)
-    print_allocator(areas, "Export List", :export_list)
-    print_allocator(areas, "Export Table", :export_table)
-    print_allocator(areas, "Function Table", :fun_table)
-    print_allocator(areas, "Loaded Code", :loaded_code)
-    print_allocator(areas, "Module Refs", :module_refs)
-    print_allocator(areas, "Module Table", :module_table)
-    print_allocator(areas, "Node Table", :node_table)
-    print_allocator(areas, "Port Table", :port_table)
-    print_allocator(areas, "Process Table", :process_table)
-    print_allocator(areas, "Register Table", :register_table)
-    print_allocator(areas, "Static", :static)
-    print_allocator(areas, "System Misc", :sys_misc)
-  end
-
   defp print_runtime_info_topic(:limits) do
     print_pane("Statistics / limits")
     print_uptime()
@@ -634,25 +616,12 @@ defmodule IEx.Helpers do
     IO.puts("#{pad_key(key)}#{min} / #{max} (#{percentage}% used)")
   end
 
-  defp get_stat(:ets_count), do: length(:ets.all())
+  defp get_stat(:ets_count), do: :erlang.system_info(:ets_count)
   defp get_stat(other), do: :erlang.system_info(other)
 
   defp print_memory(key, memory) do
     value = :erlang.memory(memory)
     IO.puts("#{pad_key(key)}#{format_bytes(value)}")
-  end
-
-  defp print_allocator(allocated_areas, key, probe) do
-    case List.keyfind(allocated_areas, probe, 0) do
-      {_, allocated, used} ->
-        IO.puts("#{pad_key(key)}#{format_bytes(allocated)} (#{format_bytes(used)} used)")
-
-      {_, allocated} ->
-        IO.puts("#{pad_key(key)}#{format_bytes(allocated)}")
-
-      _ ->
-        IO.puts("#{pad_key(key)}N/A")
-    end
   end
 
   defp format_bytes(bytes) when is_integer(bytes) do

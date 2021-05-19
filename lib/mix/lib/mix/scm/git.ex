@@ -270,14 +270,17 @@ defmodule Mix.SCM.Git do
       {response, 0} ->
         response
 
-      {response, _} ->
+      {response, _} when is_binary(response) ->
         Mix.raise("Command \"git #{Enum.join(args, " ")}\" failed with reason: #{response}")
+
+      {_, _} ->
+        Mix.raise("Command \"git #{Enum.join(args, " ")}\" failed")
     end
   end
 
   defp default_into() do
     case Mix.shell() do
-      Mix.Shell.IO -> IO.stream(:stdio, :line)
+      Mix.Shell.IO -> IO.stream()
       _ -> ""
     end
   end
@@ -332,7 +335,7 @@ defmodule Mix.SCM.Git do
 
   # Attempt to set the current working directory by default.
   # This addresses an issue changing the working directory when executing from
-  # within a slave node since file I/O is done through the master node.
+  # within a secondary node since file I/O is done through the main node.
   defp cmd_opts(opts) do
     case File.cwd() do
       {:ok, cwd} -> Keyword.put(opts, :cd, cwd)

@@ -2,7 +2,8 @@ PREFIX ?= /usr/local
 TEST_FILES ?= "*_test.exs"
 SHARE_PREFIX ?= $(PREFIX)/share
 MAN_PREFIX ?= $(SHARE_PREFIX)/man
-CANONICAL := v1.11/
+CANONICAL := 1.12/
+CANONICAL ?= master/
 ELIXIRC := bin/elixirc --ignore-module-conflict $(ELIXIRC_OPTS)
 ERLC := erlc -I lib/elixir/include
 ERL_MAKE := if [ -n "$(ERLC_OPTS)" ]; then ERL_COMPILER_OPTIONS=$(ERLC_OPTS) erl -make; else erl -make; fi
@@ -27,9 +28,9 @@ SOURCE_DATE_EPOCH_FILE = $(SOURCE_DATE_EPOCH_PATH)/SOURCE_DATE_EPOCH
 #==> Functions
 
 define CHECK_ERLANG_RELEASE
-	erl -noshell -eval '{V,_} = string:to_integer(erlang:system_info(otp_release)), io:fwrite("~s", [is_integer(V) and (V >= 21)])' -s erlang halt | grep -q '^true'; \
+	erl -noshell -eval '{V,_} = string:to_integer(erlang:system_info(otp_release)), io:fwrite("~s", [is_integer(V) and (V >= 22)])' -s erlang halt | grep -q '^true'; \
 		if [ $$? != 0 ]; then \
-		  echo "At least Erlang/OTP 21.0 is required to build Elixir"; \
+		  echo "At least Erlang/OTP 22.0 is required to build Elixir"; \
 		  exit 1; \
 		fi
 endef
@@ -82,7 +83,7 @@ $(PARSER): lib/elixir/src/elixir_parser.yrl
 
 # Since Mix depends on EEx and EEx depends on Mix,
 # we first compile EEx without the .app file,
-# then Mix and then compile EEx fully
+# then Mix, and then compile EEx fully
 elixir: stdlib lib/eex/ebin/Elixir.EEx.beam mix ex_unit logger eex iex
 
 stdlib: $(KERNEL) VERSION
@@ -179,7 +180,7 @@ clean_residual_files:
 LOGO_PATH = $(shell test -f ../docs/logo.png && echo "--logo ../docs/logo.png")
 SOURCE_REF = $(shell tag="$(call GIT_TAG)" revision="$(call GIT_REVISION)"; echo "$${tag:-$$revision}")
 DOCS_FORMAT = html
-COMPILE_DOCS = bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" --main "$(3)" --source-url "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) --output doc/$(2) --canonical "https://hexdocs.pm/$(2)/$(CANONICAL)" --homepage-url "https://elixir-lang.org/docs.html" --formatter "$(DOCS_FORMAT)" $(4)
+COMPILE_DOCS = CANONICAL=$(CANONICAL) bin/elixir ../ex_doc/bin/ex_doc "$(1)" "$(VERSION)" "lib/$(2)/ebin" --main "$(3)" --source-url "https://github.com/elixir-lang/elixir" --source-ref "$(call SOURCE_REF)" $(call LOGO_PATH) --output doc/$(2) --canonical "https://hexdocs.pm/$(2)/$(CANONICAL)" --homepage-url "https://elixir-lang.org/docs.html" --formatter "$(DOCS_FORMAT)" $(4)
 
 docs: compile ../ex_doc/bin/ex_doc docs_elixir docs_eex docs_mix docs_iex docs_ex_unit docs_logger
 
@@ -191,27 +192,27 @@ docs_elixir: compile ../ex_doc/bin/ex_doc
 docs_eex: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (eex)"
 	$(Q) rm -rf doc/eex
-	$(call COMPILE_DOCS,EEx,eex,EEx)
+	$(call COMPILE_DOCS,EEx,eex,EEx,--config "lib/mix/docs.exs")
 
 docs_mix: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (mix)"
 	$(Q) rm -rf doc/mix
-	$(call COMPILE_DOCS,Mix,mix,Mix)
+	$(call COMPILE_DOCS,Mix,mix,Mix,--config "lib/mix/docs.exs")
 
 docs_iex: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (iex)"
 	$(Q) rm -rf doc/iex
-	$(call COMPILE_DOCS,IEx,iex,IEx)
+	$(call COMPILE_DOCS,IEx,iex,IEx,--config "lib/mix/docs.exs")
 
 docs_ex_unit: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (ex_unit)"
 	$(Q) rm -rf doc/ex_unit
-	$(call COMPILE_DOCS,ExUnit,ex_unit,ExUnit)
+	$(call COMPILE_DOCS,ExUnit,ex_unit,ExUnit,--config "lib/mix/docs.exs")
 
 docs_logger: compile ../ex_doc/bin/ex_doc
 	@ echo "==> ex_doc (logger)"
 	$(Q) rm -rf doc/logger
-	$(call COMPILE_DOCS,Logger,logger,Logger)
+	$(call COMPILE_DOCS,Logger,logger,Logger,--config "lib/mix/docs.exs")
 
 ../ex_doc/bin/ex_doc:
 	@ echo "ex_doc is not found in ../ex_doc as expected. See README for more information."

@@ -252,8 +252,8 @@ defmodule Exception do
 
   defp rewrite_arg(arg) do
     Macro.prewalk(arg, fn
-      {:%{}, meta, [__struct__: Range, first: first, last: last]} ->
-        {:.., meta, [first, last]}
+      {:%{}, meta, [__struct__: Range, first: first, last: last, step: step]} ->
+        {:"..//", meta, [first, last, step]}
 
       other ->
         other
@@ -709,7 +709,7 @@ defmodule ArgumentError do
 
   @impl true
   def blame(
-        %{message: "argument error"} = exception,
+        exception,
         [{:erlang, :apply, [module, function, args], _} | _] = stacktrace
       ) do
     message =
@@ -783,12 +783,7 @@ defmodule ArithmeticError do
 end
 
 defmodule SystemLimitError do
-  defexception []
-
-  @impl true
-  def message(_) do
-    "a system limit has been reached"
-  end
+  defexception message: "a system limit has been reached"
 end
 
 defmodule SyntaxError do
@@ -992,11 +987,23 @@ defmodule UndefinedFunctionError do
 
   @doc false
   def hint_for_loaded_module(module, function, arity, exports) do
-    if macro_exported?(module, function, arity) do
-      ". However there is a macro with the same name and arity. " <>
-        "Be sure to require #{inspect(module)} if you intend to invoke this macro"
-    else
-      IO.iodata_to_binary(did_you_mean(module, function, exports))
+    cond do
+      macro_exported?(module, function, arity) ->
+        ". However there is a macro with the same name and arity. " <>
+          "Be sure to require #{inspect(module)} if you intend to invoke this macro"
+
+      message = otp_obsolete(module, function, arity) ->
+        ", #{message}"
+
+      true ->
+        IO.iodata_to_binary(did_you_mean(module, function, exports))
+    end
+  end
+
+  defp otp_obsolete(module, function, arity) do
+    case :otp_internal.obsolete(module, function, arity) do
+      {:removed, [_ | _] = string} -> string
+      _ -> nil
     end
   end
 
@@ -1248,6 +1255,10 @@ defmodule KeyError do
   end
 
   @impl true
+  def blame(exception = %{message: message}, stacktrace) when is_binary(message) do
+    {exception, stacktrace}
+  end
+
   def blame(exception = %{term: nil}, stacktrace) do
     message = message(exception.key, exception.term)
     {%{exception | message: message}, stacktrace}
@@ -1405,16 +1416,32 @@ defmodule ErlangError do
   end
 
   @doc false
-  def normalize(:badarg, _stacktrace) do
-    %ArgumentError{}
+  def normalize(:badarg, stacktrace) do
+    case error_info(:badarg, stacktrace) do
+      {:ok, args} ->
+        message = "errors were found at the given arguments:\n\n#{args}"
+        %ArgumentError{message: message}
+
+      :error ->
+        %ArgumentError{}
+    end
   end
 
   def normalize(:badarith, _stacktrace) do
     %ArithmeticError{}
   end
 
-  def normalize(:system_limit, _stacktrace) do
-    %SystemLimitError{}
+  def normalize(:system_limit, stacktrace) do
+    case error_info(:system_limit, stacktrace) do
+      {:ok, args} ->
+        message =
+          "a system limit has been reached due to errors at the given arguments:\n\n#{args}"
+
+        %SystemLimitError{message: message}
+
+      :error ->
+        %SystemLimitError{}
+    end
   end
 
   def normalize(:cond_clause, _stacktrace) do
@@ -1504,4 +1531,31 @@ defmodule ErlangError do
   defp from_stacktrace(_) do
     {nil, nil, nil}
   end
+
+  @doc false
+  def error_info(erl_exception, stacktrace) do
+    with [{module, _, args_or_arity, opts} | _] <- stacktrace,
+         %{} = error_info <- opts[:error_info] do
+      module = Map.get(error_info, :module, module)
+      function = Map.get(error_info, :function, :format_error)
+      arity = if is_integer(args_or_arity), do: args_or_arity, else: length(args_or_arity)
+      extra = apply(module, function, [erl_exception, stacktrace])
+      args_errors = Map.take(extra, Enum.to_list(1..arity//1))
+
+      if map_size(args_errors) > 0 do
+        {:ok, IO.iodata_to_binary(Enum.map(args_errors, &arg_error/1))}
+      else
+        :error
+      end
+    else
+      _ -> :error
+    end
+  end
+
+  defp arg_error({n, message}), do: "  * #{nth(n)} argument: #{message}\n"
+
+  defp nth(1), do: "1st"
+  defp nth(2), do: "2nd"
+  defp nth(3), do: "3rd"
+  defp nth(n), do: "#{n}th"
 end

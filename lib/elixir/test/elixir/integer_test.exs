@@ -152,7 +152,7 @@ defmodule IntegerTest do
     assert_raise ArgumentError, "invalid base nil", fn -> Integer.parse("2", nil) end
   end
 
-  test "to_string/1" do
+  test "to_string/2" do
     assert Integer.to_string(42) == "42"
     assert Integer.to_string(+42) == "42"
     assert Integer.to_string(-42) == "-42"
@@ -163,9 +163,7 @@ defmodule IntegerTest do
         Integer.to_string(n)
       end
     end
-  end
 
-  test "to_string/2" do
     assert Integer.to_string(42, 2) == "101010"
     assert Integer.to_string(42, 10) == "42"
     assert Integer.to_string(42, 16) == "2A"
@@ -190,7 +188,9 @@ defmodule IntegerTest do
     end
   end
 
-  test "to_charlist/1" do
+  test "to_charlist/2" do
+    module = Integer
+
     assert Integer.to_charlist(42) == '42'
     assert Integer.to_charlist(+42) == '42'
     assert Integer.to_charlist(-42) == '-42'
@@ -201,14 +201,10 @@ defmodule IntegerTest do
         Integer.to_charlist(n)
       end
     end
-  end
 
-  test "to_char_list/1" do
-    module = Integer
     assert module.to_char_list(42) == '42'
-  end
+    assert module.to_char_list(42, 2) == '101010'
 
-  test "to_charlist/2" do
     assert Integer.to_charlist(42, 2) == '101010'
     assert Integer.to_charlist(42, 10) == '42'
     assert Integer.to_charlist(42, 16) == '2A'
@@ -233,11 +229,6 @@ defmodule IntegerTest do
     end
   end
 
-  test "to_char_list/2" do
-    module = Integer
-    assert module.to_char_list(42, 2) == '101010'
-  end
-
   test "gcd/2" do
     assert Integer.gcd(1, 5) == 1
     assert Integer.gcd(2, 3) == 1
@@ -253,5 +244,16 @@ defmodule IntegerTest do
     assert Integer.gcd(3, 0) == 3
     assert Integer.gcd(-3, 0) == 3
     assert Integer.gcd(0, 0) == 0
+  end
+
+  test "extended_gcd" do
+    # Poor's man properby based testing
+    for _ <- 1..100 do
+      left = :rand.uniform(1000)
+      right = :rand.uniform(1000)
+      {gcd, m, n} = Integer.extended_gcd(left, right)
+      assert Integer.gcd(left, right) == gcd
+      assert m * left + n * right == gcd
+    end
   end
 end

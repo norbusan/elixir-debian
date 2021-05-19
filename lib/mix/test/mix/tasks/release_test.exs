@@ -15,7 +15,7 @@ defmodule Mix.Tasks.ReleaseTest do
           File.mkdir_p!("rel/overlays/empty/directory")
           File.write!("rel/overlays/hello", "world")
 
-          for file <- ~w(rel/vm.args.eex rel/env.sh.eex rel/env.bat.eex) do
+          for file <- ~w(rel/vm.args.eex rel/remote.vm.args.eex rel/env.sh.eex rel/env.bat.eex) do
             File.write!(file, """
             #{file} FOR <%= @release.name %>
             """)
@@ -33,6 +33,9 @@ defmodule Mix.Tasks.ReleaseTest do
 
           assert root |> Path.join("releases/0.1.0/vm.args") |> File.read!() ==
                    "rel/vm.args.eex FOR release_test\n"
+
+          assert root |> Path.join("releases/0.1.0/remote.vm.args") |> File.read!() ==
+                   "rel/remote.vm.args.eex FOR release_test\n"
 
           assert root |> Path.join("empty/directory") |> File.dir?()
           assert root |> Path.join("hello") |> File.read!() == "world"
@@ -52,7 +55,8 @@ defmodule Mix.Tasks.ReleaseTest do
           File.mkdir_p!("custom_rel/overlays/empty/directory")
           File.write!("custom_rel/overlays/hello", "world")
 
-          for file <- ~w(custom_rel/vm.args.eex custom_rel/env.sh.eex custom_rel/env.bat.eex) do
+          for file <-
+                ~w(custom_rel/vm.args.eex custom_rel/remote.vm.args.eex custom_rel/env.sh.eex custom_rel/env.bat.eex) do
             File.write!(file, """
             #{file} FOR <%= @release.name %>
             """)
@@ -70,6 +74,9 @@ defmodule Mix.Tasks.ReleaseTest do
 
           assert root |> Path.join("releases/0.1.0/vm.args") |> File.read!() ==
                    "custom_rel/vm.args.eex FOR release_test\n"
+
+          assert root |> Path.join("releases/0.1.0/remote.vm.args") |> File.read!() ==
+                   "custom_rel/remote.vm.args.eex FOR release_test\n"
 
           assert root |> Path.join("empty/directory") |> File.dir?()
           assert root |> Path.join("hello") |> File.read!() == "world"
@@ -208,6 +215,7 @@ defmodule Mix.Tasks.ReleaseTest do
           assert "bin/demo" in files
           assert "releases/0.1.0/sys.config" in files
           assert "releases/0.1.0/vm.args" in files
+          assert "releases/0.1.0/remote.vm.args" in files
           assert "releases/COOKIE" in files
           assert "releases/start_erl.data" in files
           assert "hello" in files
@@ -303,6 +311,7 @@ defmodule Mix.Tasks.ReleaseTest do
         assert root |> Path.join("releases/0.1.0/env.sh") |> File.exists?()
         assert root |> Path.join("releases/0.1.0/env.bat") |> File.exists?()
         assert root |> Path.join("releases/0.1.0/vm.args") |> File.exists?()
+        assert root |> Path.join("releases/0.1.0/remote.vm.args") |> File.exists?()
 
         assert root
                |> Path.join("releases/0.1.0/sys.config")
@@ -327,6 +336,7 @@ defmodule Mix.Tasks.ReleaseTest do
                  protocols_consolidated?: true,
                  release_name: "release_test",
                  release_node: "release_test",
+                 release_prog: "release_test" <> ext,
                  release_root: release_root,
                  release_vsn: "0.1.0",
                  root_dir: root_dir,
@@ -343,12 +353,14 @@ defmodule Mix.Tasks.ReleaseTest do
           assert root_dir =~ ~r"_build/dev/rel/(release_test|RELEAS~1)$"
           assert String.ends_with?(sys_config_env, "releases\\0.1.0\\sys")
           assert String.ends_with?(sys_config_init, "releases\\0.1.0\\sys")
+          assert ext == ".bat"
         else
           assert app_dir == Path.join(root, "lib/release_test-0.1.0")
           assert release_root == root
           assert root_dir == root
           assert sys_config_env == Path.join(root, "releases/0.1.0/sys")
           assert sys_config_init == Path.join(root, "releases/0.1.0/sys")
+          assert ext == ""
         end
       end)
     end)
@@ -409,6 +421,7 @@ defmodule Mix.Tasks.ReleaseTest do
                  release_name: "runtime_config",
                  release_mode: "embedded",
                  release_node: "runtime_config",
+                 release_prog: "runtime_config" <> ext,
                  release_vsn: "0.1.0",
                  runtime_config:
                    {:ok,
@@ -421,9 +434,11 @@ defmodule Mix.Tasks.ReleaseTest do
         if match?({:win32, _}, :os.type()) do
           assert sys_config_env =~ "tmp\\runtime_config-0.1.0"
           assert sys_config_init =~ "tmp\\runtime_config-0.1.0"
+          assert ext == ".bat"
         else
           assert sys_config_env =~ "tmp/runtime_config-0.1.0"
           assert sys_config_init =~ "tmp/runtime_config-0.1.0"
+          assert ext == ""
         end
       end)
     end)
@@ -471,6 +486,7 @@ defmodule Mix.Tasks.ReleaseTest do
         assert root |> Path.join("releases/0.2.0/demo.rel") |> File.exists?()
         assert root |> Path.join("releases/0.2.0/sys.config") |> File.exists?()
         assert root |> Path.join("releases/0.2.0/vm.args") |> File.exists?()
+        assert root |> Path.join("releases/0.2.0/remote.vm.args") |> File.exists?()
 
         # Assert runtime
         open_port(Path.join(root, "bin/demo"), ['start'])
@@ -483,6 +499,7 @@ defmodule Mix.Tasks.ReleaseTest do
                  protocols_consolidated?: true,
                  release_name: "demo",
                  release_node: "demo",
+                 release_prog: "demo" <> ext,
                  release_root: release_root,
                  release_vsn: "0.2.0",
                  root_dir: root_dir,
@@ -493,9 +510,11 @@ defmodule Mix.Tasks.ReleaseTest do
         if match?({:win32, _}, :os.type()) do
           assert String.ends_with?(app_dir, "demo/lib/release_test-0.1.0")
           assert String.ends_with?(release_root, "demo")
+          assert ext == ".bat"
         else
           assert app_dir == Path.join(root, "lib/release_test-0.1.0")
           assert release_root == root
+          assert ext == ""
         end
 
         assert root_dir == :code.root_dir() |> to_string()
@@ -639,6 +658,7 @@ defmodule Mix.Tasks.ReleaseTest do
                  protocols_consolidated?: true,
                  release_name: "eval",
                  release_node: "eval",
+                 release_prog: "eval" <> ext,
                  release_root: release_root,
                  release_vsn: "0.1.0",
                  runtime_config: {:ok, :was_set},
@@ -647,8 +667,10 @@ defmodule Mix.Tasks.ReleaseTest do
 
         if match?({:win32, _}, :os.type()) do
           assert String.ends_with?(release_root, "eval")
+          assert ext == ".bat"
         else
           assert release_root == root
+          assert ext == ""
         end
       end)
     end)

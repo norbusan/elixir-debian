@@ -28,6 +28,8 @@ defmodule Module.Types.Unify do
   #   * subtype? (subtypes only)
   #   * has_unbound_var? (composite only)
   #   * recursive_type? (composite only)
+  #   * collect_vars (composite only)
+  #   * lift_types (composite only)
   #
 
   @doc """
@@ -59,23 +61,11 @@ defmodule Module.Types.Unify do
   end
 
   defp do_unify(type, {:var, var}, stack, context) do
-    case context.types do
-      %{^var => {:var, var_type}} ->
-        do_unify(type, {:var, var_type}, stack, context)
-
-      %{} ->
-        unify_var(var, type, stack, context, _var_source = false)
-    end
+    unify_var(var, type, stack, context, _var_source = false)
   end
 
   defp do_unify({:var, var}, type, stack, context) do
-    case context.types do
-      %{^var => {:var, var_type}} ->
-        do_unify({:var, var_type}, type, stack, context)
-
-      %{} ->
-        unify_var(var, type, stack, context, _var_source = true)
-    end
+    unify_var(var, type, stack, context, _var_source = true)
   end
 
   defp do_unify({:tuple, n, sources}, {:tuple, n, targets}, stack, context) do
@@ -109,14 +99,22 @@ defmodule Module.Types.Unify do
     {:ok, target, context}
   end
 
+  defp do_unify({:union, types}, target, stack, context) do
+    unify_result =
+      map_reduce_ok(types, context, fn type, context ->
+        unify(type, target, stack, context)
+      end)
+
+    case unify_result do
+      {:ok, types, context} -> {:ok, to_union(types, context), context}
+      {:error, context} -> {:error, context}
+    end
+  end
+
   defp do_unify(source, target, stack, context) do
     cond do
-      # This condition exists to handle unions with unbound vars.
-      # TODO: handle unions properly. Note we can easily unify
-      # "union < type" even if union has vars as the vars must be
-      # type
-      (match?({:union, _}, source) and has_unbound_var?(source, context)) or
-          (match?({:union, _}, target) and has_unbound_var?(target, context)) ->
+      # TODO: This condition exists to handle unions with unbound vars.
+      match?({:union, _}, target) and has_unbound_var?(target, context) ->
         {:ok, source, context}
 
       subtype?(source, target, context) ->
@@ -134,7 +132,7 @@ defmodule Module.Types.Unify do
   defp unify_var(var, type, stack, context, var_source?) do
     case context.types do
       %{^var => :unbound} ->
-        context = refine_var(var, type, stack, context)
+        context = refine_var!(var, type, stack, context)
         stack = push_unify_stack(var, stack)
 
         if recursive_type?(type, [], context) do
@@ -145,6 +143,31 @@ defmodule Module.Types.Unify do
           end
         else
           {:ok, {:var, var}, context}
+        end
+
+      %{^var => {:var, new_var} = var_type} ->
+        unify_result =
+          if var_source? do
+            unify(var_type, type, stack, context)
+          else
+            unify(type, var_type, stack, context)
+          end
+
+        case unify_result do
+          {:ok, type, context} ->
+            {:ok, type, context}
+
+          {:error, {type, reason, %{traces: error_traces} = error_context}} ->
+            old_var_traces = Map.get(context.traces, new_var, [])
+            new_var_traces = Map.get(error_traces, new_var, [])
+            add_var_traces = Enum.drop(new_var_traces, -length(old_var_traces))
+
+            error_traces =
+              error_traces
+              |> Map.update(var, add_var_traces, &(add_var_traces ++ &1))
+              |> Map.put(new_var, old_var_traces)
+
+            {:error, {type, reason, %{error_context | traces: error_traces}}}
         end
 
       %{^var => var_type} ->
@@ -170,7 +193,7 @@ defmodule Module.Types.Unify do
             {:ok, {:var, var}, context}
 
           {:ok, res_type, context} ->
-            context = refine_var(var, res_type, stack, context)
+            context = refine_var!(var, res_type, stack, context)
             {:ok, {:var, var}, context}
 
           {:error, reason} ->
@@ -407,9 +430,20 @@ defmodule Module.Types.Unify do
   end
 
   @doc """
+  Restores the variable information from the old context into new context.
+  """
+  def restore_var!(var, new_context, old_context) do
+    %{^var => type} = old_context.types
+    %{^var => trace} = old_context.traces
+    types = Map.put(new_context.types, var, type)
+    traces = Map.put(new_context.traces, var, trace)
+    %{new_context | types: types, traces: traces}
+  end
+
+  @doc """
   Set the type for a variable and add trace.
   """
-  def refine_var(var, type, stack, context) do
+  def refine_var!(var, type, stack, context) do
     types = Map.put(context.types, var, type)
     context = %{context | types: types}
     trace_var(var, type, stack, context)
@@ -474,6 +508,41 @@ defmodule Module.Types.Unify do
   defp recursive_type?(_other, _parents, _context) do
     false
   end
+
+  @doc """
+  Collects all type vars recursively.
+  """
+  def collect_var_indexes(type, context, acc \\ %{})
+
+  def collect_var_indexes({:var, var}, context, acc) do
+    case acc do
+      %{^var => _} ->
+        acc
+
+      %{} ->
+        case context.types do
+          %{^var => :unbound} -> Map.put(acc, var, true)
+          %{^var => type} -> collect_var_indexes(type, context, Map.put(acc, var, true))
+        end
+    end
+  end
+
+  def collect_var_indexes({:tuple, _, args}, context, acc),
+    do: Enum.reduce(args, acc, &collect_var_indexes(&1, context, &2))
+
+  def collect_var_indexes({:union, args}, context, acc),
+    do: Enum.reduce(args, acc, &collect_var_indexes(&1, context, &2))
+
+  def collect_var_indexes({:list, arg}, context, acc),
+    do: collect_var_indexes(arg, context, acc)
+
+  def collect_var_indexes({:map, pairs}, context, acc) do
+    Enum.reduce(pairs, acc, fn {_, key, value}, acc ->
+      collect_var_indexes(value, context, collect_var_indexes(key, context, acc))
+    end)
+  end
+
+  def collect_var_indexes(_type, _context, acc), do: acc
 
   @doc """
   Checks if the type has a type var.
@@ -556,7 +625,7 @@ defmodule Module.Types.Unify do
   def subtype?({:tuple, n, left_types}, {:tuple, n, right_types}, context) do
     left_types
     |> Enum.zip(right_types)
-    |> Enum.any?(fn {left, right} -> subtype?(left, right, context) end)
+    |> Enum.all?(fn {left, right} -> subtype?(left, right, context) end)
   end
 
   def subtype?({:map, left_pairs}, {:map, right_pairs}, context) do
@@ -635,6 +704,90 @@ defmodule Module.Types.Unify do
     []
   end
 
+  ## Type lifting
+
+  @doc """
+  Lifts type variables to their inferred types from the context.
+  """
+  def lift_types(types, context) do
+    context = %{
+      types: context.types,
+      lifted_types: %{},
+      lifted_counter: 0
+    }
+
+    {types, _context} = Enum.map_reduce(types, context, &lift_type/2)
+    types
+  end
+
+  # Lift type variable to its inferred (hopefully concrete) types from the context
+  defp lift_type({:var, var}, context) do
+    case context.lifted_types do
+      %{^var => lifted_var} ->
+        {{:var, lifted_var}, context}
+
+      %{} ->
+        case context.types do
+          %{^var => :unbound} ->
+            new_lifted_var(var, context)
+
+          %{^var => type} ->
+            if recursive_type?(type, [], context) do
+              new_lifted_var(var, context)
+            else
+              # Remove visited types to avoid infinite loops
+              # then restore after we are done recursing on vars
+              types = context.types
+              context = put_in(context.types[var], :unbound)
+              {type, context} = lift_type(type, context)
+              {type, %{context | types: types}}
+            end
+
+          %{} ->
+            new_lifted_var(var, context)
+        end
+    end
+  end
+
+  defp lift_type({:union, types}, context) do
+    {types, context} = Enum.map_reduce(types, context, &lift_type/2)
+    {{:union, types}, context}
+  end
+
+  defp lift_type({:tuple, n, types}, context) do
+    {types, context} = Enum.map_reduce(types, context, &lift_type/2)
+    {{:tuple, n, types}, context}
+  end
+
+  defp lift_type({:map, pairs}, context) do
+    {pairs, context} =
+      Enum.map_reduce(pairs, context, fn {kind, key, value}, context ->
+        {key, context} = lift_type(key, context)
+        {value, context} = lift_type(value, context)
+        {{kind, key, value}, context}
+      end)
+
+    {{:map, pairs}, context}
+  end
+
+  defp lift_type({:list, type}, context) do
+    {type, context} = lift_type(type, context)
+    {{:list, type}, context}
+  end
+
+  defp lift_type(other, context) do
+    {other, context}
+  end
+
+  defp new_lifted_var(original_var, context) do
+    types = Map.put(context.lifted_types, original_var, context.lifted_counter)
+    counter = context.lifted_counter + 1
+
+    type = {:var, context.lifted_counter}
+    context = %{context | lifted_types: types, lifted_counter: counter}
+    {type, context}
+  end
+
   @doc """
   Formats types.
 
@@ -678,7 +831,7 @@ defmodule Module.Types.Unify do
   end
 
   def format_type({:var, index}, _simplify?) do
-    "var#{index}"
+    "var#{index + 1}"
   end
 
   def format_type(atom, _simplify?) when is_atom(atom) do

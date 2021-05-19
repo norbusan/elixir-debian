@@ -595,7 +595,7 @@ defmodule Mix.ReleaseTest do
       assert File.exists?(destination)
 
       assert File.read!(Path.join(destination, "bin/erl")) =~
-               ~s|ROOTDIR="$(dirname "$(dirname "$BINDIR")")"|
+               ~s|ROOTDIR="${ERL_ROOTDIR:-"$(dirname "$(dirname "$BINDIR")")"}|
 
       unless match?({:win32, _}, :os.type()) do
         assert File.lstat!(Path.join(destination, "bin/erl")).mode |> rem(0o1000) == 0o755
@@ -646,6 +646,19 @@ defmodule Mix.ReleaseTest do
       refute copy_ebin(release([]), source, tmp_path("mix_release"))
       File.mkdir_p!(source)
       refute copy_ebin(release([]), source, tmp_path("mix_release"))
+    end
+
+    test "preserves file mode" do
+      source = tmp_path("source_ebin")
+      source_so_path = Path.join(source, "libtest_nif.so")
+
+      File.mkdir_p!(source)
+      File.touch!(source_so_path)
+      File.chmod!(source_so_path, 0o755)
+
+      assert copy_ebin(release([]), source, tmp_path("mix_release"))
+
+      assert mode!(source_so_path) == mode!(tmp_path("mix_release/libtest_nif.so"))
     end
   end
 
@@ -759,6 +772,10 @@ defmodule Mix.ReleaseTest do
 
   defp size!(path) do
     File.stat!(path).size
+  end
+
+  defp mode!(path) do
+    File.stat!(path).mode
   end
 
   defp release(config) do

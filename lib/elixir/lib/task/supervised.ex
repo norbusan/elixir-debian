@@ -177,6 +177,11 @@ defmodule Task.Supervised do
   def stream(enumerable, acc, reducer, mfa, options, spawn) do
     next = &Enumerable.reduce(enumerable, &1, fn x, acc -> {:suspend, [x | acc]} end)
     max_concurrency = Keyword.get(options, :max_concurrency, System.schedulers_online())
+
+    unless is_integer(max_concurrency) and max_concurrency > 0 do
+      raise ArgumentError, ":max_concurrency must be an integer greater than zero"
+    end
+
     ordered? = Keyword.get(options, :ordered, true)
     timeout = Keyword.get(options, :timeout, 5000)
     on_timeout = Keyword.get(options, :on_timeout, :exit)
@@ -312,6 +317,7 @@ defmodule Task.Supervised do
           stream_deliver({:cont, acc}, max + 1, spawned, delivered, waiting, next, config)
         else
           pair = deliver_now(result, acc, next, config)
+          waiting = Map.delete(waiting, position)
           stream_reduce(pair, max + 1, spawned, delivered + 1, waiting, next, config)
         end
 
@@ -392,15 +398,8 @@ defmodule Task.Supervised do
             :erlang.raise(kind, reason, __STACKTRACE__)
         else
           pair ->
-            stream_deliver(
-              pair,
-              max,
-              spawned,
-              delivered + 1,
-              Map.delete(waiting, delivered),
-              next,
-              config
-            )
+            waiting = Map.delete(waiting, delivered)
+            stream_deliver(pair, max, spawned, delivered + 1, waiting, next, config)
         end
 
       %{} ->

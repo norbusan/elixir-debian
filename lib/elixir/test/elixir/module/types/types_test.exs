@@ -20,7 +20,7 @@ defmodule Module.Types.TypesTest do
   def __expr__({patterns, guards, body}) do
     with {:ok, _types, context} <-
            Pattern.of_head(patterns, guards, TypeHelper.new_stack(), TypeHelper.new_context()),
-         {:ok, _type, context} <- Expr.of_expr(body, TypeHelper.new_stack(), context) do
+         {:ok, _type, context} <- Expr.of_expr(body, :dynamic, TypeHelper.new_stack(), context) do
       case context.warnings do
         [warning] -> to_message(:warning, warning)
         _ -> :none
@@ -144,14 +144,14 @@ defmodule Module.Types.TypesTest do
       assert string == """
              incompatible types:
 
-                 {var0} !~ var0
+                 {var1} !~ var1
 
              in expression:
 
                  # types_test.ex:1
                  {var} = var
 
-             where "var" was given the type {var0} in:
+             where "var" was given the type {var1} in:
 
                  # types_test.ex:1
                  {var} = var
@@ -169,7 +169,7 @@ defmodule Module.Types.TypesTest do
              in expression:
 
                  # types_test.ex:1
-                 is_integer(var) and is_binary(var)
+                 is_binary(var)
 
              where "var" was given the type integer() in:
 
@@ -194,7 +194,7 @@ defmodule Module.Types.TypesTest do
              in expression:
 
                  # types_test.ex:1
-                 is_integer(x) and is_binary(y)
+                 is_binary(y)
 
              where "y" was given the same type as "x" in:
 
@@ -224,7 +224,7 @@ defmodule Module.Types.TypesTest do
              in expression:
 
                  # types_test.ex:1
-                 is_integer(x) and is_binary(y) and is_boolean(z)
+                 is_binary(y)
 
              where "y" was given the same type as "x" in:
 
@@ -323,6 +323,46 @@ defmodule Module.Types.TypesTest do
   end
 
   describe "map warnings" do
+    test "handling of non-singleton types in maps" do
+      string =
+        warning(
+          [],
+          (
+            event = %{"type" => "order"}
+            %{"amount" => amount} = event
+            %{"user" => user} = event
+            %{"id" => user_id} = user
+            {:order, user_id, amount}
+          )
+        )
+
+      assert string == """
+             incompatible types:
+
+                 binary() !~ map()
+
+             in expression:
+
+                 # types_test.ex:5
+                 %{"id" => user_id} = user
+
+             where "user" was given the same type as "amount" in:
+
+                 # types_test.ex:4
+                 %{"user" => user} = event
+
+             where "user" was given the type map() in:
+
+                 # types_test.ex:5
+                 %{"id" => user_id} = user
+
+             where "amount" was given the type binary() in:
+
+                 # types_test.ex:3
+                 %{"amount" => amount} = event
+             """
+    end
+
     test "show map() when comparing against non-map" do
       string =
         warning(
@@ -421,7 +461,7 @@ defmodule Module.Types.TypesTest do
              """
     end
 
-    test "non-existant map field warning" do
+    test "non-existent map field warning" do
       string =
         warning(
           (
@@ -445,7 +485,7 @@ defmodule Module.Types.TypesTest do
              """
     end
 
-    test "non-existant struct field warning" do
+    test "non-existent struct field warning" do
       string =
         warning(
           [foo],
@@ -467,6 +507,36 @@ defmodule Module.Types.TypesTest do
 
                  # types_test.ex:3
                  %URI{} = foo
+             """
+    end
+
+    test "expands type variables" do
+      string =
+        warning(
+          [%{foo: key} = event, other_key],
+          [is_integer(key) and is_atom(other_key)],
+          %{foo: ^other_key} = event
+        )
+
+      assert string == """
+             incompatible types:
+
+                 %{foo: integer()} !~ %{foo: atom()}
+
+             in expression:
+
+                 # types_test.ex:3
+                 %{foo: ^other_key} = event
+
+             where "event" was given the type %{foo: integer(), optional(dynamic()) => dynamic()} in:
+
+                 # types_test.ex:1
+                 %{foo: key} = event
+
+             where "event" was given the type %{foo: atom(), optional(dynamic()) => dynamic()} in:
+
+                 # types_test.ex:3
+                 %{foo: ^other_key} = event
              """
     end
   end

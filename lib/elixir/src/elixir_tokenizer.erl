@@ -36,19 +36,17 @@
 -define(unary_op3(T1, T2, T3),
   T1 =:= $~, T2 =:= $~, T3 =:= $~).
 
--define(list_op(T1, T2),
-  T1 =:= $+, T2 =:= $+;
-  T1 =:= $-, T2 =:= $-).
-
 -define(concat_op(T1, T2),
-  T1 =:= $<, T2 =:= $>;
-  T1 =:= $., T2 =:= $.).
+  T1 =:= $+, T2 =:= $+;
+  T1 =:= $-, T2 =:= $-;
+  T1 =:= $., T2 =:= $.;
+  T1 =:= $<, T2 =:= $>).
 
 -define(concat_op3(T1, T2, T3),
   T1 =:= $+, T2 =:= $+, T3 =:= $+;
   T1 =:= $-, T2 =:= $-, T3 =:= $-).
 
--define(three_op(T1, T2, T3),
+-define(xor_op3(T1, T2, T3),
   T1 =:= $^, T2 =:= $^, T3 =:= $^).
 
 -define(mult_op(T),
@@ -86,6 +84,9 @@
 -define(comp_op3(T1, T2, T3),
   T1 =:= $=, T2 =:= $=, T3 =:= $=;
   T1 =:= $!, T2 =:= $=, T3 =:= $=).
+
+-define(ternary_op(T1, T2),
+  T1 =:= $/, T2 =:= $/).
 
 -define(and_op(T1, T2),
   T1 =:= $&, T2 =:= $&).
@@ -279,6 +280,8 @@ tokenize("%:" ++ Rest, Line, Column, Scope, Tokens) when ?is_space(hd(Rest)) ->
   tokenize(Rest, Line, Column + 2, Scope, [{kw_identifier, {Line, Column, nil}, '%'} | Tokens]);
 tokenize("{}:" ++ Rest, Line, Column, Scope, Tokens) when ?is_space(hd(Rest)) ->
   tokenize(Rest, Line, Column + 3, Scope, [{kw_identifier, {Line, Column, nil}, '{}'} | Tokens]);
+tokenize("..//:" ++ Rest, Line, Column, Scope, Tokens) when ?is_space(hd(Rest)) ->
+  tokenize(Rest, Line, Column + 5, Scope, [{kw_identifier, {Line, Column, nil}, '..//'} | Tokens]);
 
 tokenize(":..." ++ Rest, Line, Column, Scope, Tokens) ->
   tokenize(Rest, Line, Column + 4, Scope, [{atom, {Line, Column, nil}, '...'} | Tokens]);
@@ -290,18 +293,20 @@ tokenize(":%" ++ Rest, Line, Column, Scope, Tokens) ->
   tokenize(Rest, Line, Column + 2, Scope, [{atom, {Line, Column, nil}, '%'} | Tokens]);
 tokenize(":{}" ++ Rest, Line, Column, Scope, Tokens) ->
   tokenize(Rest, Line, Column + 3, Scope, [{atom, {Line, Column, nil}, '{}'} | Tokens]);
+tokenize(":..//" ++ Rest, Line, Column, Scope, Tokens) ->
+  tokenize(Rest, Line, Column + 5, Scope, [{atom, {Line, Column, nil}, '..//'} | Tokens]);
 
 % ## Three Token Operators
 tokenize([$:, T1, T2, T3 | Rest], Line, Column, Scope, Tokens) when
     ?unary_op3(T1, T2, T3); ?comp_op3(T1, T2, T3); ?and_op3(T1, T2, T3); ?or_op3(T1, T2, T3);
-    ?arrow_op3(T1, T2, T3); ?three_op(T1, T2, T3); ?concat_op3(T1, T2, T3) ->
+    ?arrow_op3(T1, T2, T3); ?xor_op3(T1, T2, T3); ?concat_op3(T1, T2, T3) ->
   Token = {atom, {Line, Column, nil}, list_to_atom([T1, T2, T3])},
   tokenize(Rest, Line, Column + 4, Scope, [Token | Tokens]);
 
 % ## Two Token Operators
 tokenize([$:, T1, T2 | Rest], Line, Column, Scope, Tokens) when
     ?comp_op2(T1, T2); ?rel_op2(T1, T2); ?and_op(T1, T2); ?or_op(T1, T2);
-    ?arrow_op(T1, T2); ?in_match_op(T1, T2); ?concat_op(T1, T2); ?list_op(T1, T2);
+    ?arrow_op(T1, T2); ?in_match_op(T1, T2); ?concat_op(T1, T2);
     ?stab_op(T1, T2); ?type_op(T1, T2) ->
   Token = {atom, {Line, Column, nil}, list_to_atom([T1, T2])},
   tokenize(Rest, Line, Column + 3, Scope, [Token | Tokens]);
@@ -313,7 +318,7 @@ tokenize([$:, T | Rest], Line, Column, Scope, Tokens) when
   Token = {atom, {Line, Column, nil}, list_to_atom([T])},
   tokenize(Rest, Line, Column + 2, Scope, [Token | Tokens]);
 
-% Stand-alone tokens
+% ## Stand-alone tokens
 
 tokenize("..." ++ Rest, Line, Column, Scope, Tokens) ->
   NewScope = maybe_warn_too_many_of_same_char("...", Rest, Line, Scope),
@@ -322,6 +327,23 @@ tokenize("..." ++ Rest, Line, Column, Scope, Tokens) ->
 
 tokenize("=>" ++ Rest, Line, Column, Scope, Tokens) ->
   Token = {assoc_op, {Line, Column, previous_was_eol(Tokens)}, '=>'},
+  tokenize(Rest, Line, Column + 2, Scope, add_token_with_eol(Token, Tokens));
+
+tokenize("..//" ++ Rest = String, Line, Column, Scope, [{capture_op, _, _} | _] = Tokens) ->
+  case strip_horizontal_space(Rest, 0) of
+    {[$/ | _] = Remaining, Extra} ->
+      Token = {identifier, {Line, Column, nil}, '..//'},
+      tokenize(Remaining, Line, Column + 4 + Extra, Scope, [Token | Tokens]);
+    {_, _} ->
+      unexpected_token(String, Line, Column, Tokens)
+  end;
+
+% ## Ternary operator
+
+tokenize([T1, T2 | Rest], Line, Column, Scope, Tokens)
+    when ?ternary_op(T1, T2), element(1, hd(Tokens)) /= capture_op ->
+  Op = list_to_atom([T1, T2]),
+  Token = {ternary_op, {Line, Column, previous_was_eol(Tokens)}, Op},
   tokenize(Rest, Line, Column + 2, Scope, add_token_with_eol(Token, Tokens));
 
 % ## Three token operators
@@ -339,9 +361,9 @@ tokenize([T1, T2, T3 | Rest], Line, Column, Scope, Tokens) when ?or_op3(T1, T2, 
   NewScope = maybe_warn_too_many_of_same_char([T1, T2, T3], Rest, Line, Scope),
   handle_op(Rest, Line, Column, or_op, 3, list_to_atom([T1, T2, T3]), NewScope, Tokens);
 
-tokenize([T1, T2, T3 | Rest], Line, Column, Scope, Tokens) when ?three_op(T1, T2, T3) ->
+tokenize([T1, T2, T3 | Rest], Line, Column, Scope, Tokens) when ?xor_op3(T1, T2, T3) ->
   NewScope = maybe_warn_too_many_of_same_char([T1, T2, T3], Rest, Line, Scope),
-  handle_op(Rest, Line, Column, three_op, 3, list_to_atom([T1, T2, T3]), NewScope, Tokens);
+  handle_op(Rest, Line, Column, xor_op, 3, list_to_atom([T1, T2, T3]), NewScope, Tokens);
 
 tokenize([T1, T2, T3 | Rest], Line, Column, Scope, Tokens) when ?concat_op3(T1, T2, T3) ->
   NewScope = maybe_warn_too_many_of_same_char([T1, T2, T3], Rest, Line, Scope),
@@ -374,10 +396,6 @@ tokenize([T | Rest], Line, Column, Scope, Tokens) when T =:= $); T =:= $}; T =:=
 % ## Two Token Operators
 tokenize([T1, T2 | Rest], Line, Column, Scope, Tokens) when ?concat_op(T1, T2) ->
   handle_op(Rest, Line, Column, concat_op, 2, list_to_atom([T1, T2]), Scope, Tokens);
-
-tokenize([T1, T2 | Rest], Line, Column, Scope, Tokens) when ?list_op(T1, T2) ->
-  NewScope = maybe_warn_too_many_of_same_char([T1, T2], Rest, Line, Scope),
-  handle_op(Rest, Line, Column, concat_op, 2, list_to_atom([T1, T2]), NewScope, Tokens);
 
 tokenize([T1, T2 | Rest], Line, Column, Scope, Tokens) when ?arrow_op(T1, T2) ->
   handle_op(Rest, Line, Column, arrow_op, 2, list_to_atom([T1, T2]), Scope, Tokens);
@@ -438,7 +456,7 @@ tokenize([$:, H | T] = Original, Line, Column, Scope, Tokens) when ?is_quote(H) 
         true ->
           WarnMsg = io_lib:format(
             "found quoted atom \"~ts\" but the quotes are not required. "
-            "Atoms made exclusively of ASCII letters, numbers, and underscore "
+            "Atoms made exclusively of ASCII letters, numbers, underscores, and optionally ending with ! or ? "
             "do not require quotes",
             [hd(Parts)]
           ),
@@ -448,7 +466,7 @@ tokenize([$:, H | T] = Original, Line, Column, Scope, Tokens) when ?is_quote(H) 
           Scope
       end,
 
-      case unescape_tokens(Parts, NewScope) of
+      case unescape_tokens(Parts, Line, Column, NewScope) of
         {ok, [Part]} when is_binary(Part) ->
           case unsafe_to_atom(Part, Line, Column, Scope) of
             {ok, Atom} ->
@@ -467,8 +485,8 @@ tokenize([$:, H | T] = Original, Line, Column, Scope, Tokens) when ?is_quote(H) 
           Token = {Key, {Line, Column, nil}, Unescaped},
           tokenize(Rest, NewLine, NewColumn, NewScope, [Token | Tokens]);
 
-        {error, Msg} ->
-          {error, {Line, Column, Msg, [$:, H]}, Rest, Tokens}
+        {error, Reason} ->
+          {error, Reason, Rest, Tokens}
       end;
 
     {error, Reason} ->
@@ -493,8 +511,19 @@ tokenize([$: | String] = Original, Line, Column, Scope, Tokens) ->
 
 tokenize([H | T], Line, Column, Scope, Tokens) when ?is_digit(H) ->
   case tokenize_number(T, [H], 1, false) of
-    {error, Reason, Number} ->
-      {error, {Line, Column, Reason, Number}, T, Tokens};
+    {error, Reason, Original} ->
+      {error, {Line, Column, Reason, Original}, T, Tokens};
+    {[I | _], _Number, Original, _Length} when ?is_upcase(I); ?is_downcase(I); I == $_ ->
+      Msg =
+        io_lib:format(
+          "invalid character ~ts after number ~ts. If you intended to write a number, "
+          "make sure to add the proper punctuation character after the number (space, comma, etc). "
+          "If you meant to write an identifier, note that identifiers in Elixir cannot start with numbers. "
+          "Unexpected token: ",
+          [[I], Original]
+        ),
+
+      {error, {Line, Column, Msg, [I]}, T, Tokens};
     {Rest, Number, Original, Length} when is_integer(Number) ->
       Token = {int, {Line, Column, Number}, Original},
       tokenize(Rest, Line, Column + Length, Scope, [Token | Tokens]);
@@ -650,13 +679,13 @@ handle_char(_)  -> false.
 handle_heredocs(T, Line, Column, H, Scope, Tokens) ->
   case extract_heredoc_with_interpolation(Line, Column, Scope, true, T, H) of
     {ok, NewLine, NewColumn, Parts, Rest, NewScope} ->
-      case unescape_tokens(Parts, NewScope) of
+      case unescape_tokens(Parts, Line, Column, NewScope) of
         {ok, Unescaped} ->
           Token = {heredoc_type(H), {Line, Column, nil}, Unescaped},
           tokenize(Rest, NewLine, NewColumn, NewScope, [Token | Tokens]);
 
-        {error, Msg} ->
-          {error, {Line, Column, Msg, [H, H, H]}, Rest, Tokens}
+        {error, Reason} ->
+          {error, Reason, Rest, Tokens}
       end;
 
     {error, Reason} ->
@@ -675,7 +704,7 @@ handle_strings(T, Line, Column, H, Scope, Tokens) ->
             "found quoted keyword \"~ts\" but the quotes are not required. "
             "Note that keywords are always atoms, even when quoted. "
             "Similar to atoms, keywords made exclusively of ASCII "
-            "letters, numbers, and underscore do not require quotes",
+            "letters, numbers, and underscores do not require quotes",
             [hd(Parts)]
           ),
           prepend_warning({Line, Scope#elixir_tokenizer.file, WarnMsg}, Scope);
@@ -684,7 +713,7 @@ handle_strings(T, Line, Column, H, Scope, Tokens) ->
           Scope
       end,
 
-      case unescape_tokens(Parts, NewScope) of
+      case unescape_tokens(Parts, Line, Column, NewScope) of
         {ok, Unescaped} ->
           Key = case Scope#elixir_tokenizer.existing_atoms_only of
             true  -> kw_identifier_safe;
@@ -693,22 +722,20 @@ handle_strings(T, Line, Column, H, Scope, Tokens) ->
           Token = {Key, {Line, Column - 1, nil}, Unescaped},
           tokenize(Rest, NewLine, NewColumn + 1, NewScope, [Token | Tokens]);
 
-        {error, Msg} ->
-          {error, {Line, Column, Msg, [H]}, Rest, Tokens}
+        {error, Reason} ->
+          {error, Reason, Rest, Tokens}
       end;
 
     {NewLine, NewColumn, Parts, Rest} ->
-      case unescape_tokens(Parts, Scope) of
+      case unescape_tokens(Parts, Line, Column, Scope) of
         {ok, Unescaped} ->
           Token = {string_type(H), {Line, Column - 1, nil}, Unescaped},
           tokenize(Rest, NewLine, NewColumn, Scope, [Token | Tokens]);
 
-        {error, Msg} ->
-          {error, {Line, Column, Msg, [H]}, Rest, Tokens}
+        {error, Reason} ->
+          {error, Reason, Rest, Tokens}
       end
   end.
-
-
 
 handle_unary_op([$: | Rest], Line, Column, _Kind, Length, Op, Scope, Tokens) when ?is_space(hd(Rest)) ->
   Token = {kw_identifier, {Line, Column, nil}, Op},
@@ -734,20 +761,31 @@ handle_op(Rest, Line, Column, Kind, Length, Op, Scope, Tokens) ->
       Token = {identifier, {Line, Column, nil}, Op},
       tokenize(Remaining, Line, Column + Length + Extra, Scope, [Token | Tokens]);
     {Remaining, Extra} ->
+      NewScope =
+        %% TODO: Remove this deprecation and fix precedence on Elixir v2.0
+        case Op of
+          '^^^' ->
+            Msg = "^^^ is deprecated. It is typically used as xor but it has the wrong precedence, use Bitwise.bxor/2 instead",
+            prepend_warning({Line, Scope#elixir_tokenizer.file, Msg}, Scope);
+
+          _ ->
+            Scope
+        end,
+
       Token = {Kind, {Line, Column, previous_was_eol(Tokens)}, Op},
-      tokenize(Remaining, Line, Column + Length + Extra, Scope, add_token_with_eol(Token, Tokens))
+      tokenize(Remaining, Line, Column + Length + Extra, NewScope, add_token_with_eol(Token, Tokens))
   end.
 
 % ## Three Token Operators
 handle_dot([$., T1, T2, T3 | Rest], Line, Column, DotInfo, Scope, Tokens) when
     ?unary_op3(T1, T2, T3); ?comp_op3(T1, T2, T3); ?and_op3(T1, T2, T3); ?or_op3(T1, T2, T3);
-    ?arrow_op3(T1, T2, T3); ?three_op(T1, T2, T3); ?concat_op3(T1, T2, T3) ->
+    ?arrow_op3(T1, T2, T3); ?xor_op3(T1, T2, T3); ?concat_op3(T1, T2, T3) ->
   handle_call_identifier(Rest, Line, Column, DotInfo, 3, list_to_atom([T1, T2, T3]), Scope, Tokens);
 
 % ## Two Token Operators
 handle_dot([$., T1, T2 | Rest], Line, Column, DotInfo, Scope, Tokens) when
     ?comp_op2(T1, T2); ?rel_op2(T1, T2); ?and_op(T1, T2); ?or_op(T1, T2);
-    ?arrow_op(T1, T2); ?in_match_op(T1, T2); ?concat_op(T1, T2); ?list_op(T1, T2); ?type_op(T1, T2) ->
+    ?arrow_op(T1, T2); ?in_match_op(T1, T2); ?concat_op(T1, T2); ?type_op(T1, T2) ->
   handle_call_identifier(Rest, Line, Column, DotInfo, 2, list_to_atom([T1, T2]), Scope, Tokens);
 
 % ## Single Token Operators
@@ -768,7 +806,7 @@ handle_dot([$., H | T] = Original, Line, Column, DotInfo, Scope, Tokens) when ?i
         true ->
           WarnMsg = io_lib:format(
             "found quoted call \"~ts\" but the quotes are not required. "
-            "Calls made exclusively of Unicode letters, numbers, and underscore "
+            "Calls made exclusively of Unicode letters, numbers, and underscores "
             "do not require quotes",
             [Part]
           ),
@@ -806,8 +844,9 @@ handle_call_identifier(Rest, Line, Column, DotInfo, Length, Op, Scope, Tokens) -
 handle_space_sensitive_tokens([Sign, NotMarker | T], Line, Column, Scope, [{Identifier, _, _} = H | Tokens]) when
     ?dual_op(Sign),
     not(?is_space(NotMarker)),
-    NotMarker =/= $(, NotMarker =/= $[, NotMarker =/= $<, NotMarker =/= ${,                  %% containers
+    NotMarker =/= $(, NotMarker =/= $[, NotMarker =/= $<, NotMarker =/= ${,                   %% containers
     NotMarker =/= $%, NotMarker =/= $+, NotMarker =/= $-, NotMarker =/= $/, NotMarker =/= $>, %% operators
+    NotMarker =/= $:, %% keywords
     Identifier == identifier ->
   Rest = [NotMarker | T],
   DualOpToken = {dual_op, {Line, Column, nil}, list_to_atom([Sign])},
@@ -876,89 +915,28 @@ collect_modifiers(Rest, Buffer) ->
 %% Heredocs
 
 extract_heredoc_with_interpolation(Line, Column, Scope, Interpol, T, H) ->
-  case extract_heredoc(Line, Column, T, H, Scope) of
-    {ok, NewLine, NewColumn, Body, Rest, NewScope} ->
-      case elixir_interpolation:extract(Line + 1, 1, NewScope, Interpol, Body, none) of
-        {error, Reason} ->
-          {error, interpolation_format(Reason, " (for heredoc starting at line ~B)", [Line])};
-
-        {_, _, Parts, []} ->
-          {ok, NewLine, NewColumn, tokens_to_binary(Parts), Rest, NewScope}
-      end;
-
-    {error, _} = Error ->
-      Error
-  end.
-
-extract_heredoc(Line0, Column0, Rest0, Marker, Scope) ->
-  case extract_heredoc_header(Rest0) of
-    {ok, Rest1} ->
+  case extract_heredoc_header(T) of
+    {ok, Headerless} ->
       %% We prepend a new line so we can transparently remove
       %% spaces later. This new line is removed by calling "tl"
       %% in the final heredoc body three lines below.
-      case extract_heredoc_body(Line0, Column0, Marker, [$\n | Rest1], []) of
-        {ok, Line1, Body, Rest2, Spaces} ->
-          {Acc, NewScope} = remove_heredoc_spaces(Body, Spaces, Marker, Scope),
-          {ok, Line1, 4 + Spaces, tl(Acc), Rest2, NewScope};
-        {error, Reason, ErrorLine, ErrorColumn} ->
-          Terminator = [Marker, Marker, Marker],
-          {Message, Token} = heredoc_error_message(Reason, Line0, Terminator),
-          {error, {ErrorLine, ErrorColumn, Message, Token}}
+      case elixir_interpolation:extract(Line, Column, Scope, Interpol, [$\n|Headerless], [H,H,H]) of
+        {NewLine, NewColumn, Parts0, Rest} ->
+          Indent = NewColumn - 4,
+          Fun = fun(Part, Acc) -> extract_heredoc_indent(Part, Acc, Indent) end,
+          {Parts1, {ShouldWarn, _}} = lists:mapfoldl(Fun, {false, Line}, Parts0),
+          Parts2 = extract_heredoc_head(Parts1),
+          NewScope = maybe_heredoc_warn(ShouldWarn, Scope, H),
+          {ok, NewLine, NewColumn, tokens_to_binary(Parts2), Rest, NewScope};
+
+        {error, Reason} ->
+          {error, interpolation_format(Reason, " (for heredoc starting at line ~B)", [Line])}
       end;
+
     error ->
       Message = "heredoc allows only zero or more whitespace characters followed by a new line after ",
-      {error, {Line0, Column0, io_lib:format(Message, []), [Marker, Marker, Marker]}}
+      {error, {Line, Column, io_lib:format(Message, []), [H, H, H]}}
   end.
-
-heredoc_error_message(eof, Line, Terminator) ->
-  {io_lib:format("missing terminator: ~ts (for heredoc starting at line ~B)",
-                 [Terminator, Line]),
-   []};
-heredoc_error_message(badterminator, _Line, Terminator) ->
-  {"invalid location for heredoc terminator, please escape token or move it to its own line: ",
-   Terminator}.
-
-%% Remove spaces from heredoc based on the position of the final quotes.
-
-remove_heredoc_spaces(Body, Spaces, Marker, Scope) ->
-  case trim_spaces(Body, [], Spaces, false) of
-    {Acc, false} ->
-      {Acc, Scope};
-
-    {Acc, Line} ->
-      Msg = io_lib:format("outdented heredoc line. The contents inside the heredoc should be indented "
-                          "at the same level as the closing ~ts. The following is forbidden:~n~n"
-                          "    def text do~n"
-                          "      \"\"\"~n"
-                          "    contents~n"
-                          "      \"\"\"~n"
-                          "    end~n~n"
-                          "Instead make sure the contents are indented as much as the heredoc closing:~n~n"
-                          "    def text do~n"
-                          "      \"\"\"~n"
-                          "      contents~n"
-                          "      \"\"\"~n"
-                          "    end~n~n"
-                          "The current heredoc line is indented too little", [[Marker, Marker, Marker]]),
-      {Acc, prepend_warning({Line, Scope#elixir_tokenizer.file, Msg}, Scope)}
-  end.
-
-trim_spaces([{Line, Entry} | Rest], Acc, Spaces, Warned) ->
-  case trim_space(lists:reverse(Entry), Spaces) of
-    {Trimmed, true} when Warned == false ->
-      trim_spaces(Rest, Trimmed ++ Acc, Spaces, Line);
-    {Trimmed, _} ->
-      trim_spaces(Rest, Trimmed ++ Acc, Spaces, Warned)
-  end;
-trim_spaces([], Acc, _Spaces, Warned) ->
-  {Acc, Warned}.
-
-trim_space(Rest, 0) -> {Rest, false};
-trim_space([$\n], _) -> {[$\n], false};
-trim_space([H | T], Spaces) when ?is_horizontal_space(H) -> trim_space(T, Spaces - 1);
-trim_space(Rest, _Spaces) -> {Rest, true}.
-
-%% Extract the heredoc header.
 
 extract_heredoc_header("\r\n" ++ Rest) ->
   {ok, Rest};
@@ -969,50 +947,58 @@ extract_heredoc_header([H | T]) when ?is_horizontal_space(H) ->
 extract_heredoc_header(_) ->
   error.
 
-%% Extract heredoc body. It returns the heredoc body (in reverse order),
-%% the remaining of the document and the number of spaces the heredoc
-%% is aligned.
+extract_heredoc_indent(Part, {Warned, Line}, Indent) when is_list(Part) ->
+  extract_heredoc_indent(Part, [], Warned, Line, Indent);
+extract_heredoc_indent({_, {EndLine, _, _}, _} = Part, {Warned, _Line}, _Indent) ->
+  {Part, {Warned, EndLine}}.
 
-extract_heredoc_body(Line, Column, Marker, Rest, Buffer) ->
-  case extract_heredoc_line(Marker, Rest, [], 0) of
-    {ok, Entry, NewRest} ->
-      extract_heredoc_body(Line + 1, 1, Marker, NewRest, [{Line, Entry} | Buffer]);
-    {done, Entry, NewRest, Spaces} ->
-      {ok, Line, [{Line, Entry} | Buffer], NewRest, Spaces};
-    {error, Reason} ->
-      {error, Reason, Line, Column}
-  end.
+extract_heredoc_indent([$\n | Rest], Acc, Warned, Line, Indent) ->
+  {Trimmed, ShouldWarn} = trim_space(Rest, Indent),
+  Warn = if ShouldWarn, not Warned -> Line + 1; true -> Warned end,
+  extract_heredoc_indent(Trimmed, [$\n | Acc], Warn, Line + 1, Indent);
+extract_heredoc_indent([Head | Rest], Acc, Warned, Line, Indent) ->
+  extract_heredoc_indent(Rest, [Head | Acc], Warned, Line, Indent);
+extract_heredoc_indent([], Acc, Warned, Line, _Indent) ->
+  {lists:reverse(Acc), {Warned, Line}}.
 
-%% Extract a line from the heredoc prepending its contents to a buffer.
-%% Allow lazy escaping (for example, \""")
+trim_space(Rest, 0) -> {Rest, false};
+trim_space([$\r, $\n | _] = Rest, _) -> {Rest, false};
+trim_space([$\n | _] = Rest, _) -> {Rest, false};
+trim_space([H | T], Spaces) when ?is_horizontal_space(H) -> trim_space(T, Spaces - 1);
+trim_space([], _Spaces) -> {[], false};
+trim_space(Rest, _Spaces) -> {Rest, true}.
 
-extract_heredoc_line(Marker, [$\\, $\\ | T], Buffer) ->
-  extract_heredoc_line(Marker, T, [$\\, $\\ | Buffer]);
-extract_heredoc_line(Marker, [$\\, Marker | T], Buffer) ->
-  extract_heredoc_line(Marker, T, [Marker, $\\ | Buffer]);
-extract_heredoc_line(Marker, [Marker, Marker, Marker | _], _) ->
-  {error, badterminator};
-extract_heredoc_line(_, "\r\n" ++ Rest, Buffer) ->
-  {ok, [$\n | Buffer], Rest};
-extract_heredoc_line(_, "\n" ++ Rest, Buffer) ->
-  {ok, [$\n | Buffer], Rest};
-extract_heredoc_line(Marker, [H | T], Buffer) ->
-  extract_heredoc_line(Marker, T, [H | Buffer]);
-extract_heredoc_line(_, _, _) ->
-  {error, eof}.
+maybe_heredoc_warn(false, Scope, _Marker) ->
+  Scope;
+maybe_heredoc_warn(Line, Scope, Marker) ->
+  Msg = io_lib:format("outdented heredoc line. The contents inside the heredoc should be indented "
+                      "at the same level as the closing ~ts. The following is forbidden:~n~n"
+                      "    def text do~n"
+                      "      \"\"\"~n"
+                      "    contents~n"
+                      "      \"\"\"~n"
+                      "    end~n~n"
+                      "Instead make sure the contents are indented as much as the heredoc closing:~n~n"
+                      "    def text do~n"
+                      "      \"\"\"~n"
+                      "      contents~n"
+                      "      \"\"\"~n"
+                      "    end~n~n"
+                      "The current heredoc line is indented too little", [[Marker, Marker, Marker]]),
 
-%% Extract each heredoc line trying to find a match according to the marker.
+  prepend_warning({Line, Scope#elixir_tokenizer.file, Msg}, Scope).
 
-extract_heredoc_line(Marker, [H | T], Buffer, Counter) when ?is_horizontal_space(H) ->
-  extract_heredoc_line(Marker, T, [H | Buffer], Counter + 1);
-extract_heredoc_line(Marker, [Marker, Marker, Marker | T], Buffer, Counter) ->
-  {done, Buffer, T, Counter};
-extract_heredoc_line(Marker, Rest, Buffer, _Counter) ->
-  extract_heredoc_line(Marker, Rest, Buffer).
+extract_heredoc_head([[$\n|H]|T]) -> [H|T].
 
-unescape_tokens(Tokens, #elixir_tokenizer{unescape=true}) ->
-  elixir_interpolation:unescape_tokens(Tokens);
-unescape_tokens(Tokens, #elixir_tokenizer{unescape=false}) ->
+unescape_tokens(Tokens, Line, Column, #elixir_tokenizer{unescape=true}) ->
+  case elixir_interpolation:unescape_tokens(Tokens) of
+    {ok, Result} ->
+      {ok, Result};
+
+    {error, Message, Token} ->
+      {error, {Line, Column, Message ++ ". Syntax error after: ", Token}}
+  end;
+unescape_tokens(Tokens, _Line, _Column, #elixir_tokenizer{unescape=false}) ->
   {ok, tokens_to_binary(Tokens)}.
 
 tokens_to_binary(Tokens) ->
@@ -1136,7 +1122,7 @@ tokenize_continue(Rest, Acc, Length, Special) ->
 tokenize_identifier(String, Line, Column, Scope, MaybeKeyword) ->
   case (Scope#elixir_tokenizer.identifier_tokenizer):tokenize(String) of
     {Kind, Acc, Rest, Length, Ascii, Special} ->
-      Keyword = MaybeKeyword andalso ((Rest == []) orelse (hd(Rest) /= $:)),
+      Keyword = MaybeKeyword andalso maybe_keyword(Rest),
 
       case keyword_or_unsafe_to_atom(Keyword, Acc, Line, Column, Scope) of
         {keyword, Atom, Type} ->
@@ -1159,6 +1145,11 @@ tokenize_identifier(String, Line, Column, Scope, MaybeKeyword) ->
     {error, empty} ->
       empty
   end.
+
+maybe_keyword([]) -> true;
+maybe_keyword([$:, $: | _]) -> true;
+maybe_keyword([$: | _]) -> false;
+maybe_keyword(_) -> true.
 
 list_to_codepoint_hex(List) ->
   [io_lib:format(" 0x~4.16.0B", [Codepoint]) || Codepoint <- List].

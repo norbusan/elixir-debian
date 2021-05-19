@@ -129,6 +129,44 @@ defmodule Tuple do
   end
 
   @doc """
+  Computes a sum of tuple elements.
+
+  ## Examples
+
+      iex> Tuple.sum({255, 255})
+      510
+      iex> Tuple.sum({255, 0.0})
+      255.0
+      iex> Tuple.sum({})
+      0
+  """
+  @doc since: "1.12.0"
+  @spec sum(tuple) :: number()
+  def sum(tuple), do: sum(tuple, tuple_size(tuple))
+
+  defp sum(_tuple, 0), do: 0
+  defp sum(tuple, index), do: :erlang.element(index, tuple) + sum(tuple, index - 1)
+
+  @doc """
+  Computes a product of tuple elements.
+
+  ## Examples
+
+      iex> Tuple.product({255, 255})
+      65025
+      iex> Tuple.product({255, 1.0})
+      255.0
+      iex> Tuple.product({})
+      1
+  """
+  @doc since: "1.12.0"
+  @spec product(tuple) :: number()
+  def product(tuple), do: product(tuple, tuple_size(tuple))
+
+  defp product(_tuple, 0), do: 1
+  defp product(tuple, index), do: :erlang.element(index, tuple) * product(tuple, index - 1)
+
+  @doc """
   Converts a tuple to a list.
 
   Returns a new list with all the tuple elements.

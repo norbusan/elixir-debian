@@ -20,6 +20,7 @@ System.delete_env("https_proxy")
 System.delete_env("HTTP_PROXY")
 System.delete_env("HTTPS_PROXY")
 System.delete_env("MIX_ENV")
+System.delete_env("MIX_TARGET")
 
 defmodule MixTest.Case do
   use ExUnit.CaseTemplate
@@ -160,8 +161,12 @@ defmodule MixTest.Case do
   end
 
   def mix(args, envs \\ []) when is_list(args) do
+    mix_code(args, envs) |> elem(0)
+  end
+
+  def mix_code(args, envs \\ []) when is_list(args) do
     args = ["-r", mix_executable(), "--" | args]
-    System.cmd(elixir_executable(), args, stderr_to_stdout: true, env: envs) |> elem(0)
+    System.cmd(elixir_executable(), args, stderr_to_stdout: true, env: envs)
   end
 
   def mix_port(args, envs \\ []) when is_list(args) do
@@ -238,7 +243,6 @@ unless File.dir?(target) do
     System.cmd("git", ~w[commit -m "bad"])
     System.cmd("git", ~w[checkout -q -b main])
     System.cmd("git", ~w[symbolic-ref HEAD refs/heads/main])
-    System.cmd("git", ~w[branch -d master])
   end)
 
   File.write!(Path.join(target, "mix.exs"), """
@@ -328,6 +332,8 @@ unless File.dir?(target) do
     System.cmd("git", ~w[init])
     System.cmd("git", ~w[add .])
     System.cmd("git", ~w[commit -m without-dep])
+    System.cmd("git", ~w[checkout -q -b main])
+    System.cmd("git", ~w[symbolic-ref HEAD refs/heads/main])
   end)
 
   File.write!(Path.join(target, "mix.exs"), """
@@ -381,6 +387,8 @@ unless File.dir?(target) do
     System.cmd("git", ~w[init])
     System.cmd("git", ~w[add .])
     System.cmd("git", ~w[commit -m "ok"])
+    System.cmd("git", ~w[checkout -q -b main])
+    System.cmd("git", ~w[symbolic-ref HEAD refs/heads/main])
   end)
 end
 

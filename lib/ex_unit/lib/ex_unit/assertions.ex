@@ -388,6 +388,10 @@ defmodule ExUnit.Assertions do
 
       assert false, "it will never be true"
 
+      assert x == :foo, "expected x to be foo"
+
+      assert match?({:ok, _}, x), "expected x to match {:ok, _}"
+
   """
   def assert(value, message) when is_binary(message) do
     assert(value, message: message)
@@ -691,6 +695,9 @@ defmodule ExUnit.Assertions do
     Macro.prewalk(expr, fn
       {:__aliases__, _, _} = expr ->
         Macro.expand(expr, caller)
+
+      {:@, _, [{attribute, _, _}]} ->
+        caller.module |> Module.get_attribute(attribute) |> Macro.escape()
 
       {left, meta, right} = expr ->
         case Macro.expand(expr, caller) do

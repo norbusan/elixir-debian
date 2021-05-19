@@ -75,17 +75,10 @@ defmodule Code.Formatter.GeneralTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S"""
-      ~s(one #{"two"} three)
-      """
-
-      good = ~S"""
-      ~s(one #{
-        "two"
-      } three)
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  ~s(one #{"two"} three)
+                  """,
+                  @short_length
     end
 
     test "with heredoc syntax" do
@@ -115,21 +108,12 @@ defmodule Code.Formatter.GeneralTest do
     end
 
     test "with heredoc syntax and interpolation on line limit" do
-      bad = ~S"""
-      ~s'''
-      one #{"two two"} three
-      '''
-      """
-
-      good = ~S"""
-      ~s'''
-      one #{
-        "two two"
-      } three
-      '''
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  ~s'''
+                  one #{"two two"} three
+                  '''
+                  """,
+                  @short_length
     end
   end
 
@@ -805,33 +789,6 @@ defmodule Code.Formatter.GeneralTest do
             bar
           )
       """
-    end
-  end
-
-  describe "renames deprecated calls" do
-    test "without deprecation option" do
-      assert_same "Enum.partition(foo, bar)"
-      assert_same "&Enum.partition/2"
-    end
-
-    test "with matching deprecation option" do
-      assert_format "Enum.partition(foo, bar)", "Enum.split_with(foo, bar)",
-        rename_deprecated_at: "1.4.0"
-
-      assert_format "Enum.partition(foo, bar)", "Enum.split_with(foo, bar)",
-        rename_deprecated_at: "1.4.0"
-    end
-
-    test "without matching deprecation option" do
-      assert_same "Enum.partition(foo, bar)", rename_deprecated_at: "1.3.0"
-
-      assert_same "Enum.partition(foo, bar)", rename_deprecated_at: "1.3.0"
-    end
-
-    test "raises on invalid version" do
-      assert_raise ArgumentError, ~r"invalid version", fn ->
-        assert_same "Enum.partition(foo, bar)", rename_deprecated_at: "1.3"
-      end
     end
   end
 end

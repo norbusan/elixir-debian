@@ -235,7 +235,7 @@ defmodule Module do
       end
 
   For the list of supported warnings, see
-  [`:dialyzer` module](http://www.erlang.org/doc/man/dialyzer.html).
+  [`:dialyzer` module](`:dialyzer`).
 
   Multiple uses of `@dialyzer` will accumulate instead of overriding
   previous ones.
@@ -253,7 +253,7 @@ defmodule Module do
   [`mix compile.elixir`](https://hexdocs.pm/mix/Mix.Tasks.Compile.Elixir.html).
 
   If the external resource does not exist, the module still has
-  a dependency on it, causing the module be recompiled as soon
+  a dependency on it, causing the module to be recompiled as soon
   as the file is added.
 
   ### `@file`
@@ -305,9 +305,9 @@ defmodule Module do
 
   Accepts the function name (as an atom) of a function in the current module or
   `{function_name, 0}` tuple where `function_name` is the name of a function in
-  the current module. The function must be public and have an arity of 0 (no
-  arguments). If the function does not return `:ok`, the loading of the module
-  will be aborted. For example:
+  the current module. The function must have an arity of 0 (no arguments). If
+  the function does not return `:ok`, the loading of the module will be aborted.
+  For example:
 
       defmodule MyModule do
         @on_load :load_check
@@ -334,6 +334,16 @@ defmodule Module do
       defmodule MyModule do
         @vsn "1.0"
       end
+
+  ### Struct attributes
+
+    * `@derive` - derives an implementation for the given protocol for the
+      struct defined in the current module
+
+    * `@enforce_keys` - ensures the given keys are always set when building
+      the struct defined in the current module
+
+  See `Kernel.defstruct/1` for more information on building and using structs.
 
   ### Typespec attributes
 
@@ -544,6 +554,103 @@ defmodule Module do
   @callback __info__(:module) :: module()
 
   @doc """
+  Returns information about module attributes used by Elixir.
+
+  See the "Module attributes" section in the module documentation for more
+  information on each attribute.
+
+  ## Examples
+
+      iex> map = Module.reserved_attributes()
+      iex> Map.has_key?(map, :moduledoc)
+      true
+      iex> Map.has_key?(map, :doc)
+      true
+
+  """
+  @doc since: "1.12.0"
+  def reserved_attributes() do
+    %{
+      after_compile: %{
+        doc: "A hook that will be invoked right after the current module is compiled."
+      },
+      before_compile: %{
+        doc: "A hook that will be invoked before the module is compiled."
+      },
+      behaviour: %{
+        doc: "Specifies that the current module implements a given behaviour."
+      },
+      on_definition: %{
+        doc:
+          "A hook that will be invoked when each function or macro in the current module is defined."
+      },
+      impl: %{
+        doc: "Declares an implementation of a callback function or macro."
+      },
+      compile: %{
+        doc: "Defines options for module compilation."
+      },
+      deprecated: %{
+        doc: "Provides the deprecation reason for a function."
+      },
+      moduledoc: %{
+        doc: "Provides documentation for the current module."
+      },
+      doc: %{
+        doc: "Provides documentation for a function/macro/callback."
+      },
+      typedoc: %{
+        doc: "Provides documentation for a type."
+      },
+      dialyzer: %{
+        doc: "Defines Dialyzer warnings to request or suppress."
+      },
+      external_resource: %{
+        doc: "Specifies an external resource for the current module."
+      },
+      file: %{
+        doc:
+          "Changes the filename used in stacktraces for the function or macro that follows the attribute."
+      },
+      on_load: %{
+        doc: "A hook that will be invoked whenever the module is loaded."
+      },
+      vsn: %{
+        doc: "Specify the module version."
+      },
+      type: %{
+        doc: "Defines a type to be used in `@spec`."
+      },
+      typep: %{
+        doc: "Defines a private type to be used in `@spec`."
+      },
+      opaque: %{
+        doc: "Defines an opaque type to be used in `@spec`."
+      },
+      spec: %{
+        doc: "Provides a specification for a function."
+      },
+      callback: %{
+        doc: "Provides a specification for a behaviour callback."
+      },
+      macrocallback: %{
+        doc: "Provides a specification for a macro behaviour callback."
+      },
+      optional_callbacks: %{
+        doc: "Specifies which behaviour callbacks and macro behaviour callbacks are optional."
+      },
+      derive: %{
+        doc:
+          "Derives an implementation for the given protocol for the struct defined in the current module."
+      },
+      enforce_keys: %{
+        doc:
+          "Ensures the given keys are always set when building the struct defined in the current module."
+      }
+    }
+  end
+
+  @doc """
   Checks if a module is open.
 
   A module is "open" if it is currently being defined and its attributes and
@@ -724,9 +831,6 @@ defmodule Module do
 
   ## Examples
 
-      iex> Module.safe_concat([Module, Unknown])
-      ** (ArgumentError) argument error
-
       iex> Module.safe_concat([List, Chars])
       List.Chars
 
@@ -744,9 +848,6 @@ defmodule Module do
   It handles charlists, binaries and atoms.
 
   ## Examples
-
-      iex> Module.safe_concat(Module, Unknown)
-      ** (ArgumentError) argument error
 
       iex> Module.safe_concat(List, Chars)
       List.Chars
@@ -1059,6 +1160,62 @@ defmodule Module do
     assert_not_compiled!(__ENV__.function, module, @extra_error_msg_definitions_in)
     {set, _} = data_tables_for(module)
     :ets.select(set, [{{{:def, :"$1"}, kind, :_, :_, :_, :_}, [], [:"$1"]}])
+  end
+
+  @doc """
+  Returns the definition for the given name-arity pair.
+
+  It returns a tuple with the `version`, the `kind`,
+  the definition `metadata`, and a list with each clause.
+  Each clause is a four-element tuple with metadata,
+  the arguments, the guards, and the clause AST.
+
+  The clauses are returned in the Elixir AST but a subset
+  that has already been expanded and normalized. This makes
+  it useful for analyzing code but it cannot be reinjected
+  into the module as it will have lost some of its original
+  context. Given this AST representation is mostly internal,
+  it is versioned and it may change at any time. Therefore,
+  **use this API with caution**.
+  """
+  @spec get_definition(module, definition) ::
+          {:v1, def_kind, meta :: keyword,
+           [{meta :: keyword, arguments :: [Macro.t()], guards :: [Macro.t()], Macro.t()}]}
+  @doc since: "1.12.0"
+  def get_definition(module, {name, arity})
+      when is_atom(module) and is_atom(name) and is_integer(arity) do
+    assert_not_compiled!(__ENV__.function, module, "")
+    {set, bag} = data_tables_for(module)
+
+    case :ets.lookup(set, {:def, {name, arity}}) do
+      [{_key, kind, meta, _, _, _}] ->
+        {:v1, kind, meta, bag_lookup_element(bag, {:clauses, {name, arity}}, 2)}
+
+      [] ->
+        nil
+    end
+  end
+
+  @doc """
+  Deletes a definition from a module.
+
+  It returns true if the definition exists and it was removed,
+  otherwise it returns false.
+  """
+  @doc since: "1.12.0"
+  @spec delete_definition(module, definition) :: boolean()
+  def delete_definition(module, {name, arity})
+      when is_atom(module) and is_atom(name) and is_integer(arity) do
+    assert_not_readonly!(__ENV__.function, module)
+
+    case :elixir_def.take_definition(module, {name, arity}) do
+      false ->
+        false
+
+      _ ->
+        :elixir_locals.yank({name, arity}, module)
+        true
+    end
   end
 
   @doc """
@@ -1451,7 +1608,8 @@ defmodule Module do
           redefining @doc attribute previously set at line #{current_line}.
 
           Please remove the duplicate docs. If instead you want to override a \
-          previously defined @doc, attach the @doc attribute to a function head:
+          previously defined @doc, attach the @doc attribute to a function head \
+          (the function signature not followed by any do-block). For example:
 
               @doc """
               new docs
@@ -1973,20 +2131,13 @@ defmodule Module do
   end
 
   defp preprocess_attribute(:impl, value) do
-    case value do
-      _ when is_boolean(value) ->
-        value
-
-      module when is_atom(module) and module != nil ->
-        # Attempt to compile behaviour but ignore failure (will warn later)
-        _ = Code.ensure_compiled(module)
-        value
-
-      _ ->
-        raise ArgumentError,
-              "@impl is a built-in module attribute that marks the next definition " <>
-                "as a callback implementation. It should be a module or a boolean, " <>
-                "got: #{inspect(value)}"
+    if is_boolean(value) or (is_atom(value) and value != nil) do
+      value
+    else
+      raise ArgumentError,
+            "@impl is a built-in module attribute that marks the next definition " <>
+              "as a callback implementation. It should be a module or a boolean, " <>
+              "got: #{inspect(value)}"
     end
   end
 
@@ -2034,8 +2185,44 @@ defmodule Module do
     end
   end
 
+  defp preprocess_attribute(:dialyzer, value) do
+    # From https://github.com/erlang/otp/blob/master/lib/stdlib/src/erl_lint.erl
+    :lists.foreach(
+      fn attr ->
+        if not valid_dialyzer_attribute?(attr) do
+          raise ArgumentError, "invalid value for @dialyzer attribute: #{inspect(attr)}"
+        end
+      end,
+      List.wrap(value)
+    )
+
+    value
+  end
+
   defp preprocess_attribute(_key, value) do
     value
+  end
+
+  defp valid_dialyzer_attribute?({key, fun_arities}) when is_atom(key) do
+    (key == :nowarn_function or valid_dialyzer_attribute?(key)) and
+      :lists.all(
+        fn
+          {fun, arity} when is_atom(fun) and is_integer(arity) -> true
+          _ -> false
+        end,
+        List.wrap(fun_arities)
+      )
+  end
+
+  defp valid_dialyzer_attribute?(attr) do
+    :lists.member(
+      attr,
+      [:no_return, :no_unused, :no_improper_lists, :no_fun_app] ++
+        [:no_match, :no_opaque, :no_fail_call, :no_contracts] ++
+        [:no_behaviours, :no_undefined_callbacks, :unmatched_returns] ++
+        [:error_handling, :race_conditions, :no_missing_calls] ++
+        [:specdiffs, :overspecs, :underspecs, :unknown, :no_underspecs]
+    )
   end
 
   defp preprocess_doc_meta([], _module, _line, map), do: map

@@ -6,7 +6,7 @@ defmodule String.Tokenizer do
   {letter_uptitlecase, start, continue, _} =
     data_path
     |> File.read!()
-    |> String.split("\n", trim: true)
+    |> String.split(["\r\n", "\n"], trim: true)
     |> Enum.reduce({[], [], [], nil}, fn line, acc ->
       {letter_uptitlecase, start, continue, first} = acc
       [codepoint, line] = :binary.split(line, ";")
@@ -129,8 +129,8 @@ defmodule String.Tokenizer do
 
   defp unicode_start?(_), do: false
 
-  unless {13312, 19893} in range do
-    raise "CHECK: CJK Ideograph not in range"
+  unless {13312, 19903} in range do
+    raise "CHECK: CJK Ideograph not in range. Make sure all properties are listed."
   end
 
   for {first, last} <- rangify.(unicode_continue) do

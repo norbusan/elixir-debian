@@ -15,6 +15,13 @@ defmodule List do
       iex> [1, true, 2, false, 3, true] -- [true, false]
       [1, 2, 3, true]
 
+  An element can be prepended to a list using `|`:
+
+      iex> new = 0
+      iex> list = [1, 2, 3]
+      iex> [new | list]
+      [0, 1, 2, 3]
+
   Lists in Elixir are effectively linked lists, which means
   they are internally represented in pairs containing the
   head and the tail of a list:
@@ -255,12 +262,17 @@ defmodule List do
   end
 
   @doc """
-  Returns the first element in `list` or `nil` if `list` is empty.
+  Returns the first element in `list` or `default` if `list` is empty.
+
+  `first/2` has been introduced in Elixir v1.12.0, while `first/1` has been available since v1.0.0.
 
   ## Examples
 
       iex> List.first([])
       nil
+
+      iex> List.first([], 1)
+      1
 
       iex> List.first([1])
       1
@@ -269,18 +281,24 @@ defmodule List do
       1
 
   """
-  @spec first([]) :: nil
-  @spec first([elem, ...]) :: elem when elem: var
-  def first([]), do: nil
-  def first([head | _]), do: head
+  @spec first([], any) :: any
+  @spec first([elem, ...], any) :: elem when elem: var
+  def first(list, default \\ nil)
+  def first([], default), do: default
+  def first([head | _], _default), do: head
 
   @doc """
-  Returns the last element in `list` or `nil` if `list` is empty.
+  Returns the last element in `list` or `default` if `list` is empty.
+
+  `last/2` has been introduced in Elixir v1.12.0, while `last/1` has been available since v1.0.0.
 
   ## Examples
 
       iex> List.last([])
       nil
+
+      iex> List.last([], 1)
+      1
 
       iex> List.last([1])
       1
@@ -289,11 +307,13 @@ defmodule List do
       3
 
   """
-  @spec last([]) :: nil
-  @spec last([elem, ...]) :: elem when elem: var
-  def last([]), do: nil
-  def last([head]), do: head
-  def last([_ | tail]), do: last(tail)
+  @spec last([], any) :: any
+  @spec last([elem, ...], any) :: elem when elem: var
+  @compile {:inline, last: 2}
+  def last(list, default \\ nil)
+  def last([], default), do: default
+  def last([head], _default), do: head
+  def last([_ | tail], default), do: last(tail, default)
 
   @doc """
   Receives a list of tuples and returns the first tuple
@@ -811,9 +831,6 @@ defmodule List do
       iex> List.to_existing_atom('🌢 Elixir')
       :"🌢 Elixir"
 
-      iex> List.to_existing_atom('this_atom_will_never_exist')
-      ** (ArgumentError) argument error
-
   """
   @spec to_existing_atom(charlist) :: atom
   def to_existing_atom(charlist) do
@@ -899,7 +916,7 @@ defmodule List do
 
   Note that this function expects a list of integers representing
   Unicode code points. If you have a list of bytes, you must instead use
-  the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+  the [`:binary` module](`:binary`).
 
   ## Examples
 
@@ -954,7 +971,7 @@ defmodule List do
 
   Note that this function expects a list of integers representing
   Unicode code points. If you have a list of bytes, you must instead use
-  the [`:binary` module](http://www.erlang.org/doc/man/binary.html).
+  the [`:binary` module](`:binary`).
 
   ## Examples
 

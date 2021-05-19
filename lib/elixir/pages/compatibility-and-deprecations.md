@@ -8,12 +8,12 @@ Elixir applies bug fixes only to the latest minor branch. Security patches are a
 
 Elixir version | Support
 :------------- | :-----------------------------
-1.11           | Development
-1.10           | Bug fixes and security patches
+1.12           | Bug fixes and security patches
+1.11           | Security patches only
+1.10           | Security patches only
 1.9            | Security patches only
 1.8            | Security patches only
 1.7            | Security patches only
-1.6            | Security patches only
 
 New releases are announced in the read-only [announcements mailing list](https://groups.google.com/group/elixir-lang-ann). All security releases [will be tagged with `[security]`](https://groups.google.com/forum/#!searchin/elixir-lang-ann/%5Bsecurity%5D%7Csort:date).
 
@@ -39,24 +39,25 @@ The only exception to the compatibility guarantees above are experimental featur
 
 ## Compatibility between Elixir and Erlang/OTP
 
-Erlang/OTP versioning is independent from the versioning of Elixir. Each version of Elixir supports a specific range of Erlang/OTP versions. The compatibility table is shown below.
+Erlang/OTP versioning is independent from the versioning of Elixir. Erlang releases a new major version yearly. Our goal is to support the last three Erlang major versions by the time Elixir is released. The compatibility table is shown below.
 
 Elixir version | Supported Erlang/OTP versions
 :------------- | :-------------------------------
-1.0            | 17 - 17 (and Erlang/OTP 18 from v1.0.5)
-1.1            | 17 - 18
-1.2            | 18 - 18 (and Erlang/OTP 19 from v1.2.6)
-1.3            | 18 - 19
-1.4            | 18 - 19 (and Erlang/OTP 20 from v1.4.5)
-1.5            | 18 - 20
-1.6            | 19 - 20 (and Erlang/OTP 21 from v1.6.6)
-1.7            | 19 - 22
-1.8            | 20 - 22
-1.9            | 20 - 22
+1.12           | 22 - 24
+1.11           | 21 - 23 (and Erlang/OTP 24 from v1.11.4)
 1.10           | 21 - 22 (and Erlang/OTP 23 from v1.10.3)
-1.11           | 21 - 23
+1.9            | 20 - 22
+1.8            | 20 - 22
+1.7            | 19 - 22
+1.6            | 19 - 20 (and Erlang/OTP 21 from v1.6.6)
+1.5            | 18 - 20
+1.4            | 18 - 19 (and Erlang/OTP 20 from v1.4.5)
+1.3            | 18 - 19
+1.2            | 18 - 18 (and Erlang/OTP 19 from v1.2.6)
+1.1            | 17 - 18
+1.0            | 17 - 17 (and Erlang/OTP 18 from v1.0.5)
 
-While Elixir often adds compatibility to new Erlang/OTP versions on released branches, such as support for Erlang/OTP 20 in v1.4.5, those releases usually contain the minimum changes for Elixir to run without errors. Only the next minor release, in this case v1.5.0, does effectively leverage the new features provided by the latest Erlang/OTP release.
+Note Elixir may add compatibility to new Erlang/OTP versions on patch releases, such as support for Erlang/OTP 20 in v1.4.5. Those releases are made for convenience and typically contain the minimum changes for Elixir to run without errors, if any changes are necessary. Only the next minor release, in this case v1.5.0, effectively leverages the new features provided by the latest Erlang/OTP release.
 
 ## Deprecations
 
@@ -76,6 +77,10 @@ The first column is the version the feature was hard deprecated. The second colu
 
 Version | Deprecated feature                                  | Replaced by (available since)
 :-------| :-------------------------------------------------- | :---------------------------------------------------------------
+[v1.12] | `^^^/2`                                             | Use `bxor/2` instead (v1.0)
+[v1.12] | `@foo()` to read module attributes                  | Remove the parenthesis (v1.0)
+[v1.12] | `use EEx.Engine`                                    | Explicitly delegate to EEx.Engine instead (v1.0)
+[v1.12] | `:xref` compiler in Mix                             | Nothing (it always runs as part of the compiler now)
 [v1.11] | `Mix.Project.compile/2`                             | `Mix.Task.run("compile", args)` (v1.0)
 [v1.11] | `Supervisor.Spec.worker/3` and `Supervisor.Spec.supervisor/3` | The new child specs outlined in `Supervisor` (v1.5)
 [v1.11] | `Supervisor.start_child/2` and `Supervisor.terminate_child/2` | `DynamicSupervisor` (v1.6)
@@ -92,6 +97,7 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.9]  | Enumerable keys in `Map.drop/2`, `Map.split/2`, and `Map.take/2` | Call `Enum.to_list/1` on the second argument before hand (v1.0)
 [v1.9]  | `Mix.Project.load_paths/1`                          | `Mix.Project.compile_path/1` (v1.0)
 [v1.9]  | Passing `:insert_replaced` to `String.replace/4`    | Use `:binary.replace/4` (v1.0)
+[v1.8]  | Passing a non-empty list to `Collectable.into/1`    | `Kernel.++/2` or `Keyword.merge/2` (v1.0)
 [v1.8]  | Passing a non-empty list to `:into` in [`for`](`Kernel.SpecialForms.for/1`) | `Kernel.++/2` or `Keyword.merge/2` (v1.0)
 [v1.8]  | Passing a non-empty list to `Enum.into/2`           | `Kernel.++/2` or `Keyword.merge/2` (v1.0)
 [v1.8]  | Time units in its plural form, such as: `:seconds`, `:milliseconds`, and the like | Use the singular form, such as: `:second`, `:millisecond`, and so on (v1.4)
@@ -105,7 +111,7 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.8]  | `System.cwd/0` and `System.cwd!/0`                  | `File.cwd/0` and `File.cwd!/0` (v1.0)
 [v1.7]  | `Code.get_docs/2`                                   | `Code.fetch_docs/1` (v1.7)
 [v1.7]  | `Enum.chunk/2,3,4`                                  | `Enum.chunk_every/2` and [`Enum.chunk_every/3,4`](`Enum.chunk_every/4`) (v1.5)
-[v1.7]  | Calling `super/1` in`GenServer` callbacks           | Implenting the behaviour explicitly without calling `super/1` (v1.0)
+[v1.7]  | Calling `super/1` in`GenServer` callbacks           | Implementing the behaviour explicitly without calling `super/1` (v1.0)
 [v1.7]  | [`not left in right`](`Kernel.in/2`)                | [`left not in right`](`Kernel.in/2`) (v1.5)
 [v1.7]  | `Registry.start_link/3`                             | `Registry.start_link/1` (v1.5)
 [v1.7]  | `Stream.chunk/2,3,4`                                | `Stream.chunk_every/2` and [`Stream.chunk_every/3,4`](`Stream.chunk_every/4`) (v1.5)
@@ -118,7 +124,7 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.5]  | `Atom.to_char_list/1`                               | `Atom.to_charlist/1` (v1.3)
 [v1.5]  | `Enum.filter_map/3`                                 | `Enum.filter/2` + `Enum.map/2` or [`for`](`Kernel.SpecialForms.for/1`) comprehensions (v1.0)
 [v1.5]  | `Float.to_char_list/1`                              | `Float.to_charlist/1` (v1.3)
-[v1.5]  | `GenEvent` module                                   | `Supervisor` and `GenServer` (v1.0);<br/>[`GenStage`](https://hex.pm/packages/gen_stage) (v1.3);<br/>[`:gen_event`](http://www.erlang.org/doc/man/gen_event.html) (Erlang/OTP 17)
+[v1.5]  | `GenEvent` module                                   | `Supervisor` and `GenServer` (v1.0);<br/>[`GenStage`](https://hex.pm/packages/gen_stage) (v1.3);<br/>[`:gen_event`](`:gen_event`) (Erlang/OTP 17)
 [v1.5]  | `<%=` in middle and end expressions in `EEx`        | Use `<%` (`<%=` is allowed only in start expressions) (v1.0)
 [v1.5]  | `:as_char_lists` value in `t:Inspect.Opts.t/0` type | `:as_charlists` value (v1.3)
 [v1.5]  | `:char_lists` key in `t:Inspect.Opts.t/0` type      | `:charlists` key (v1.3)
@@ -175,3 +181,4 @@ Version | Deprecated feature                                  | Replaced by (ava
 [v1.9]: https://github.com/elixir-lang/elixir/blob/v1.9/CHANGELOG.md#4-hard-deprecations
 [v1.10]: https://github.com/elixir-lang/elixir/blob/v1.10/CHANGELOG.md#4-hard-deprecations
 [v1.11]: https://github.com/elixir-lang/elixir/blob/v1.11/CHANGELOG.md#4-hard-deprecations
+[v1.12]: https://github.com/elixir-lang/elixir/blob/v1.12/CHANGELOG.md#4-hard-deprecations

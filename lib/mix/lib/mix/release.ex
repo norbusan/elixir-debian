@@ -361,7 +361,7 @@ defmodule Mix.Release do
 
     if not is_list(steps) or Enum.any?(steps, &(&1 not in valid_atoms and not is_function(&1, 1))) do
       Mix.raise("""
-        The :steps option must be a list of:
+      The :steps option must be a list of:
 
         * anonymous function that receives one argument
         * the atom :assemble or :tar
@@ -706,7 +706,7 @@ defmodule Mix.Release do
     SELF=$(readlink "$0" || true)
     if [ -z "$SELF" ]; then SELF="$0"; fi
     BINDIR="$(cd "$(dirname "$SELF")" && pwd -P)"
-    ROOTDIR="$(dirname "$(dirname "$BINDIR")")"
+    ROOTDIR="${ERL_ROOTDIR:-"$(dirname "$(dirname "$BINDIR")")"}"
     EMU=beam
     PROGNAME=$(echo "$0" | sed 's/.*\///')
     export EMU
@@ -780,7 +780,10 @@ defmodule Mix.Release do
              {:ok, binary} <- strip_beam(File.read!(source_file), strip_options) do
           File.write!(target_file, binary)
         else
-          _ -> File.copy(source_file, target_file)
+          _ ->
+            # Use File.cp!/3 to preserve file mode for any executables stored
+            # in the ebin directory.
+            File.cp!(source_file, target_file)
         end
       end
 

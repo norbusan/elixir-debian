@@ -5,6 +5,15 @@ defmodule StringTest do
 
   doctest String
 
+  test "heredoc with heredoc inside interpolation" do
+    assert """
+           1
+           #{"""
+           2
+           """}
+           """ == "1\n2\n\n"
+  end
+
   test "next_codepoint/1" do
     assert String.next_codepoint("ésoj") == {"é", "soj"}
     assert String.next_codepoint(<<255>>) == {<<255>>, ""}
@@ -153,6 +162,11 @@ defmodule StringTest do
     assert String.upcase("olá", :ascii) == "OLá"
   end
 
+  test "upcase/1 with turkic" do
+    assert String.upcase("ıi", :turkic) == "Iİ"
+    assert String.upcase("Iİ", :turkic) == "Iİ"
+  end
+
   test "downcase/1" do
     assert String.downcase("123 ABcD 456 EfG HIJ ( %$#) KL MNOP @ QRST = -_ UVWXYZ") ==
              "123 abcd 456 efg hij ( %$#) kl mnop @ qrst = -_ uvwxyz"
@@ -185,6 +199,16 @@ defmodule StringTest do
     assert String.downcase("OLÁ", :ascii) == "olÁ"
   end
 
+  test "downcase/1 with turkic" do
+    assert String.downcase("Iİ", :turkic) == "ıi"
+    assert String.downcase("İ", :turkic) == "i"
+
+    assert String.downcase("ıi", :turkic) == "ıi"
+    assert String.downcase("i", :turkic) == "i"
+
+    assert String.downcase("İ") == "i̇"
+  end
+
   test "capitalize/1" do
     assert String.capitalize("") == ""
     assert String.capitalize("abc") == "Abc"
@@ -208,6 +232,13 @@ defmodule StringTest do
   test "capitalize/1 with ascii" do
     assert String.capitalize("àáâ", :ascii) == "àáâ"
     assert String.capitalize("aáA", :ascii) == "Aáa"
+  end
+
+  test "capitalize/1 with turkic" do
+    assert String.capitalize("iii", :turkic) == "İii"
+    assert String.capitalize("ııı", :turkic) == "Iıı"
+    assert String.capitalize("İii", :turkic) == "İii"
+    assert String.capitalize("Iıı", :turkic) == "Iıı"
   end
 
   test "replace_leading/3" do

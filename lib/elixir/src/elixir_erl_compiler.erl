@@ -36,7 +36,7 @@ erl_to_core(Forms, Opts) ->
     [] ->
       v3_core:module(Forms, Opts);
     _ ->
-      case compile:noenv_forms(Forms, [?NO_SPAWN_COMPILER_PROCESS, to_core0, return, no_auto_import | Opts]) of
+      case compile:noenv_forms(Forms, [no_spawn_compiler_process, to_core0, return, no_auto_import | Opts]) of
         {ok, _Module, Core, Warnings} -> {ok, Core, Warnings};
         {error, Errors, Warnings} -> {error, Errors, Warnings}
       end
@@ -48,7 +48,7 @@ compile(Forms, File, Opts) when is_list(Forms), is_list(Opts), is_binary(File) -
   case erl_to_core(Forms, Opts) of
     {ok, CoreForms, CoreWarnings} ->
       format_warnings(Opts, CoreWarnings),
-      CompileOpts = [?NO_SPAWN_COMPILER_PROCESS, from_core, no_core_prepare,
+      CompileOpts = [no_spawn_compiler_process, from_core, no_core_prepare,
                      no_auto_import, return, {source, Source} | Opts],
 
       case compile:noenv_forms(CoreForms, CompileOpts) of
@@ -72,9 +72,12 @@ compile(Forms, File, Opts) when is_list(Forms), is_list(Opts), is_binary(File) -
 format_errors([]) ->
   exit({nocompile, "compilation failed but no error was raised"});
 format_errors(Errors) ->
-  lists:foreach(fun ({File, Each}) ->
-    BinFile = elixir_utils:characters_to_binary(File),
-    lists:foreach(fun(Error) -> handle_file_error(BinFile, Error) end, Each)
+  lists:foreach(fun
+    ({File, Each}) when is_list(File) ->
+      BinFile = elixir_utils:characters_to_binary(File),
+      lists:foreach(fun(Error) -> handle_file_error(BinFile, Error) end, Each);
+    ({Mod, Each}) when is_atom(Mod) ->
+      lists:foreach(fun(Error) -> handle_file_error(elixir_aliases:inspect(Mod), Error) end, Each)
   end, Errors).
 
 format_warnings(Opts, Warnings) ->
@@ -94,6 +97,8 @@ handle_file_warning(true, _File, {_Line, sys_core_fold, {nomatch_shadow, _}}) ->
 
 %% Those we implement ourselves
 handle_file_warning(_, _File, {_Line, v3_core, {map_key_repeated, _}}) -> ok;
+handle_file_warning(_, _File, {_Line, sys_core_fold, {ignored, useless_building}}) -> ok;
+%% TODO: remove when we require Erlang/OTP 24
 handle_file_warning(_, _File, {_Line, sys_core_fold, useless_building}) -> ok;
 
 %% Ignore all linting errors (only come up on parse transforms)
@@ -112,11 +117,11 @@ handle_file_error(File, {Line, Module, Desc}) ->
   elixir_errors:compile_error([{line, Line}], File, Message).
 
 %% Mention the capture operator in make_fun
-custom_format(sys_core_fold, {no_effect, {erlang, make_fun, 3}}) ->
+custom_format(sys_core_fold, {ignored, {no_effect, {erlang, make_fun, 3}}}) ->
   "the result of the capture operator & (:erlang.make_fun/3) is never used";
 
 %% Make no_effect clauses pretty
-custom_format(sys_core_fold, {no_effect, {erlang, F, A}}) ->
+custom_format(sys_core_fold, {ignored, {no_effect, {erlang, F, A}}}) ->
   {Fmt, Args} = case erl_internal:comp_op(F, A) of
     true -> {"use of operator ~ts has no effect", [elixir_utils:erlang_comparison_op_to_elixir(F)]};
     false ->
@@ -127,22 +132,39 @@ custom_format(sys_core_fold, {no_effect, {erlang, F, A}}) ->
   end,
   io_lib:format(Fmt, Args);
 
-%% Rewrite nomatch_guard to be more generic it can happen inside if, unless, and the like
-custom_format(sys_core_fold, nomatch_guard) ->
+%% Rewrite nomatch to be more generic, it can happen inside if, unless, and the like
+custom_format(sys_core_fold, {nomatch, X}) when X == guard; X == no_clause ->
   "this check/guard will always yield the same result";
 
-%% Handle literal eval failures
-custom_format(sys_core_fold, {eval_failure, Error}) ->
-  #{'__struct__' := Struct} = 'Elixir.Exception':normalize(error, Error),
-  ["this expression will fail with ", elixir_aliases:inspect(Struct)];
-
-custom_format(sys_core_fold, {nomatch_shadow,Line,{ErlName,ErlArity}}) ->
+custom_format(sys_core_fold, {nomatch, {shadow, Line, {ErlName, ErlArity}}}) ->
   {Name, Arity} = elixir_utils:erl_fa_to_elixir_fa(ErlName, ErlArity),
 
   io_lib:format(
     "this clause for ~ts/~B cannot match because a previous clause at line ~B always matches",
     [Name, Arity, Line]
   );
+
+%% Handle literal eval failures
+custom_format(sys_core_fold, {failed, {eval_failure, {Mod, Name, Arity}, Error}}) ->
+  #{'__struct__' := Struct} = 'Elixir.Exception':normalize(error, Error),
+  {ExMod, ExName, ExArgs} = elixir_rewrite:erl_to_ex(Mod, Name, lists:duplicate(Arity, nil)),
+  Call = 'Elixir.Exception':format_mfa(ExMod, ExName, length(ExArgs)),
+  Trimmed = case Call of
+              <<"Kernel.", Rest/binary>> -> Rest;
+              _ -> Call
+            end,
+  ["the call to ", Trimmed, " will fail with ", elixir_aliases:inspect(Struct)];
+
+%% TODO: remove when we require OTP 24
+custom_format(sys_core_fold, {nomatch_shadow, Line, FA}) ->
+  custom_format(sys_core_fold, {nomatch, {shadow, Line, FA}});
+custom_format(sys_core_fold, nomatch_guard) ->
+  custom_format(sys_core_fold, {nomatch, guard});
+custom_format(sys_core_fold, {no_effect, X}) ->
+  custom_format(sys_core_fold, {ignored, {no_effect, X}});
+custom_format(sys_core_fold, {eval_failure, Error}) ->
+  #{'__struct__' := Struct} = 'Elixir.Exception':normalize(error, Error),
+  ["this expression will fail with ", elixir_aliases:inspect(Struct)];
 
 custom_format([], Desc) ->
   io_lib:format("~p", [Desc]);

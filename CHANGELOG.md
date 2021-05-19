@@ -1,481 +1,242 @@
-# Changelog for Elixir v1.11
+# Changelog for Elixir v1.12
 
-Over the last releases, the Elixir team has been focusing on the compiler, both in terms of catching more mistakes at compilation time and making it faster. Elixir v1.11 has made excellent progress on both fronts. This release also includes many other goodies, such as tighter Erlang integration, support for more guard expressions, built-in datetime formatting, and other calendar enhancements.
+Elixir v1.12 is out with improvements to scripting, tighter Erlang/OTP 24 integration, stepped ranges, and dozen of new functions across the standard library. Overall this is a small release, which continues our tradition of bringing Elixir developers quality of life improvements every 6 months.
 
-## Tighter Erlang integration
+Elixir v1.12 requires Erlang/OTP 22+. We also recommend running `mix local.rebar` after installation to upgrade to the latest Rebar versions, which includes support for Erlang OTP/24+.
 
-Following Elixir v1.10, we have further integrated with Erlang's new logger by adding four new log levels: `notice`, `critical`, `alert`, and `emergency`, matching all log levels found in the Syslog standard. The `Logger` module now supports structured logging by passing maps and keyword lists to its various functions. It is also possible to specify the log level per module, via the `Logger.put_module_level/2` function. Log levels per application will be added in future releases.
+## Scripting improvements: `Mix.install/2` and `System.trap_signal/3`
 
-IEx also has been improved to show the documentation for Erlang modules directly from your Elixir terminal. This works with Erlang/OTP 23+ and requires Erlang modules to have been compiled with documentation chunks.
+Elixir v1.12 brings new conveniences for those using Elixir for scripting (via `.exs` files). Elixir has been capable of managing dependencies for a quite long time, but it could only be done within Mix projects. In particular, the Elixir team is wary of global dependencies as any scripts that rely on system packages are brittle and hard to reproduce whenever your system changes.
 
-## Compiler checks: application boundaries
-
-Elixir v1.11 builds on top of the recently added compilation tracers to track application boundaries. From this release, Elixir will warn if you invoke a function from an existing module but this module does not belong to any of your listed dependencies.
-
-These two conditions may seem contradictory. After all, if a module is available, it must have come from a dependency. This is not true in two scenarios:
-
-  * Modules from Elixir and Erlang/OTP are always available - even if their applications are not listed as a dependency
-
-  * In an umbrella project, because all child applications are compiled within the same VM, you may have a module from a sibling project available, even if you don't depend on said sibling
-
-This new compiler check makes sure that all modules that you invoke are listed as part of your dependencies, emitting a warning like below otherwise:
-
-```text
-:ssl.connect/2 defined in application :ssl is used by the current
-application but the current application does not directly depend
-on :ssl. To fix this, you must do one of:
-
-  1. If :ssl is part of Erlang/Elixir, you must include it under
-     :extra_applications inside "def application" in your mix.exs
-
-  2. If :ssl is a dependency, make sure it is listed under "def deps"
-     in your mix.exs
-
-  3. In case you don't want to add a requirement to :ssl, you may
-     optionally skip this warning by adding [xref: [exclude: :ssl]
-     to your "def project" in mix.exs
-```
-
-This comes with extra benefits in umbrella projects, as it requires applications to depend on the siblings they depend on, which will fail if there are any cyclic dependencies.
-
-## Compiler checks: data constructors
-
-In Elixir v1.11, the compiler also tracks structs and maps fields across a function body. For example, imagine you wanted to write this code:
-
-    def drive?(%User{age: age}), do: age >= 18
-
-If there is either a typo on the `:age` field or the `:age` field was not yet defined, the compiler will fail accordingly. However, if you wrote this code:
-
-    def drive?(%User{} = user), do: user.age >= 18
-
-The compiler would not catch the missing field and an error would only be raised at runtime. With v1.11, Elixir will track the usage of all maps and struct fields within the same function, emitting warnings for cases like above:
-
-```text
-warning: undefined field `age` in expression:
-
-    # example.exs:7
-    user.age
-
-expected one of the following fields: name, address
-
-where "user" was given the type %User{} in:
-
-    # example.exs:7
-    %User{} = user
-
-Conflict found at
-  example.exs:7: Check.drive?/1
-```
-
-The compiler also checks binary constructors. Consider you have to send a string over the wire with length-based encoding, where the string is prefixed by its length, up to 4MBs. Your initial attempt may be this:
-
-    def run_length(string) when is_binary(string) do
-      <<byte_size(string)::32, string>>
-    end
-
-However, the code above has a bug. Each segment given between `<<>>` must be an integer, unless specified otherwise. With Elixir v1.11, the compiler will let you know so:
-
-```text
-warning: incompatible types:
-
-    binary() !~ integer()
-
-in expression:
-
-    <<byte_size(string)::integer()-size(32), string>>
-
-where "string" was given the type integer() in:
-
-    # foo.exs:4
-    <<byte_size(string)::integer()-size(32), string>>
-
-where "string" was given the type binary() in:
-
-    # foo.exs:3
-    is_binary(string)
-
-HINT: all expressions given to binaries are assumed to be of type integer()
-unless said otherwise. For example, <<expr>> assumes "expr" is an integer.
-Pass a modifier, such as <<expr::float>> or <<expr::binary>>, to change the
-default behaviour.
-
-Conflict found at
-  foo.exs:4: Check.run_length/1
-```
-
-Which can be fixed by adding `::binary` to the second component:
-
-    def run_length(string) when is_binary(string) do
-      <<byte_size(string)::32, string::binary>>
-    end
-
-While some of those warnings could be automatically fixed by the compiler, future versions will also perform those checks across functions and potentially across modules, where automatic fixes wouldn't be desired (nor possible).
-
-## Compilation time improvements
-
-Elixir v1.11 features many improvements to how the compiler tracks file dependencies, such that touching one file causes less files to be recompiled. In previous versions, Elixir tracked three types of dependencies:
-
-  * compile time dependencies - if A depends on B at compile time, such as by using a macro, whenever B changes, A is recompiled
-  * struct dependencies - if A depends on B's struct, whenever B's struct definition changed, A is recompiled
-  * runtime dependencies - if A depends on B at runtime, A is never recompiled
-
-However, because dependencies are transitive, if A depends on B at compile time and B depends on C at runtime, A would depend on C at compile time. Therefore, it is very important to reduce the amount of compile time dependencies.
-
-Elixir v1.11 replaces "struct dependencies" by "exports dependencies". In other words, if A depends on B, whenever B public's interface changes, A is recompiled. B's public interface is made by its struct definition and all of its public functions and macros.
-
-This change allows us to mark `import`s and `require`s as "exports dependencies" instead of "compile time" dependencies. This simplifies the dependency graph considerably. For example, [in the Hex.pm project](https://github.com/hexpm/hexpm), changing the `user.ex` file in Elixir v1.10 would emit this:
-
-```text
-$ touch lib/hexpm/accounts/user.ex && mix compile
-Compiling 90 files (.ex)
-```
-
-In Elixir v1.11, we now get:
-
-```text
-$ touch lib/hexpm/accounts/user.ex && mix compile
-Compiling 16 files (.ex)
-```
-
-To make things even better, Elixir v1.11 also introduces a more granular file tracking for path dependencies. In previous versions, a module from a path dependency would always be treated as a compile time dependency. This often meant that if you have an umbrella project, changing an application would cause many modules in sibling applications to recompile. Fortunately, Elixir v1.11 will tag modules from dependencies as exports if appropriate, yielding dramatic improvements to those using path dependencies.
-
-To round up the list of compiler enhancements, the `--profile=time` option added in Elixir v1.10 now also includes the time to compile each individual file. For example, in the Plug project, one can now get:
-
-```text
-[profile] lib/plug/conn.ex compiled in 935ms
-[profile] lib/plug/ssl.ex compiled in 147ms (plus 744ms waiting)
-[profile] lib/plug/static.ex compiled in 238ms (plus 654ms waiting)
-[profile] lib/plug/csrf_protection.ex compiled in 237ms (plus 790ms waiting)
-[profile] lib/plug/debugger.ex compiled in 719ms (plus 947ms waiting)
-[profile] Finished compilation cycle of 60 modules in 1802ms
-[profile] Finished group pass check of 60 modules in 75ms
-```
-
-While implementing those features, we have also made the `--long-compilation-threshold` flag more precise. In previous versions, `--long-compilation-threshold` would consider both the time a file spent to compile and the time spent waiting on other files. In Elixir v1.11, it considers only the compilation time. This means less false positives and you can now effectively get all files that take longer than 2s to compile by passing `--long-compilation-threshold 2`.
-
-## `mix xref graph` improvements
-
-To bring visibility to the compiler tracking improvements described in the previous section, we have also added new features to `mix xref`. `mix xref` is a task that describes cross-references between files in your projects. The `mix xref graph` subsection focuses on the dependency graph between them.
-
-First we have made the existing `--label` flag to consider transitive dependencies. Using `--sink FILE` and `--label compile` can be a powerful combo to find out which files will change whenever the given `FILE` changes. For example, in the Hex.pm project, we get:
-
-```text
-$ mix xref graph --sink lib/hexpm/accounts/user.ex --label compile
-lib/hexpm/billing/hexpm.ex
-└── lib/hexpm/billing/billing.ex (compile)
-lib/hexpm/billing/local.ex
-└── lib/hexpm/billing/billing.ex (compile)
-lib/hexpm/emails/bamboo.ex
-├── lib/hexpm/accounts/email.ex (compile)
-└── lib/hexpm/accounts/user.ex (compile)
-lib/hexpm/emails/emails.ex
-└── lib/hexpm_web/views/email_view.ex (compile)
-lib/hexpm_web/controllers/api/docs_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/key_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/organization_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/organization_user_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/owner_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/package_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/release_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/repository_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/api/retirement_controller.ex
-└── lib/hexpm_web/controllers/auth_helpers.ex (compile)
-lib/hexpm_web/controllers/blog_controller.ex
-└── lib/hexpm_web/views/blog_view.ex (compile)
-lib/hexpm_web/endpoint.ex
-├── lib/hexpm_web/plug_parser.ex (compile)
-└── lib/hexpm_web/session.ex (compile)
-```
-
-All the files at the root will recompile if `lib/hexpm/accounts/user.ex` changes. Their children describe the *why*. For example, the `repository_controller.ex` file will recompile if user changes because it has a compile time dependency on `auth_helpers.ex`, which depends on `user.ex`. This indirect compile time dependency is often the source of recompilations and Elixir v1.11 now makes it trivial to spot them, so they can be eventually addressed.
-
-Another improvement to `mix xref graph` is the addition of `--format cycles`, which will print all cycles in your compilation dependency graph. A `--min-cycle-size` flag can be used if you want to discard short cycles.
-
-## `config/runtime.exs` and `mix app.config`
-
-Elixir v1.9 introduced a new configuration file, specific to releases, called `config/releases.exs`. A release is a self-contained artifact with the Erlang VM, Elixir and your application, ready to run in production.
-
-The addition of `config/releases.exs` has been a very useful one but, unfortunately, it applies only to releases. Developers not using releases must use the `config/config.exs` file, which often loaded too early at compilation time. For any dynamic configuration, developers had to resort to third-party tools or workarounds to achieve the desired results.
-
-Elixir v1.11 addresses this issue by introducing a new configuration file, called `config/runtime.exs`. This new configuration file is loaded exactly before your application starts, when the code is already fully compiled. It is loaded in development, test, and production, regardless if you are using Mix or releases. Therefore it provides a unified API for runtime configuration in Elixir.
-
-`config/runtime.exs` works the same as any other configuration file. However, given `config/runtime.exs` is meant to run with or without Mix, developers must not use `Mix.env()` or `Mix.target()` in `config/runtime.exs`. Instead, they must use the new `config_env()` and `config_target()`, which have been added to the `Config` module.
-
-While `config/releases.exs` will continue to be supported, developers can migrate to `config/runtime.exs` without loss of functionality. For example, a `config/releases.exs` file such as this one
+`Mix.install/2` is meant to be a sweetspot between single-file scripts and full-blown Mix projects. With `Mix.install/2`, you can list your dependencies on top of your scripts. When you execute the script for the first time, Elixir will download, compile, and cache your dependencies before running your script. Future invocations of the script will simply read the compiled artefacts from the cache:
 
 ```elixir
-# config/releases.exs
-import Config
-
-config :foo, ...
-config :bar, ...
+Mix.install([:jason])
+IO.puts Jason.encode!(%{hello: :world})
 ```
 
-could run as is as `config/runtime.exs`. However, given `config/runtime.exs` runs in all environments, you may want to restrict part of your configuration to the `:prod` environment:
+`Mix.install/2` also performs protocol consolidation, which gives script developers an option to execute their code in the most performant format possible.
 
-```elixir
-# config/runtime.exs
-import Config
+**Note:** `Mix.install/2` is currently experimental and it may change in future releases.
 
-if config_env() == :prod do
-  config :foo, ...
-  config :bar, ...
-end
+Another improvement to scripting is the ability to trap exit signals via `System.trap_signal/3`. All you need is the signal name and a callback that will be invoked when the signal triggers. For example, ExUnit leverages this functionality to print all currently running tests when you abort the test suite via SIGQUIT (`Ctrl+\\ `):
+
+```
+$ mix test
+.......................................................................
+.....................^\
+
+Aborting test suite, the following have not completed:
+
+* test query building [test/ecto/query_test.exs:48]
+* test placeholders in Repo.insert_all [test/ecto/repo_test.exs:502]
+
+Showing results so far...
+
+78 doctests, 1042 tests, 0 failures
 ```
 
-If both files are available, releases will pick the now preferred `config/runtime.exs` instead of `config/releases.exs`.
+This is particularly useful when your tests get stuck and you want to know which one is the culprit.
 
-To wrap it all up, `Mix` also includes a new task called `mix app.config`. This task loads all applications and configures them, without starting them. Whenever you write your own Mix tasks, you will typically want to invoke either `mix app.start` or `mix app.config` before running your own code. Which one is better depends if you want your applications running or only configured.
+**Important**: Trapping signals may have strong implications on how a system shuts down and behave in production and therefore it is extremely discouraged for libraries to set their own traps. Instead, they should redirect users to configure them themselves. The only cases where it is acceptable for libraries to set their own traps is when using Elixir in script mode, such as in `.exs` files and via Mix tasks.
 
-## Other improvements
+## Tighter Erlang/OTP 24 integration
 
-Elixir v1.11 adds the `is_struct/2`, `is_exception/1`, and `is_exception/2` guards. It also adds support for the `map.field` syntax in guards.
+Erlang/OTP 24 ships with JIT compilation support and Elixir developers don't have to do anything to reap its benefits. There are many other features in Erlang/OTP 24 to look forwards to and Elixir v1.12 provides integration with many of them: such as support for 16bit floats in bitstrings as well as performance improvements in the compiler and during code evaluation.
 
-The Calendar module ships with a new `Calendar.strftime/3` function, which provides datetime formatting based on the `strftime` format. The `Date` module got new functions for working with weeks and months, such as `Date.beginning_of_month/1` and `Date.end_of_week/2`. Finally, all calendar types got conversion functions from and to gregorian timestamps, such as `Date.from_gregorian_days/2` and `NaiveDateTime.to_gregorian_seconds/1`.
+Another excellent feature in Erlang/OTP 24 is the implementation of [EEP 54](http://erlang.org/eeps/eep-0054.html), which provides extended error information for many functions in Erlang's stdlib. Elixir v1.12 fully leverages this feature to improve reporting for errors coming from Erlang. For example, in earlier OTP versions, inserting an invalid argument into a ETS table that no longer exists would simply error with `ArgumentError`:
 
-Mix also includes two new tasks: `mix app.config`, for application runtime configuration, and `mix test.coverage`, which generates aggregated coverage reports for umbrella projects and for test suites partitioned across processes.
+```
+Interactive Elixir (1.11.0)
+iex(1)> ets = :ets.new(:example, [])
+#Reference<0.3845811859.2669281281.223553>
+iex(2)> :ets.delete(ets)
+true
+iex(3)> :ets.insert(ets, :should_be_a_tuple)
+** (ArgumentError) argument error
+    (stdlib 3.15) :ets.insert(#Reference<0.3845811859.2669281281.223553>, :should_be_a_tuple)
+```
 
-## v1.11.3 (2021-01-04)
+However, in Elixir v1.12 with Erlang/OTP 24:
 
-### 1. Enhancements
+```
+Interactive Elixir (1.12.0)
+iex(1)> ets = :ets.new(:example, [])
+#Reference<0.105641012.1058144260.76455>
+iex(2)> :ets.delete(ets)
+true
+iex(3)> :ets.insert(ets, :should_be_a_tuple)
+** (ArgumentError) errors were found at the given arguments:
 
-#### Elixir
+  * 1st argument: the table identifier does not refer to an existing ETS table
+  * 2nd argument: not a tuple
 
-  * [Macro] Add `Macro.unique_var/2` and `Macro.generate_unique_arguments/2`
+    (stdlib 3.15) :ets.insert(#Reference<0.105641012.1058144260.76455>, :should_be_a_tuple)
+```
 
-### 2. Bug fixes
+Finally, note Rebar v2 no longer works on Erlang/OTP 24+. Mix defaults to Rebar v3 since v1.4, so no changes should be necessary by the huge majority of developers. However, if you are explicitly setting `manager: :rebar` in your dependency, you want to move to Rebar v3 by removing the `:manager` option. Support for unsupported Rebar versions will be removed from Mix in the future.
 
-#### Elixir
+## Stepped ranges
 
-  * [Code] Do not raise when checking for operator ambiguity when `:static_atoms_encoder` is set in `Code.string_to_quoted`
-  * [Kernel] Emit undefined function warnings from `with`
-  * [Kernel] Do not fail type checking when literals are used in guards
-  * [Module] Do not warn for attributes used in `@after_compile`
-  * [Record] Make sure nested record names do not clobber each other
+Elixir has support for ranges from before its v1.0 release. Ranges support only integers and are inclusive, using the mathematic notation `a..b`. Ranges in Elixir are either increasing `1..10` or decreasing `10..1` and the direction of the range was always inferred from the first and last positions. Ranges are always lazy as its values are emitted as they are enumerated rather than being computed upfront.
 
-#### ExUnit
+Unfortunately, due to this inference, it is not possible to have empty ranges. For example, if you want to create a list of `n` elements, you cannot express it with a range from `1..n`, as `1..0` (for `n=0`) is a decreasing range with two elements.
 
-  * [ExUnit.Assertions] Do not crash if there are macros and module attributes on the left side of `++`
+Elixir v1.12 supports stepped ranges via the `first..last//step` notation. For example: `1..10//2` will emit the numbers `1`, `3`, `5`, `7`, and `9`. You can consider the `//` operator as an equivalent to "range division", as it effectively divides the number of elements in the range by `step`, rounding up on inexact scenarios. Steps can be either positive (increasing ranges) or negative (decreasing ranges). Stepped ranges bring more expressive power to Elixir ranges and they elegantly solve the empty range problem, as they allow the direction of the steps to be explicitly declared instead of inferred.
 
-#### IEx
+As of Elixir v1.12, implicitly decreasing ranges are soft-deprecated and warnings will be emitted in future Elixir versions based on our [deprecation policy](https://hexdocs.pm/elixir/compatibility-and-deprecations.html#deprecations).
 
-  * [IEx.Helpers] Do not use Unicode chars if ANSI is disabled
+## Additional functions
 
-#### Mix
+Elixir v1.12 has the additional of many functions across the standard library. The `Enum` module received additions such as `Enum.count_until/2`, `Enum.product/1`, `Enum.zip_with/2`, and more. The `Integer` module now includes `Integer.pow/2` and `Integer.extended_gcd/2`. Finally, the `Kernel` module got two new functions, `Kernel.then/2` and `Kernel.tap/2`, which are specially useful in `|>` pipelines.
 
-  * [mix deps.compile] Fix compatibility with rebar v3.14
-  * [mix release] Do not use private `ram_file:compress/1`
-  * [mix xref] Do not crash when retrieving calls for modules in memory
-
-## v1.11.2 (2020-11-03)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Code] Do not crash when getting docs for missing `erts` appdir
-  * [Kernel] Raise meaningful error if `:erlang.is_record` is used in guards
-  * [Kernel] Prune tracers when fetching `__ENV__` inside functions
-
-#### Mix
-
-  * [mix] Fix regression where aliases could not call themselves recursively
-  * [mix compile] Do not discard tracers that are set programatically
-
-## v1.11.1 (2020-10-16)
-
-### 1. Bug fixes
-
-#### Elixir
-
-  * [Code] Ignore tracers if lexical tracker is dead or explicitly nil when evaling code with an environment
-  * [GenServer] Do not show warning when using `super` in `GenServer.child_spec/1`
-  * [Kernel] Do not crash when :reduce is set to `nil` in comprehensions
-  * [Kernel] Fix a scenario where undefined function warnings were not being emitted
-
-#### IEx
-
-  * [IEx.Helpers] Properly handle tags inside typespec when showing Erlang docs
-
-#### Logger
-
-  * [Logger] Do not deadlock Logger if handler crashes on sync mode
-
-#### Mix
-
-  * [Mix] Add inet6 fallback to Mix usage of httpc
-  * [mix compile.app] Do not list apps that do not match the current target
-
-## v1.11.0 (2020-10-06)
+## v1.12.0
 
 ### 1. Enhancements
 
 #### EEx
 
-  * [EEx] Track column information in EEx templates when enabled in the compiler
-  * [EEx] Show column information in EEx error messages
-  * [EEx] Support `:indentation` option when compiling EEx templates for proper column tracking
+  * [EEx.Engine] Add `c:EEx.Engine.handle_text/3` callback that receives text metadata
+  * [EEx.Engine] Emit warnings for unused "do" expression in EEx
 
 #### Elixir
 
-  * [Access] Add `Access.at!/1`
-  * [Calendar] Add `Calendar.strftime/3` for datetime formatting
-  * [Calendar] Add linear integer representations to Calendar modules: `Date.from_gregorian_days/2`, `Date.to_gregorian_days/1`, `NaiveDateTime.from_gregorian_seconds/3`, `NaiveDateTime.to_gregorian_seconds/1`, `Time.from_seconds_after_midnight/1`, and `Time.to_seconds_after_midnight/1`
-  * [Calendar] Add `new!` to Date/Time/NaiveDateTime/DateTime (`new` has also been added to `DateTime` for completeness)
-  * [Calendar] Support custom starting day of the week in `Date.day_of_week/2`
-  * [Calendar] Add `Date.beginning_of_month/1` and `Date.end_of_month/1`
-  * [Calendar] Add `Date.beginning_of_week/2` and `Date.end_of_week/2`
-  * [Code] Add `:column` to `Code.string_to_quoted*/2`
-  * [Code] Add `Code.can_await_module_compilation?/0` to check if the parallel compiler is enabled and it can await for other modules to be compiled
-  * [Config] Support `config_env/0` and `config_target/0` in `config` files
-  * [Config] Allow `import_config` to be disabled for some configuration files
-  * [Enum] Allow a sorting function on `Enum.min_max_by/3,4`, including the new `compare/2` conventions
-  * [Kernel] Add `is_struct/2` guard
-  * [Kernel] Add `is_exception/1` and `is_exception/2` guards
-  * [Kernel] Support `map.field` syntax in guards
-  * [Kernel] Add `+++` and `---` with right associativity to the list of custom operators
-  * [Kernel] Warn if a variable that looks like a compiler variable (such as `__MODULE__`) is unused
-  * [Kernel.ParallelCompiler] Report individual file compilation times when `profile: :time` is given
-  * [Kernel.ParallelCompiler] Improve precision of `:long_compilation_threshold` so it takes only compilation times into account (and not waiting times)
-  * [Registry] Add `Registry.delete_meta/2`
-  * [Task] Add `Task.await_many/2`
+  * [Code] Add `Code.cursor_context/2` to return the context of a code snippet
+  * [Code] Do not add newlines around interpolation on code formatting. Note this means formatted code that has interpolation after the line length on Elixir v1.12 won't be considered as formatted on earlier Elixir versions
+  * [Code] Do not add brackets when keywords is used in the access syntax
+  * [Calendar] Support basic datetime format in `Calendar.ISO` parsing functions
+  * [Code] Improve evaluation performance on systems running on Erlang/OTP 24+
+  * [Date] Support steps via `Date.range/3`
+  * [DateTime] Add `offset` to `DateTime.to_iso8601/2` (now `to_iso8601/3`)
+  * [Enum] Add `Enum.count_until/2` and `Enum.count_until/3`
+  * [Enum] Add `Enum.product/1`
+  * [Enum] Add `Enum.zip_with/2`, `Enum.zip_with/3`, `Enum.zip_reduce/3`, and `Enum.zip_reduce/4`
+  * [Enum] Add support for functions as the second argument of `Enum.with_index/2`
+  * [Exception] Show `error_info` data for exceptions coming from Erlang
+  * [Float] Add `Float.pow/2`
+  * [Integer] Add `Integer.pow/2` and `Integer.extended_gcd/2`
+  * [IO] Add `IO.stream/0` and `IO.binstream/0` which default to STDIO with line orientation
+  * [List] Add default value for `List.first/1` and `List.last/1`
+  * [Kernel] Add `first..last//step` as support for stepped ranges
+  * [Kernel] Also warn for literal structs on `min/2` and `max/2`
+  * [Kernel] Add `Kernel.tap/2` and `Kernel.then/2`
+  * [Kernel] Do not add runtime dependencies to remotes in typespecs
+  * [Kernel] When there is an unused variable warning and there is a variable with the same name previously defined, suggest the user may have wanted to use the pin operator
+  * [Kernel] Improve error messages on invalid character right after a number
+  * [Kernel] Show removal and deprecated tips from Erlang/OTP
+  * [Macro] Add export dependencies on `Macro.struct!/2`
+  * [Macro] Support `:newline` to customize newlines escaping in `Macro.unescape_string/2`
+  * [Module] Raise on invalid `@dialyzer` attributes
+  * [Module] Add `Module.get_definition/2` and `Module.delete_definition/2`
+  * [Module] Allow `@on_load` to be a private function
+  * [Module] Validate `@dialyzer` related module attributes
+  * [Module] Add `Module.reserved_attributes/0` to list all reserved attributes by the language
+  * [Range] Add `Range.new/3` and `Range.size/1`
+  * [Regex] Add offset option to `Regex.scan/3` and `Regex.run/3`
+  * [Registry] Support `:compression` on `Registry` tables
+  * [Registry] Support `Registry.values/3` for reading values under a given key-pid pair
+  * [Stream] Add `Stream.zip_with/2` and `Stream.zip_with/3`
+  * [String] Add `:turkic` mode option to String case functions
+  * [String] Update to Unicode 13.0
+  * [System] Add `System.trap_signal/3` and `System.untrap_signal/2`
+  * [System] Add `System.shell/2` to invoke a command that is interpreted by the shell
+  * [Tuple] Add `Tuple.sum/1` and `Tuple.product/1`
+  * [URI] Support RFC3986 compliant encoding and decoding of queries via the `:rfc3986` option
 
 #### ExUnit
 
-  * [ExUnit] Add support for coloring on Windows 10 consoles/shells
-  * [ExUnit] Add `ExUnit.fetch_test_supervisor/0`
-  * [ExUnit] Add `@tag :tmp_dir` support to ExUnit. The temporary directory is automatically created and pruned before each test
-  * [ExUnit] Add file and line to ExUnit's `--trace`
-  * [ExUnit.Assertion] Allow receive timeouts to be computed at runtime
-  * [ExUnit.Case] Add `register_test/6` to speed up compilation of custom tests
-  * [ExUnit.Doctest] Allow users to add tags to doctests
+  * [ExUnit] Intercept SIGQUIT (via Ctrl+\\) and show a list of all aborted tests as well as intermediate test results
+  * [ExUnit] Interpolate module attributes in match assertions diffs
+  * [ExUnit] Print how much time is spent on `async` vs `sync` tests
+  * [ExUnit] Improve error messages for doctests
+  * [ExUnit] Compile doctests faster (often by two times)
+  * [ExUnit] Add `ExUnit.async_run/0` and `ExUnit.await_run/1`
 
 #### IEx
 
-  * [IEx] Add support for coloring on Windows 10 consoles/shells
-  * [IEx.Helpers] Show docs from Erlang modules that have been compiled with the docs chunk
-
-#### Logger
-
-  * [Logger] Add `notice`, `critical`, `alert`, and `emergency` log levels
-  * [Logger] Support structured logging by logging maps or keyword lists
-  * [Logger] Allow level to be set per module with `Logger.put_module_level/2`
-  * [Logger] Include `erl_level` in Logger's metadata
+  * [IEx] Make IEx' parser configurable to allow special commands
+  * [IEx] Show function signature when pressing tab after the opening parens of a function
+  * [IEx] If an IEx expression starts with a binary operator, such as `|>`, automatically pipe in the result of the last expression
 
 #### Mix
 
-  * [mix] Add `MIX_BUILD_ROOT` to config `_build` dir
-  * [mix] Introduce `MIX_XDG` as a simpler mechanism to opt-in to the XDG specification
-  * [mix] Allow requirements for a Mix task to be listed via the `@requirements` module attribute
-  * [mix] Allow optional dependencies to be defined in `:extra_applications` and `:applications`
-  * [mix app.config] Add new `mix app.config` task that compiles applications and loads runtime configuration
-  * [mix archive.install] Support `--repo` option on Hex packages
-  * [mix compile] Support the `__mix_recompile__?/0` callback for custom behaviour on when Mix should recompile a given module
-  * [mix compile.elixir] Mark modules for path dependencies as "Export dependencies" if they changed but their public interface is the same
-  * [mix compile.elixir] Track application boundaries in the Elixir compiler. If you invoke code from Erlang or Elixir standard libraries and you don't depend on the proper applications, a warning will be emitted. A warning will also be emitted if you invoke code from an umbrella sibling that you don't depend on - effectively forbidding cyclic dependencies between apps
-  * [mix deps] Sort the dependencies alphabetically before printing
-  * [mix deps] Use `origin/HEAD` as the default Git ref in dependencies
-  * [mix deps] Redact Git `username`/`password` in output log
-  * [mix deps] Support rebar3's `git_subdir` resource type
-  * [mix deps.compile] Allow local deps to be skipped on `mix deps.compile`
-  * [mix deps.unlock] Print which dependencies get unlocked when using the `--unused` flag
-  * [mix escript.install] Support `--repo` option on Hex packages
-  * [mix new] Add `@impl` to application generated by `mix new --sup`
-  * [mix release] Enable overriding `sys.config` location via `RELEASE_SYS_CONFIG` env var
-  * [mix release] Boot a release under configuration in interactive mode and then swap to embedded mode (if running on Erlang/OTP 23+)
-  * [mix release] Add `rel_templates_path` to configure the source of template files such as "env.sh.eex", "vm.args.eex" and "overlays"
-  * [mix release] Allow some chunks to be kept in the `:strip_beams` config
-  * [mix test] Allow `:ignore_modules` inside `:test_coverage` option
-  * [mix test.coverage] Add `mix test.coverage` that aggregates coverage results from umbrellas and OS partitioning
-  * [mix xref] Make the `--label` option for `mix xref graph` transitive by default and add `--only-direct` for only direct dependencies
-  * [mix xref] Add `--format cycles` support for `mix xref graph`
-  * [mix xref] Add support to `mix xref graph` for using `--source` and `--sink` at the same time
+  * [Mix] Add `Mix.install/2` for dynamically installing a list of dependencies
+  * [Mix] Support `:exit_code` option in `Mix.raise/2`
+  * [Mix] Discard `MIX_ENV` and `MIX_TARGET` values if they are empty strings
+  * [Mix] Print the time taken to execute a task with on `MIX_DEBUG=1`
+  * [mix compile.erlang] Compile multiple files in parallel
+  * [mix escript.build] Deep merge configuration and ensure argv is set when executing `config/runtime.exs`
+  * [mix release] Add `RELEASE_PROG` to releases with the name of the executable starting the release
+  * [mix release] Support `remote.vm.args` to customize how the connecting VM boots
+  * [mix test] Run all available tests if there are no pending `--failed` tests. This provides a better workflow as you no longer need to toggle the `--failed` flag between runs
 
 ### 2. Bug fixes
 
-#### EEx
-
-  * [EEx] Make trimming behaviour via the `:trim` option more consistent
-
 #### Elixir
 
-  * [Application] Warn if non-atom keys are given to `put_env`, `get_env`, `fetch_env`, and `delete_env`
-  * [Code] Do not send language keyword through the `:static_atoms_encoder` in `Code.string_to_quoted`
-  * [Kernel] Validate values given to `:line` in quote to avoid emitting invalid ASTs
-  * [Kernel] Report the correct line number when raising inside a macro
-  * [Kernel] Fix an issue where `elixirc` would not accept paths with backslash (`\`) separators on Windows
-  * [Kernel] Properly parse `&//2` (i.e. the capture of the division operator)
-  * [Kernel] Raise `CompileError` when trying to define reserved types
-  * [Kernel] Improve compiler error message when using `|` in a `def` signature
-  * [Kernel] Improve error message when trying to use invalid list operators in guards
-  * [Kernel.SpecialForms] Add `|/2` to the list of special forms to avoid inconsistent behaviour on overrides
-  * [Keyword] Enforce keys to be atoms in `Keyword.keys/1`
-  * [Record] Keep lexical ordering when creating records
-  * [Registry] Do not crash when a process with key-value has been registered using `:via` and it fails to start on `init`
-  * [URI] `URI.decode_query/2` emits an empty string for parameters without values, according to [URL's living standard](https://url.spec.whatwg.org/#application/x-www-form-urlencoded) - note this behaviour is not specified in the spec implemented by the URI module, so the living standard was chosen
-  * [Version] Add defaults and enforce keys in `Version` struct
+  * [CLI] Ensure `-e ""` (with an empty string) parses correctly on Windows
+  * [Inspect] Do not override user supplied `:limit` option for derived implementations
+  * [Kernel] Allow heredoc inside a heredoc interpolation
+  * [Kernel] Preserve CRLF on heredocs
+  * [Kernel] Public functions without documentation now appear as an empty map on `Code.fetch_docs/1`, unless they start with underscore, where they remain as `:none`. This aligns Elixir's implementation with EEP48
+  * [Kernel] Do not crash when complex literals (binaries and maps) are used in guards
+  * [Kernel] Properly parse keywords (such as `end`) followed by the `::` operator
+  * [Kernel] Do not ignore unimplemented signatures from generated functions
+  * [Kernel] Improve error message when an expression follows a keyword list without brackets
+  * [Macro] `Macro.decompose_call/1` now also consider tuples with more than 2 elements to not be valid calls
+  * [Macro] Fix `Macro.to_string/1` double-escaping of escape characters in sigils
+  * [Macro] Fix `Macro.underscore/1` on digits preceded by capitals: "FOO10" now becomes "foo10" instead of "fo_o10"
+  * [Macro] Preserve underscores between digits on `Macro.underscore/1`
+  * [OptionParser] Properly parse when numbers follow-up aliases, for example, `-ab3` is now parsed as `-a -b 3`
+  * [Path] Fix `Path.relative_to/2` when referencing self
+  * [Path] Do not crash when a volume is given to `Path.absname/1`, such as "c:"
+  * [Task] Ensure `Task.async_stream/2` with `ordered: false` discard results as they are emitted, instead of needlessly accumulating inside the stream manager
+  * [Task] Raise if `:max_concurrency` is set to 0 on streaming operations
+  * [URI] Do not discard empty paths on `URI.merge/2`
 
 #### ExUnit
 
-  * [ExUnit.CaptureIO] Fix race condition where a dead capture would still be considered as active
-  * [ExUnit.Diff] Do not crash when failing to eval/inspect struct
-  * [ExUnit.Diff] Properly diff numbers in respect to `==` and `===` operators
+  * [ExUnit.Case] Make `@tag tmp_dir` an absolute directory, avoiding inconsistencies if the test changes the current working directory
+  * [ExUnit.Diff] Fix cases where the diffing algorithm would fail to print a pattern correct
 
 #### IEx
 
-  * [IEx] Fix tokenizer emitting repeated warnings in the REPL
-  * [IEx] Ensure `--dot-iex` is preserved when restarting the evaluator and after shell respawn
-  * [IEx.Pry] Ensure `IEx.pry` can be triggered more than twice when invoked from the same process
+  * [IEx] Fix auto-completion inside remote shells
 
 #### Mix
 
-  * [mix cmd] Fix a bug where only the first --app option would be executed
-  * [mix compile] Fix an issue where new protocol implementations would not propagate when running `mix compile` from an umbrella root
-  * [mix deps.compile] Use `gmake` instead of `make` when compiling deps on NetBSD/DragonFlyBSD
-  * [mix release] Load `.app` from dependencies path when it is a project dependency
-  * [mix release] Always include "rel/overlays" in the list of overlays directories if available
-  * [mix release] Change `erts/bin/erl` binary mode to `0o755`
-  * [mix test] Compare to test coverage threshold inclusively
-
-#### Logger
-
-  * [Logger] Print metadata for all types that implement String.Chars
+  * [mix app.config] Do not emit false positive warnings when configured dependencies that have `runtime: false` set
+  * [mix compile.elixir] Ensure that a manifest is generated even with no source code
+  * [mix compile.elixir] Make sure export dependencies trigger recompilation when the dependency is removed as well as when the whole file is removed
+  * [mix compile.elixir] Do not emit false positive warnings when a path dependency adds a module that is then used by the current application in the same `mix compile` cycle
+  * [mix test] Ensure protocols within the current project are consolidated when `--cover` is given
+  * [mix release] Improve compliance of release scripts with stripped down Linux installations
+  * [mix release] Preserve file mode when copying non-beam ebin files
+  * [mix xref] Ensure args are passed to the underlying `mix compile` call
 
 ### 3. Soft-deprecations (no warnings emitted)
 
-### Elixir
+#### Elixir
 
-  * [Exception] `Exception.exception?/1` is deprecated in favor of `Kernel.is_exception/1`
-  * [Regex] `Regex.regex?/1` is deprecated in favor of `Kernel.is_struct/2`
-
-### Logger
-
-  * [Logger] `warn` log level is deprecated in favor of `warning`
-
-### Mix
-
-  * [mix release] `config/releases.exs` is deprecated in favor of a more general purpose `config/runtime.exs`
+  * [Kernel] Using `first..last` to match on ranges is soft-deprecated and will warn on future Elixir versions. Use `first..last//step` instead
+  * [Kernel] Using `first..last` to create decreasing ranges is soft-deprecated and will warn on future versions. Use `first..last//-1` instead
 
 ### 4. Hard-deprecations
 
+#### EEx
+
+  * [EEx.Engine] `use EEx.Engine` is deprecated in favor of explicit delegation
+
 #### Elixir
 
-  * [Supervisor] Deprecate `Supervisor.start_child/2` and `Supervisor.terminate_child/2` in favor of `DynamicSupervisor`
-  * [Supervisor.Spec] Deprecate `Supervisor.Spec.worker/3` and `Supervisor.Spec.supervisor/3` in favor of the new typespecs
-  * [System] Deprecate `System.stacktrace/0` in favor of `__STACKTRACE__`
+  * [Kernel] The binary operator `^^^` is deprecated. If you are using `Bitwise.^^^/2`, use `Bitwise.bxor/2` instead
+  * [Kernel] Deprecate `@foo()` in favor of `@foo`
+  * [System] Deprecate `System.stacktrace/0` (it was already deprecated outside of catch/rescue and now it is deprecated everywhere)
 
 #### Mix
 
-  * [Mix.Project] Deprecate `Mix.Project.compile/2` in favor of `Mix.Task.run("compile", args)`
+  * [mix compile] The `:xref` compiler is deprecated and it has no effect. Please remove it from your mix.exs file.
 
-## v1.10
+## v1.11
 
-The CHANGELOG for v1.10 releases can be found [in the v1.10 branch](https://github.com/elixir-lang/elixir/blob/v1.10/CHANGELOG.md).
+The CHANGELOG for v1.11 releases can be found [in the v1.11 branch](https://github.com/elixir-lang/elixir/blob/v1.11/CHANGELOG.md).

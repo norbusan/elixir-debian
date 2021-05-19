@@ -90,6 +90,11 @@ defmodule Kernel.ParallelCompiler do
     spawn_workers(files, :compile, options)
   end
 
+  @doc """
+  Compiles the given files and writes resulting BEAM files into path.
+
+  See `compile/2` for more information.
+  """
   @doc since: "1.6.0"
   def compile_to_path(files, path, options \\ []) when is_binary(path) and is_list(options) do
     spawn_workers(files, {:compile, path}, options)
@@ -375,24 +380,31 @@ defmodule Kernel.ParallelCompiler do
     # There is potentially a deadlock. We will release modules with
     # the following order:
     #
-    #   1. Code.ensure_compiled/1 checks (deadlock = soft)
-    #   2. Struct checks (deadlock = hard)
-    #   3. Modules without a known definition
-    #   4. Code invocation (deadlock = raise)
+    #   1. Code.ensure_compiled/1 checks without a known definition (deadlock = soft)
+    #   2. Code.ensure_compiled/1 checks with a known definition (deadlock = soft)
+    #   3. Struct/import/require/ensure_compiled! checks without a known definition (deadlock = hard)
+    #   4. Modules without a known definition
+    #   5. Code invocation (deadlock = raise)
     #
-    # In theory there is no difference between hard and raise, the
+    # The reason for step 3 and 4 is to not treat typos as deadlocks and
+    # help developers handle those sooner. However, this can have false
+    # positives in case multiple modules are defined in the same file
+    # and the module we are waiting for is defined later on.
+    #
+    # Finally, note there is no difference between hard and raise, the
     # difference is where the raise is happening, inside the compiler
     # or in the caller.
-    cond do
-      deadlocked = deadlocked(waiting, :soft) || deadlocked(waiting, :hard) ->
-        spawn_workers(deadlocked, spawned, waiting, files, result, warnings, state)
 
-      without_definition = without_definition(waiting, files) ->
-        spawn_workers(without_definition, spawned, waiting, files, result, warnings, state)
+    deadlocked =
+      deadlocked(waiting, :soft, false) ||
+        deadlocked(waiting, :soft, true) || deadlocked(waiting, :hard, false) ||
+        without_definition(waiting, files)
 
-      true ->
-        errors = handle_deadlock(waiting, files)
-        {{:error, errors, warnings}, state}
+    if deadlocked do
+      spawn_workers(deadlocked, spawned, waiting, files, result, warnings, state)
+    else
+      errors = handle_deadlock(waiting, files)
+      {{:error, errors, warnings}, state}
     end
   end
 
@@ -452,13 +464,21 @@ defmodule Kernel.ParallelCompiler do
     nillify_empty(
       for %{pid: pid} <- files,
           {_, ^pid, ref, on, _, _} <- List.wrap(List.keyfind(waiting, pid, 1)),
-          not Enum.any?(waiting, fn {_, _, _, _, defining, _} -> on in defining end),
+          not defining?(on, waiting),
           do: {ref, :not_found}
     )
   end
 
-  defp deadlocked(waiting, type) do
-    nillify_empty(for {_, _, ref, _, _, ^type} <- waiting, do: {ref, :deadlock})
+  defp deadlocked(waiting, type, defining?) do
+    nillify_empty(
+      for {_, _, ref, on, _, ^type} <- waiting,
+          defining?(on, waiting) == defining?,
+          do: {ref, :deadlock}
+    )
+  end
+
+  defp defining?(on, waiting) do
+    Enum.any?(waiting, fn {_, _, _, _, defining, _} -> on in defining end)
   end
 
   defp nillify_empty([]), do: nil

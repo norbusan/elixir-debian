@@ -19,6 +19,33 @@ defmodule Mix.CLITest do
     end)
   end
 
+  @tag :unix
+  test "Mix.raise/2 can set exit code", %{tmp_dir: tmp_dir} do
+    File.cd!(tmp_dir, fn ->
+      File.mkdir_p!("lib")
+
+      File.write!("mix.exs", """
+      defmodule MyProject do
+        use Mix.Project
+
+        def project do
+          [app: :my_project, version: "0.0.1", aliases: aliases()]
+        end
+
+        defp aliases do
+          [
+            custom: &error(&1, exit_code: 99),
+          ]
+        end
+
+        defp error(_args, opts), do: Mix.raise("oops", opts)
+      end
+      """)
+
+      assert {_, 99} = mix_code(~w[custom])
+    end)
+  end
+
   test "compiles and invokes simple task from CLI", %{tmp_dir: tmp_dir} do
     File.cd!(tmp_dir, fn ->
       File.mkdir_p!("lib")
@@ -60,11 +87,11 @@ defmodule Mix.CLITest do
       assert contents =~ "This won't appear"
 
       contents = mix(~w[my_hello], [{"MIX_DEBUG", "1"}])
-      assert contents =~ "** Running mix my_hello (inside MyProject)"
+      assert contents =~ "-> Running mix my_hello (inside MyProject)"
       assert contents =~ "** (Mix.Error) oops"
 
       contents = mix(~w[my_hello], [{"MIX_DEBUG", "0"}])
-      refute contents =~ "** Running mix my_hello (inside MyProject)"
+      refute contents =~ "-> Running mix my_hello (inside MyProject)"
       refute contents =~ "** (Mix.Error) oops"
     end)
   end
@@ -168,6 +195,30 @@ defmodule Mix.CLITest do
       assert output =~ ~s({:other, ["a", "b", "c"]})
     end)
   after
+    System.delete_env("MIX_EXS")
+  end
+
+  test "env config and target use defaults when empty", %{tmp_dir: tmp_dir} do
+    File.cd!(tmp_dir, fn ->
+      File.write!("custom.exs", """
+      defmodule P do
+        use Mix.Project
+        def project, do: [app: :p, version: "0.1.0"]
+      end
+      """)
+
+      System.put_env("MIX_ENV", "")
+      System.put_env("MIX_TARGET", "")
+      System.put_env("MIX_EXS", "custom.exs")
+
+      output =
+        mix(["run", "-e", "IO.inspect {Mix.env(), Mix.target(), System.argv()}", "--", "a", "b"])
+
+      assert output =~ ~s({:dev, :host, ["a", "b"]})
+    end)
+  after
+    System.delete_env("MIX_ENV")
+    System.delete_env("MIX_TARGET")
     System.delete_env("MIX_EXS")
   end
 

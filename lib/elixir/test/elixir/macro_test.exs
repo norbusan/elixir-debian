@@ -327,12 +327,12 @@ defmodule MacroTest do
 
     test "sigil call" do
       assert Macro.to_string(quote(do: ~r"123")) == ~S/~r"123"/
-      assert Macro.to_string(quote(do: ~r"\n123")) == ~S/~r"\\n123"/
-      assert Macro.to_string(quote(do: ~r"12\"3")) == ~S/~r"12\\"3"/
+      assert Macro.to_string(quote(do: ~r"\n123")) == ~S/~r"\n123"/
+      assert Macro.to_string(quote(do: ~r"12\"3")) == ~S/~r"12\"3"/
       assert Macro.to_string(quote(do: ~r/12\/3/u)) == ~S"~r/12\/3/u"
-      assert Macro.to_string(quote(do: ~r{\n123})) == ~S/~r{\\n123}/
+      assert Macro.to_string(quote(do: ~r{\n123})) == ~S/~r{\n123}/
       assert Macro.to_string(quote(do: ~r((1\)(2\)3))) == ~S/~r((1\)(2\)3)/
-      assert Macro.to_string(quote(do: ~r{\n1{1\}23})) == ~S/~r{\\n1{1\}23}/
+      assert Macro.to_string(quote(do: ~r{\n1{1\}23})) == ~S/~r{\n1{1\}23}/
       assert Macro.to_string(quote(do: ~r|12\|3|)) == ~S"~r|12\|3|"
 
       assert Macro.to_string(quote(do: ~r[1#{two}3])) == ~S/~r[1#{two}3]/
@@ -578,6 +578,10 @@ defmodule MacroTest do
     test "range" do
       assert Macro.to_string(quote(do: unquote(-1..+2))) == "-1..2"
       assert Macro.to_string(quote(do: Foo.integer()..3)) == "Foo.integer()..3"
+      assert Macro.to_string(quote(do: unquote(-1..+2//-3))) == "-1..2//-3"
+
+      assert Macro.to_string(quote(do: Foo.integer()..3//Bar.bat())) ==
+               "Foo.integer()..3//Bar.bat()"
     end
 
     test "when" do
@@ -769,6 +773,8 @@ defmodule MacroTest do
     assert Macro.decompose_call(quote(do: :foo.foo(1, 2, 3))) == {:foo, :foo, [1, 2, 3]}
     assert Macro.decompose_call(quote(do: 1.(1, 2, 3))) == :error
     assert Macro.decompose_call(quote(do: "some string")) == :error
+    assert Macro.decompose_call(quote(do: {:foo, :bar, :baz})) == :error
+    assert Macro.decompose_call(quote(do: {:foo, :bar, :baz, 42})) == :error
   end
 
   describe "env" do
@@ -1005,8 +1011,10 @@ defmodule MacroTest do
     assert Macro.underscore("FOO_BAR") == "foo_bar"
     assert Macro.underscore("FoBaZa") == "fo_ba_za"
     assert Macro.underscore("Foo10") == "foo10"
+    assert Macro.underscore("FOO10") == "foo10"
     assert Macro.underscore("10Foo") == "10_foo"
     assert Macro.underscore("FooBar10") == "foo_bar10"
+    assert Macro.underscore("FooBAR10") == "foo_bar10"
     assert Macro.underscore("Foo10Bar") == "foo10_bar"
     assert Macro.underscore("Foo.Bar") == "foo/bar"
     assert Macro.underscore(Foo.Bar) == "foo/bar"
@@ -1028,6 +1036,7 @@ defmodule MacroTest do
     assert Macro.camelize("foo__bar") == "FooBar"
     assert Macro.camelize("foo/bar") == "Foo.Bar"
     assert Macro.camelize("Foo.Bar") == "Foo.Bar"
+    assert Macro.camelize("foo1_0") == "Foo1_0"
     assert Macro.camelize("FOO_BAR") == "FOO_BAR"
     assert Macro.camelize("FOO.BAR") == "FOO.BAR"
     assert Macro.camelize("") == ""

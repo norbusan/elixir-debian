@@ -107,6 +107,14 @@ defmodule Code.Formatter.LiteralsTest do
       assert_format ~S[:"++"], ~S[:++]
     end
 
+    test "quoted operators" do
+      assert_same ~S[:"::"]
+      assert_same ~S[:"..//"]
+      assert_format ~S[:..//], ~S[:"..//"]
+      assert_format ~S{[..//: 1]}, ~S{["..//": 1]}
+      assert_same ~S{["..//": 1]}
+    end
+
     test "uses double quotes even when single quotes are used" do
       assert_format ~S[:'foo bar'], ~S[:"foo bar"]
     end
@@ -120,17 +128,10 @@ defmodule Code.Formatter.LiteralsTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S"""
-      :"one #{"two"} three"
-      """
-
-      good = ~S"""
-      :"one #{
-        "two"
-      } three"
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  :"one #{"two"} three"
+                  """,
+                  @short_length
     end
   end
 
@@ -161,17 +162,10 @@ defmodule Code.Formatter.LiteralsTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S"""
-      "one #{"two"} three"
-      """
-
-      good = ~S"""
-      "one #{
-        "two"
-      } three"
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  "one #{"two"} three"
+                  """,
+                  @short_length
     end
 
     test "with escaped interpolation" do
@@ -227,17 +221,10 @@ defmodule Code.Formatter.LiteralsTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S"""
-      'one #{"two"} three'
-      """
-
-      good = ~S"""
-      'one #{
-        "two"
-      } three'
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  'one #{"two"} three'
+                  """,
+                  @short_length
     end
 
     test "literal new lines don't count towards line limit" do
@@ -294,21 +281,12 @@ defmodule Code.Formatter.LiteralsTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S'''
-      """
-      one #{"two two"} three
-      """
-      '''
-
-      good = ~S'''
-      """
-      one #{
-        "two two"
-      } three
-      """
-      '''
-
-      assert_format bad, good, @short_length
+      assert_same ~S'''
+                  """
+                  one #{"two two"} three
+                  """
+                  ''',
+                  @short_length
     end
 
     test "nested with empty lines" do
@@ -418,21 +396,12 @@ defmodule Code.Formatter.LiteralsTest do
     end
 
     test "with interpolation on line limit" do
-      bad = ~S"""
-      '''
-      one #{"two two"} three
-      '''
-      """
-
-      good = ~S"""
-      '''
-      one #{
-        "two two"
-      } three
-      '''
-      """
-
-      assert_format bad, good, @short_length
+      assert_same ~S"""
+                  '''
+                  one #{"two two"} three
+                  '''
+                  """,
+                  @short_length
     end
 
     test "literal new lines don't count towards line limit" do

@@ -16,7 +16,8 @@ defmodule Config do
       import_config "#{config_env()}.exs"
 
   `import Config` will import the functions `config/2`, `config/3`
-  and `import_config/1` to help you manage your configuration.
+  `config_env/0`, `config_target/0`, and `import_config/1`
+  to help you manage your configuration.
 
   `config/2` and `config/3` are used to define key-value configuration
   for a given application. Once Mix starts, it will automatically
@@ -35,8 +36,10 @@ defmodule Config do
 
   **Important:** if you are writing a library to be used by other developers,
   it is generally recommended to avoid the application environment, as the
-  application environment is effectively a global storage. For more information,
-  read our [library guidelines](library-guidelines.md).
+  application environment is effectively a global storage. Also note that
+  the `config/config.exs` of a library is not evaluated when the library is
+  used as a dependency, as configuration is always meant to configure the
+  current project. For more information, read our [library guidelines](library-guidelines.md).
 
   ## Migrating from `use Mix.Config`
 

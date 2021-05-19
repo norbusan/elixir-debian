@@ -19,7 +19,7 @@ defmodule Task do
 
   Besides `async/1` and `await/2`, tasks can also be
   started as part of a supervision tree and dynamically spawned
-  on remote nodes. We will explore all three scenarios next.
+  on remote nodes. We will explore these scenarios next.
 
   ## async and await
 
@@ -43,78 +43,8 @@ defmodule Task do
        meant to receive the result no longer exists, there is
        no purpose in completing the computation.
 
-       If this is not desired, use `Task.start/1` or consider starting
-       the task under a `Task.Supervisor` using `async_nolink` or
-       `start_child`.
-
-  `Task.yield/2` is an alternative to `await/2` where the caller will
-  temporarily block, waiting until the task replies or crashes. If the
-  result does not arrive within the timeout, it can be called again at a
-  later moment. This allows checking for the result of a task multiple
-  times. If a reply does not arrive within the desired time,
-  `Task.shutdown/2` can be used to stop the task.
-
-  ## Supervised tasks
-
-  It is also possible to spawn a task under a supervisor. The `Task`
-  module implements the `child_spec/1` function, which allows it to
-  be started directly under a supervisor by passing a tuple with
-  a function to run:
-
-      Supervisor.start_link([
-        {Task, fn -> :some_work end}
-      ], strategy: :one_for_one)
-
-  However, if you want to invoke a specific module, function and
-  arguments, or give the task process a name, you need to define
-  the task in its own module:
-
-      defmodule MyTask do
-        use Task
-
-        def start_link(arg) do
-          Task.start_link(__MODULE__, :run, [arg])
-        end
-
-        def run(arg) do
-          # ...
-        end
-      end
-
-  And then passing it to the supervisor:
-
-      Supervisor.start_link([
-        {MyTask, arg}
-      ], strategy: :one_for_one)
-
-  Since these tasks are supervised and not directly linked to
-  the caller, they cannot be awaited on. `start_link/1`, unlike
-  `async/1`, returns `{:ok, pid}` (which is the result expected
-  by supervisors).
-
-  `use Task` defines a `child_spec/1` function, allowing the
-  defined module to be put under a supervision tree. The generated
-  `child_spec/1` can be customized with the following options:
-
-    * `:id` - the child specification identifier, defaults to the current module
-    * `:restart` - when the child should be restarted, defaults to `:temporary`
-    * `:shutdown` - how to shut down the child, either immediately or by giving it time to shut down
-
-  Opposite to `GenServer`, `Agent` and `Supervisor`, a Task has
-  a default `:restart` of `:temporary`. This means the task will
-  not be restarted even if it crashes. If you desire the task to
-  be restarted for non-successful exits, do:
-
-      use Task, restart: :transient
-
-  If you want the task to always be restarted:
-
-      use Task, restart: :permanent
-
-  See the "Child specification" section in the `Supervisor` module
-  for more detailed information. The `@doc` annotation immediately
-  preceding `use Task` will be attached to the generated `child_spec/1`
-  function.
+       If this is not desired, you will want to use supervised
+       tasks, described next.
 
   ## Dynamically supervised tasks
 
@@ -139,22 +69,36 @@ defmodule Task do
         {Task.Supervisor, name: MyApp.TaskSupervisor}
       ], strategy: :one_for_one)
 
-  Now you can dynamically start supervised tasks:
-
-      Task.Supervisor.start_child(MyApp.TaskSupervisor, fn ->
-        # Do something
-      end)
-
-  Or even use the async/await pattern:
+  And now you can use async/await once again passig the name of
+  the supervisor isntead of the pid:
 
       Task.Supervisor.async(MyApp.TaskSupervisor, fn ->
         # Do something
       end)
       |> Task.await()
 
-  Finally, check `Task.Supervisor` for other supported operations.
+  We encourage developers to rely on supervised tasks as much as
+  possible. Supervised tasks enable a huge variety of patterns
+  which allows you explicit control on how to handle the results,
+  errors, and timeouts. Here is a summary:
 
-  ## Distributed tasks
+    * Use `Task.Supervisor.start_child/2` to start a fire-and-forget
+      task and you don't care about its results nor about if it completes
+      successfully
+
+    * Use `Task.Supervisor.async/2` + `Task.await/2` allows you to execute
+      tasks concurrently and retrieve its result. If the task fails,
+      the caller will also fail
+
+    * Use `Task.Supervisor.async_nolink/2` + `Task.yield/2` + `Task.shutdown/2`
+      allows you to execute tasks concurrently and retrieve their results
+      or the reason they failed within a given time frame. If the task fails,
+      the caller won't fail: you will receive the error reason either on
+      `yield` or `shutdown`
+
+  See the `Task.Supervisor` module for details on the supported operations.
+
+  ### Distributed tasks
 
   Since Elixir provides a `Task.Supervisor`, it is easy to use one
   to dynamically start tasks across nodes:
@@ -166,12 +110,79 @@ defmodule Task do
       supervisor = {MyApp.DistSupervisor, :remote@local}
       Task.Supervisor.async(supervisor, MyMod, :my_fun, [arg1, arg2, arg3])
 
-  Note that, when working with distributed tasks, one should use the `Task.Supervisor.async/4` function
-  that expects explicit module, function and arguments, instead of `Task.Supervisor.async/2` that
-  works with anonymous functions. That's because anonymous functions expect
-  the same module version to exist on all involved nodes. Check the `Agent` module
-  documentation for more information on distributed processes as the limitations
-  described there apply to the whole ecosystem.
+  Note that, when working with distributed tasks, one should use the
+  `Task.Supervisor.async/4` function that expects explicit module, function,
+  and arguments, instead of `Task.Supervisor.async/2` that works with anonymous
+  functions. That's because anonymous functions expect the same module version
+  to exist on all involved nodes. Check the `Agent` module documentation for
+  more information on distributed processes as the limitations described there
+  apply to the whole ecosystem.
+
+  ## Statically supervised tasks
+
+  The `Task` module implements the `child_spec/1` function, which
+  allows it to be started directly under a regular `Supervisor` -
+  instead of a `Task.Supervisor` - by passing a tuple with a function
+  to run:
+
+      Supervisor.start_link([
+        {Task, fn -> :some_work end}
+      ], strategy: :one_for_one)
+
+  This is often useful when you need to execute some steps while
+  setting up your supervision tree. For example: to warm up caches,
+  log the initialization status, etc.
+
+  If you don't want to put the Task code directly under the `Supervisor`,
+  you can wrap the `Task` in its own module, similar to how you would
+  do with a `GenServer` or an `Agent`:
+
+      defmodule MyTask do
+        use Task
+
+        def start_link(arg) do
+          Task.start_link(__MODULE__, :run, [arg])
+        end
+
+        def run(arg) do
+          # ...
+        end
+      end
+
+  And then passing it to the supervisor:
+
+      Supervisor.start_link([
+        {MyTask, arg}
+      ], strategy: :one_for_one)
+
+  Since these tasks are supervised and not directly linked to the caller,
+  they cannot be awaited on. By default, the functions `Task.start`
+  and `Task.start_link` are for fire-and-forget tasks, where you don't
+  care about the results or if it completes successfully or not.
+
+  `use Task` defines a `child_spec/1` function, allowing the
+  defined module to be put under a supervision tree. The generated
+  `child_spec/1` can be customized with the following options:
+
+    * `:id` - the child specification identifier, defaults to the current module
+    * `:restart` - when the child should be restarted, defaults to `:temporary`
+    * `:shutdown` - how to shut down the child, either immediately or by giving it time to shut down
+
+  Opposite to `GenServer`, `Agent` and `Supervisor`, a Task has
+  a default `:restart` of `:temporary`. This means the task will
+  not be restarted even if it crashes. If you desire the task to
+  be restarted for non-successful exits, do:
+
+      use Task, restart: :transient
+
+  If you want the task to always be restarted:
+
+      use Task, restart: :permanent
+
+  See the "Child specification" section in the `Supervisor` module
+  for more detailed information. The `@doc` annotation immediately
+  preceding `use Task` will be attached to the generated `child_spec/1`
+  function.
 
   ## Ancestor and Caller Tracking
 
@@ -287,11 +298,11 @@ defmodule Task do
   end
 
   @doc """
-  Starts a process linked to the current process.
+  Starts a task as part of a supervision tree with the given `fun`.
 
   `fun` must be a zero-arity anonymous function.
 
-  This is often used to start the process as part of a supervision tree.
+  This is used to start a statically supervised task under a supervision tree.
   """
   @spec start_link((() -> any)) :: {:ok, pid}
   def start_link(fun) when is_function(fun, 0) do
@@ -299,12 +310,15 @@ defmodule Task do
   end
 
   @doc """
-  Starts a task as part of a supervision tree.
+  Starts a task as part of a supervision tree with the given
+  `module`, `function`, and `args`.
+
+  This is used to start a statically supervised task under a supervision tree.
   """
   @spec start_link(module, atom, [term]) :: {:ok, pid}
-  def start_link(module, function_name, args)
-      when is_atom(module) and is_atom(function_name) and is_list(args) do
-    mfa = {module, function_name, args}
+  def start_link(module, function, args)
+      when is_atom(module) and is_atom(function) and is_list(args) do
+    mfa = {module, function, args}
     Task.Supervised.start_link(get_owner(self()), get_callers(self()), mfa)
   end
 
@@ -313,9 +327,14 @@ defmodule Task do
 
   `fun` must be a zero-arity anonymous function.
 
-  This is only used when the task is used for side-effects
-  (i.e. no interest in the returned result) and it should not
-  be linked to the current process.
+  This should only used when the task is used for side-effects
+  (like I/O) and you have no interest on its results nor if it
+  completes successfully.
+
+  If the current node is shutdown, the node will terminate even
+  if the task was not completed. For this reason, we recommend
+  to use `Task.Supervisor.start_child/2` instead, which allows
+  you to control the shutdown time via the `:shutdown` option.
   """
   @spec start((() -> any)) :: {:ok, pid}
   def start(fun) when is_function(fun, 0) do
@@ -325,9 +344,14 @@ defmodule Task do
   @doc """
   Starts a task.
 
-  This is only used when the task is used for side-effects
-  (i.e. no interest in the returned result) and it should not
-  be linked to the current process.
+  This should only used when the task is used for side-effects
+  (like I/O) and you have no interest on its results nor if it
+  completes successfully.
+
+  If the current node is shutdown, the node will terminate even
+  if the task was not completed. For this reason, we recommend
+  to use `Task.Supervisor.start_child/2` instead, which allows
+  you to control the shutdown time via the `:shutdown` option.
   """
   @spec start(module, atom, [term]) :: {:ok, pid}
   def start(module, function_name, args)
@@ -339,30 +363,14 @@ defmodule Task do
   @doc """
   Starts a task that must be awaited on.
 
-  `fun` must be a zero-arity anonymous function.
-  This function spawns a process that is linked to and monitored
-  by the caller process. A `Task` struct is returned containing
-  the relevant information.
-
-  Read the `Task` module documentation for more information about the
-  general usage of `async/1` and `async/3`.
-
-  See also `async/3`.
-  """
-  @spec async((() -> any)) :: t
-  def async(fun) when is_function(fun, 0) do
-    async(:erlang, :apply, [fun, []])
-  end
-
-  @doc """
-  Starts a task that must be awaited on.
-
-  A `Task` struct is returned containing the relevant information.
-  Developers must eventually call `Task.await/2` or `Task.yield/2`
-  followed by `Task.shutdown/2` on the returned task.
+  `fun` must be a zero-arity anonymous function. This function
+  spawns a process that is linked to and monitored by the caller
+  process. A `Task` struct is returned containing the relevant
+  information. Developers must eventually call `Task.await/2` or
+  `Task.yield/2` followed by `Task.shutdown/2` on the returned task.
 
   Read the `Task` module documentation for more information about
-  the general usage of `async/1` and `async/3`.
+  the general usage of async tasks.
 
   ## Linking
 
@@ -411,11 +419,17 @@ defmodule Task do
       to any supervisor, you may leave dangling tasks in case
       the parent dies.
 
-  ## Message format
+  """
+  @spec async((() -> any)) :: t
+  def async(fun) when is_function(fun, 0) do
+    async(:erlang, :apply, [fun, []])
+  end
 
-  The reply sent by the task will be in the format `{ref, result}`,
-  where `ref` is the monitor reference held by the task struct
-  and `result` is the return value of the task function.
+  @doc """
+  Starts a task that must be awaited on.
+
+  Similar to `async/1` except the function to be started is
+  specified by the given `module`, `function_name`, and `args`.
   """
   @spec async(module, atom, [term]) :: t
   def async(module, function_name, args)
@@ -456,10 +470,13 @@ defmodule Task do
       at the same time. Defaults to `System.schedulers_online/0`.
 
     * `:ordered` - whether the results should be returned in the same order
-      as the input stream. This option is useful when you have large
-      streams and don't want to buffer results before they are delivered.
-      This is also useful when you're using the tasks for side effects.
-      Defaults to `true`.
+      as the input stream. When the output is ordered, Elixir may need to
+      buffer results to emit them in the original order. Setting this option
+      to false disables the need to buffer at the cost of removing ordering.
+      This is also useful when you're using the tasks only for the side effects.
+      Note that regardless of what `:ordered` is set to, the tasks will
+      process asynchronously. If you need to process elements in order,
+      consider using `Enum.map/2` or `Enum.each/2` instead. Defaults to `true`.
 
     * `:timeout` - the maximum amount of time (in milliseconds or `:infinity`)
       each task is allowed to execute for. Defaults to `5000`.
@@ -587,7 +604,7 @@ defmodule Task do
     end
   end
 
-  @doc """
+  @doc ~S"""
   Awaits a task reply and returns it.
 
   In case the task process dies, the current process will exit with the same
@@ -609,19 +626,85 @@ defmodule Task do
   to be able to check multiple times if a long-running task has finished
   its computation, use `yield/2` instead.
 
-  ## Compatibility with OTP behaviours
-
-  It is not recommended to `await` a long-running task inside an OTP
-  behaviour such as `GenServer`. Instead, you should match on the message
-  coming from a task inside your `c:GenServer.handle_info/2` callback. For
-  more information on the format of the message, see the documentation for
-  `async/1`.
-
   ## Examples
 
       iex> task = Task.async(fn -> 1 + 1 end)
       iex> Task.await(task)
       2
+
+  ## Compatibility with OTP behaviours
+
+  It is not recommended to `await` a long-running task inside an OTP
+  behaviour such as `GenServer`. Instead, you should match on the message
+  coming from a task inside your `c:GenServer.handle_info/2` callback.
+
+  A GenServer will receive two messages on `handle_info/2`:
+
+    * `{ref, result}` - the reply message where `ref` is the monitor
+      reference returned by the `task.ref` and `result` is the task
+      result
+
+    * `{:DOWN, ref, :process, pid, reason}` - since all tasks are also
+      monitored, you will also receive the `:DOWN` message delivered by
+      `Process.monitor/1`. If you receive the `:DOWN` message without a
+      a reply, it means the task crashed
+
+  Another consideration to have in mind is that tasks started by `Task.async/1`
+  are always linked to their callers and you may not want the GenServer to
+  crash if the task crashes. Therefore, it is preferable to instead use
+  `Task.Supervisor.async_nolink/3` inside OTP behaviours. For completeness, here
+  is an example of a GenServer that start tasks and handles their results:
+
+      defmodule GenServerTaskExample do
+        use GenServer
+
+        def start_link(opts) do
+          GenServer.start_link(__MODULE__, :ok, opts)
+        end
+
+        def init(_opts) do
+          # We will keep all running tasks in a map
+          {:ok, %{tasks: %{}}}
+        end
+
+        # Imagine we invoke a task from the GenServer to access a URL...
+        def handle_call(:some_message, _from, state) do
+          url = ...
+          task = Task.Supervisor.async_nolink(MyApp.TaskSupervisor, fn -> fetch_url(url) end)
+
+          # After we start the task, we store its reference and the url it is fetching
+          state = put_in(state.tasks[task.ref], url)
+
+          {:reply, :ok, state}
+        end
+
+        # If the task succeeds...
+        def handle_info({ref, result}, state) do
+          # The task succeed so we can cancel the monitoring and discard the DOWN message
+          Process.demonitor(ref, [:flush])
+
+          {url, state} = pop_in(state.tasks[ref])
+          IO.puts "Got #{inspect(result)} for URL #{inspect url}"
+          {:noreply, state}
+        end
+
+        # If the task fails...
+        def handle_info({:DOWN, ref, _, _, reason}, state) do
+          {url, state} = pop_in(state.tasks[ref])
+          IO.puts "URL #{inspect url} failed with reason #{inspect(reason)}"
+          {:noreply, state}
+        end
+      end
+
+  With the server defined, you will want to start the task supervisor
+  above and the GenServer in your supervision tree:
+
+      children = [
+        {Task.Supervisor, name: MyApp.TaskSupervisor},
+        {GenServerTaskExample, name: MyApp.GenServerTaskExample}
+      ]
+
+      Supervisor.start_link(children, strategy: :one_for_one)
 
   """
   @spec await(t, timeout) :: term

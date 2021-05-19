@@ -34,7 +34,7 @@ defmodule IO do
   IO data is a data type that can be used as a more efficient alternative to binaries
   in certain situations.
 
-  A term of type **IO data** is a binary or a list containing bytes (integers in `0..255`)
+  A term of type **IO data** is a binary or a list containing bytes (integers within the `0..255` range)
   or nested IO data. The type is recursive. Let's see an example of one of
   the possible IO data representing the binary `"hello"`:
 
@@ -99,8 +99,8 @@ defmodule IO do
   Erlang and Elixir also have the idea of `t:chardata/0`. Chardata is very
   similar to IO data: the only difference is that integers in IO data represent
   bytes while integers in chardata represent Unicode code points. Bytes
-  (`t:byte/0`) are integers in the `0..255` range, while Unicode code points
-  (`t:char/0`) are integers in the range `0..0x10FFFF`. The `IO` module provides
+  (`t:byte/0`) are integers within the `0..255` range, while Unicode code points
+  (`t:char/0`) are integers within the `0..0x10FFFF` range. The `IO` module provides
   the `chardata_to_string/1` function for chardata as the "counter-part" of the
   `iodata_to_binary/1` function for IO data.
 
@@ -108,8 +108,8 @@ defmodule IO do
   argument error. For example, let's try to put a code point that is not
   representable with one byte, like `?π`, inside IO data:
 
-      iex> IO.iodata_to_binary(["The symbol for pi is: ", ?π])
-      ** (ArgumentError) argument error
+      IO.iodata_to_binary(["The symbol for pi is: ", ?π])
+      #=> ** (ArgumentError) argument error
 
   If we use chardata instead, it will work as expected:
 
@@ -509,6 +509,16 @@ defmodule IO do
   end
 
   @doc """
+  Returns a line-based `IO.Stream` on `:stdio`.
+
+  This is equivalent to:
+
+      IO.stream(:stdio, :line)
+
+  """
+  def stream, do: stream(:stdio, :line)
+
+  @doc """
   Converts the IO `device` into an `IO.Stream`.
 
   An `IO.Stream` implements both `Enumerable` and
@@ -533,11 +543,21 @@ defmodule IO do
 
   """
   @spec stream(device, :line | pos_integer) :: Enumerable.t()
-  def stream(device, line_or_codepoints)
+  def stream(device \\ :stdio, line_or_codepoints)
       when line_or_codepoints == :line
       when is_integer(line_or_codepoints) and line_or_codepoints > 0 do
     IO.Stream.__build__(map_dev(device), false, line_or_codepoints)
   end
+
+  @doc """
+  Returns a raw, line-based `IO.Stream` on `:stdio`. The operation is Unicode unsafe.
+
+  This is equivalent to:
+
+      IO.binstream(:stdio, :line)
+
+  """
+  def binstream, do: binstream(:stdio, :line)
 
   @doc """
   Converts the IO `device` into an `IO.Stream`. The operation is Unicode unsafe.
@@ -547,18 +567,16 @@ defmodule IO do
   and write.
 
   The `device` is iterated by the given number of bytes or line by line if
-  `:line` is given.
-  This reads from the IO device as a raw binary.
+  `:line` is given. This reads from the IO device as a raw binary.
 
   Note that an IO stream has side effects and every time
   you go over the stream you may get different results.
 
   Finally, do not use this function on IO devices in Unicode
   mode as it will return the wrong result.
-
   """
   @spec binstream(device, :line | pos_integer) :: Enumerable.t()
-  def binstream(device, line_or_bytes)
+  def binstream(device \\ :stdio, line_or_bytes)
       when line_or_bytes == :line
       when is_integer(line_or_bytes) and line_or_bytes > 0 do
     IO.Stream.__build__(map_dev(device), true, line_or_bytes)

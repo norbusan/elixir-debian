@@ -86,6 +86,35 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
+  test "unused variable that could be pinned" do
+    output =
+      capture_err(fn ->
+        # Note we use compile_string because eval_string does not emit unused vars warning
+        Code.compile_string("""
+        defmodule Sample do
+          def test do
+            compare_local = "hello"
+            match?(compare_local, "hello")
+
+            compare_nested = "hello"
+            case "hello" do
+              compare_nested -> true
+              _other -> false
+            end
+          end
+        end
+        """)
+      end)
+
+    assert output =~
+             "variable \"compare_local\" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)"
+
+    assert output =~
+             "variable \"compare_nested\" is unused (there is a variable with the same name in the context, use the pin operator (^) to match on it or prefix this variable with underscore if it is not meant to be used)"
+  after
+    purge(Sample)
+  end
+
   test "unused compiler variable" do
     output =
       capture_err(fn ->
@@ -850,6 +879,20 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
+  test "parens with module attribute" do
+    assert capture_err(fn ->
+             Code.eval_string("""
+             defmodule Sample do
+               @foo 13
+               @foo()
+             end
+             """)
+           end) =~
+             "the @foo() notation (with parenthesis) is deprecated, please use @foo (without parenthesis) instead"
+  after
+    purge(Sample)
+  end
+
   test "undefined module attribute in function" do
     assert capture_err(fn ->
              Code.eval_string("""
@@ -931,6 +974,15 @@ defmodule Kernel.WarningTest do
     purge(Sample)
   end
 
+  # TODO: Simplify when we require OTP 24
+  if System.otp_release() >= "24" do
+    @argument_error_message "the call to :erlang.atom_to_binary/2"
+    @arithmetic_error_message "the call to +/2"
+  else
+    @argument_error_message "this expression"
+    @arithmetic_error_message "this expression"
+  end
+
   test "eval failure warning" do
     assert capture_err(fn ->
              Code.eval_string("""
@@ -938,7 +990,7 @@ defmodule Kernel.WarningTest do
                def foo, do: Atom.to_string "abc"
              end
              """)
-           end) =~ ~r"this expression will fail with ArgumentError\n.*nofile:2"
+           end) =~ "#{@argument_error_message} will fail with ArgumentError\n  nofile:2"
 
     assert capture_err(fn ->
              Code.eval_string("""
@@ -946,7 +998,7 @@ defmodule Kernel.WarningTest do
                def foo, do: 1 + nil
              end
              """)
-           end) =~ ~r"this expression will fail with ArithmeticError\n.*nofile:2"
+           end) =~ "#{@arithmetic_error_message} will fail with ArithmeticError\n  nofile:2"
   after
     purge([Sample1, Sample2])
   end
@@ -1143,31 +1195,6 @@ defmodule Kernel.WarningTest do
     assert output =~ "sample:3"
   after
     purge(Sample)
-  end
-
-  test "with and do clauses emit errors, else clauses do not" do
-    assert capture_err(fn ->
-             Code.compile_string("""
-             with {:first, int} when is_integer(int) <- {:second, Integer.gcd(2, 4)} do
-               int
-             end
-             """)
-           end) =~ "this clause cannot match"
-
-    assert capture_err(fn ->
-             Code.compile_string("""
-             with {:first, int1} when is_integer(int1) <- {:first, Integer.gcd(2, 4)},
-                  {:second, int2} when is_integer(int2) <- {:second, Integer.gcd(2, 4)} do
-               {:ok, int1 + int2}
-             else
-               {:first, nil} -> {:error, "first number is not integer"}
-               {:second, nil} -> {:error, "second number is not integer"}
-             end
-             """)
-           end) == ""
-  after
-    purge(Sample1)
-    purge(Sample2)
   end
 
   test "warning on code point escape" do
@@ -1615,11 +1642,6 @@ defmodule Kernel.WarningTest do
     assert output =~ ~s("catch" should always come after "rescue" in def)
   after
     purge(Sample)
-  end
-
-  test "System.stacktrace is deprecated outside catch/rescue" do
-    assert capture_err(fn -> Code.eval_string("System.stacktrace()") end) =~
-             "System.stacktrace/0 is deprecated"
   end
 
   test "unused variable in defguard" do

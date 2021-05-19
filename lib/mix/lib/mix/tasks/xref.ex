@@ -44,7 +44,8 @@ defmodule Mix.Tasks.Xref do
       The labels are "compile", "export" and "runtime". See
       "Dependencies types" section below
 
-    * `--only-nodes` - only shows the node names (no edges)
+    * `--only-nodes` - only shows the node names (no edges).
+      Generally useful with the `--sink` flag
 
     * `--only-direct` - the `--label` option will restrict itself
       to only direct dependencies instead of transitive ones
@@ -79,6 +80,9 @@ defmodule Mix.Tasks.Xref do
   those options with `--label` and `--only-nodes` to get all files that exhibit a certain
   property, for example:
 
+      # To get all files and their direct compile time dependencies
+      mix xref graph --label compile --only-direct
+
       # To get the tree that depend on lib/foo.ex at compile time
       mix xref graph --label compile --sink lib/foo.ex
 
@@ -108,9 +112,9 @@ defmodule Mix.Tasks.Xref do
   problematic because if `lib/c.ex` changes, `lib/a.ex` also has to
   recompile due to this indirect compile time dependency.
 
-  This interpretation is the same regardless if `--source` or `--sink`
-  flags are used. For example, if we use the `--sink lib/c.ex` flag,
-  we would see the same tree:
+  The flags `--source` or `--sink` does not change how you read the
+  graph. For example, if we use the `--sink lib/c.ex` flag, we would
+  see the same tree:
 
       lib/a.ex
       `-- lib/b.ex (compile)
@@ -130,7 +134,7 @@ defmodule Mix.Tasks.Xref do
 
   #### Dependencies types
 
-  ELixir tracks three types of dependencies between modules: compile,
+  Elixir tracks three types of dependencies between modules: compile,
   exports, and runtime. If a module has a compile time dependency on
   another module, the caller module has to be recompiled whenever the
   callee changes. Compile-time dependencies are typically added when
@@ -187,9 +191,10 @@ defmodule Mix.Tasks.Xref do
 
   @impl true
   def run(args) do
-    {opts, args} = OptionParser.parse!(args, strict: @switches)
     Mix.Task.run("compile", args)
     Mix.Task.reenable("xref")
+
+    {opts, args} = OptionParser.parse!(args, strict: @switches)
 
     case args do
       ["callers", callee] ->

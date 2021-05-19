@@ -43,7 +43,7 @@ defmodule System do
       system time may not match in case of time warps although the VM works towards
       aligning them. This time is not monotonic (i.e., it may decrease)
       as its behaviour is configured [by the VM time warp
-      mode](http://www.erlang.org/doc/apps/erts/time_correction.html#Time_Warp_Modes);
+      mode](https://erlang.org/doc/apps/erts/time_correction.html#Time_Warp_Modes);
 
     * `monotonic_time/0` - a monotonically increasing time provided
       by the Erlang VM.
@@ -58,7 +58,7 @@ defmodule System do
 
   For a more complete rundown on the VM support for different
   times, see the [chapter on time and time
-  correction](http://www.erlang.org/doc/apps/erts/time_correction.html)
+  correction](https://erlang.org/doc/apps/erts/time_correction.html)
   in the Erlang docs.
   """
 
@@ -80,6 +80,22 @@ defmodule System do
           | :microsecond
           | :nanosecond
           | pos_integer
+
+  @type signal ::
+          :sigabrt
+          | :sigalrm
+          | :sigchld
+          | :sighup
+          | :sigquit
+          | :sigstop
+          | :sigterm
+          | :sigtstp
+          | :sigusr1
+          | :sigusr2
+
+  @vm_signals [:sigquit, :sigterm, :sigusr1]
+  @os_signals [:sighup, :sigabrt, :sigalrm, :sigusr2, :sigchld, :sigstop, :sigtstp]
+  @signals @vm_signals ++ @os_signals
 
   @base_dir :filename.join(__DIR__, "../../..")
   @version_file :filename.join(@base_dir, "VERSION")
@@ -409,13 +425,157 @@ defmodule System do
 
   The function must receive the exit status code as an argument.
 
-  If the VM terminates programmatically, via `System.stop/1` or `System.halt/1`,
-  the `at_exit/1` callbacks are not executed.
+  If the VM terminates programmatically, via `System.stop/1`, `System.halt/1`,
+  or exit signals, the `at_exit/1` callbacks are not executed.
   """
   @spec at_exit((non_neg_integer -> any)) :: :ok
   def at_exit(fun) when is_function(fun, 1) do
     :elixir_config.update(:at_exit, &[fun | &1])
     :ok
+  end
+
+  defmodule SignalHandler do
+    @moduledoc false
+    @behaviour :gen_event
+
+    @impl true
+    def init({event, fun}) do
+      {:ok, {event, fun}}
+    end
+
+    @impl true
+    def handle_call(_message, state) do
+      {:ok, :ok, state}
+    end
+
+    @impl true
+    def handle_event(signal, {event, fun}) do
+      if signal == event, do: :ok = fun.()
+      {:ok, {event, fun}}
+    end
+
+    @impl true
+    def handle_info(_, {event, fun}) do
+      {:ok, {event, fun}}
+    end
+  end
+
+  @doc """
+  Traps the given `signal` to execute the `fun`.
+
+  **Important**: Trapping signals may have strong implications
+  on how a system shuts down and behave in production and
+  therefore it is extremely discouraged for libraries to
+  set their own traps. Instead, they should redirect users
+  to configure them themselves. The only cases where it is
+  acceptable for libraries to set their own traps is when
+  using Elixir in script mode, such as in `.exs` files and
+  via Mix tasks.
+
+  An optional `id` that uniquely identifies the function
+  can be given, otherwise a unique one is automatically
+  generated. If a previously registered `id` is given,
+  this function returns an error tuple. The `id` can be
+  used to remove a registered signal by calling
+  `untrap_signal/2`.
+
+  The given `fun` receives no arguments and it must return
+  `:ok`.
+
+  It returns `{:ok, id}` in case of success,
+  `{:error, :already_registered}` in case the id has already
+  been registered for the given signal, or `{:error, :not_sup}`
+  in case trapping exists is not supported by the current OS.
+
+  The first time a signal is trapped, it will override the
+  default behaviour from the operating system. If the same
+  signal is trapped multiple times, subsequent functions
+  given to `trap_signal` will execute *first*. In other
+  words, you can consider each function is prepended to
+  the signal handler.
+
+  By default, the Erlang VM register traps to the three
+  signals:
+
+    * `:sigstop` - gracefully shuts down the VM with `stop/0`
+    * `:sigquit` - halts the VM via `halt/0`
+    * `:sigusr1` - halts the VM via status code of 1
+
+  Therefore, if you add traps to the signals above, the
+  default behaviour above will be executed after all user
+  signals.
+
+  ## Implementation notes
+
+  All signals run from a single process. Therefore, blocking the
+  `fun` will block subsequent traps. It is also not possible to add
+  or remove traps from within a trap itself.
+
+  Internally, this functionality is built on top of `:os.set_signal/2`.
+  When you register a trap, Elixir automatically sets it to `:handle`
+  and it reverts it back to `:default` once all traps are removed
+  (except for `:sigquit`, `:sigterm`, and `:sigusr1` which are always
+  handled). If you or a library call `:os.set_signal/2` directly,
+  it may disable Elixir traps (or Elixir may override your configuration).
+  """
+  @doc since: "1.12.0"
+  @spec trap_signal(signal, (() -> :ok)) :: {:ok, reference()} | {:error, :not_sup}
+  @spec trap_signal(signal, id, (() -> :ok)) ::
+          {:ok, id} | {:error, :already_registered} | {:error, :not_sup}
+        when id: term()
+  def trap_signal(signal, id \\ make_ref(), fun)
+      when signal in @signals and is_function(fun, 0) do
+    :elixir_config.serial(fn ->
+      gen_id = {signal, id}
+
+      if {SignalHandler, gen_id} in signal_handlers() do
+        {:error, :already_registered}
+      else
+        try do
+          :os.set_signal(signal, :handle)
+        rescue
+          _ -> {:error, :not_sup}
+        else
+          :ok ->
+            :ok =
+              :gen_event.add_handler(:erl_signal_server, {SignalHandler, gen_id}, {signal, fun})
+
+            {:ok, id}
+        end
+      end
+    end)
+  end
+
+  @doc """
+  Removes a previously registered `signal` with `id`.
+  """
+  @doc since: "1.12.0"
+  @spec untrap_signal(signal, id) :: :ok | {:error, :not_found} when id: term
+  def untrap_signal(signal, id) when signal in @signals do
+    :elixir_config.serial(fn ->
+      gen_id = {signal, id}
+
+      case :gen_event.delete_handler(:erl_signal_server, {SignalHandler, gen_id}, :delete) do
+        :ok ->
+          if not trapping?(signal) do
+            :os.set_signal(signal, :default)
+          end
+
+          :ok
+
+        {:error, :module_not_found} ->
+          {:error, :not_found}
+      end
+    end)
+  end
+
+  defp trapping?(signal) do
+    signal in @vm_signals or
+      Enum.any?(signal_handlers(), &match?({_, {^signal, _}}, &1))
+  end
+
+  defp signal_handlers do
+    :gen_event.which_handlers(:erl_signal_server)
   end
 
   @doc """
@@ -437,19 +597,29 @@ defmodule System do
     end
   end
 
+  # TODO: Remove this once we require Erlang/OTP 24+
+  @compile {:no_warn_undefined, {:os, :env, 0}}
+
   @doc """
   Returns all system environment variables.
 
   The returned value is a map containing name-value pairs.
   Variable names and their values are strings.
   """
+  # TODO: Remove this once we require Erlang/OTP 24+
   @spec get_env() :: %{optional(String.t()) => String.t()}
   def get_env do
-    Enum.into(:os.getenv(), %{}, fn var ->
-      var = IO.chardata_to_string(var)
-      [k, v] = String.split(var, "=", parts: 2)
-      {k, v}
-    end)
+    if function_exported?(:os, :env, 0) do
+      Map.new(:os.env(), fn {k, v} ->
+        {IO.chardata_to_string(k), IO.chardata_to_string(v)}
+      end)
+    else
+      Enum.into(:os.getenv(), %{}, fn var ->
+        var = IO.chardata_to_string(var)
+        [k, v] = String.split(var, "=", parts: 2)
+        {k, v}
+      end)
+    end
   end
 
   @doc """
@@ -586,23 +756,13 @@ defmodule System do
   @doc """
   Deprecated mechanism to retrieve the last exception stacktrace.
 
-  Accessing the stacktrace outside of a rescue/catch is deprecated.
-  If you want to support only Elixir v1.7+, you must access
-  `__STACKTRACE__/0` inside a rescue/catch. If you want to support
-  earlier Elixir versions, move `System.stacktrace/0` inside a rescue/catch.
-
-  Starting from Erlang/OTP 23, this function will always return an empty list.
-
-  Note that the Erlang VM (and therefore this function) does not
-  return the current stacktrace but rather the stacktrace of the
-  latest exception. To retrieve the stacktrace of the current process,
-  use `Process.info(self(), :current_stacktrace)` instead.
+  Starting from Erlang/OTP 23, this function will always return an
+  empty list.
   """
-  # TODO: Once Erlang/OTP 23 is required, remove conditional, and update @doc accordingly.
-  # The warning is emitted by the compiler - so a @doc annotation is enough
+  # TODO: Remove conditional on Erlang/OTP 23+.
   # Note Elixir may be compiled in an earlier Erlang version but runs on a
   # newer one, so we need the check at compilation time and runtime.
-  @doc deprecated: "Use __STACKTRACE__ instead"
+  @deprecated "Use __STACKTRACE__ instead"
   if function_exported?(:erlang, :get_stacktrace, 0) do
     def stacktrace do
       if function_exported?(:erlang, :get_stacktrace, 0) do
@@ -722,6 +882,62 @@ defmodule System do
   end
 
   @doc ~S"""
+  Executes the given `command` in the OS shell.
+
+  It uses `sh` for Unix-like systems and `cmd` for Windows.
+
+  **Important**: Use this function with care. In particular, **never
+  pass untrusted user input to this function**, as the user would be
+  able to perform "command injection attacks" by executing any code
+  directly on the machine. Generally speaking, prefer to use `cmd/3`
+  over this function.
+
+  ## Examples
+
+      iex> System.shell("echo hello")
+      {"hello\n", 0}
+
+  If you want to stream the devices to IO as they come:
+
+      iex> System.shell("echo hello", into: IO.stream())
+      hello
+      {%IO.Stream{}, 0}
+
+  ## Options
+
+  It accepts the same options as `cmd/3`, except for `arg0`.
+  """
+  @doc since: "1.12.0"
+  @spec shell(binary, keyword) :: {Collectable.t(), exit_status :: non_neg_integer}
+  def shell(command, opts \\ []) when is_binary(command) do
+    assert_no_null_byte!(command, "System.shell/2")
+
+    # Finding shell command logic from :os.cmd in OTP
+    # https://github.com/erlang/otp/blob/8deb96fb1d017307e22d2ab88968b9ef9f1b71d0/lib/kernel/src/os.erl#L184
+    command =
+      case :os.type() do
+        {:unix, _} ->
+          command =
+            command
+            |> String.replace("\"", "\\\"")
+            |> String.to_charlist()
+
+          'sh -c "' ++ command ++ '"'
+
+        {:win32, osname} ->
+          command = String.to_charlist(command)
+
+          case {System.get_env("COMSPEC"), osname} do
+            {nil, :windows} -> 'command.com /s /c ' ++ command
+            {nil, _} -> 'cmd /s /c ' ++ command
+            {cmd, _} -> '#{cmd} /s /c ' ++ command
+          end
+      end
+
+    do_cmd({:spawn, command}, [], opts)
+  end
+
+  @doc ~S"""
   Executes the given `command` with `args`.
 
   `command` is expected to be an executable available in PATH
@@ -753,7 +969,9 @@ defmodule System do
       iex> System.cmd("echo", ["hello"], env: [{"MIX_ENV", "test"}])
       {"hello\n", 0}
 
-      iex> System.cmd("echo", ["hello"], into: IO.stream(:stdio, :line))
+  If you want to stream the devices to IO as they come:
+
+      iex> System.cmd("echo", ["hello"], into: IO.stream())
       hello
       {%IO.Stream{}, 0}
 
@@ -804,7 +1022,7 @@ defmodule System do
   ## Shell commands
 
   If you desire to execute a trusted command inside a shell, with pipes,
-  redirecting and so on, please check `:os.cmd/1`.
+  redirecting and so on, please check `shell/2`.
   """
   @spec cmd(binary, [binary], keyword) :: {Collectable.t(), exit_status :: non_neg_integer}
   def cmd(command, args, opts \\ []) when is_binary(command) and is_list(args) do
@@ -823,11 +1041,15 @@ defmodule System do
         :os.find_executable(cmd) || :erlang.error(:enoent, [command, args, opts])
       end
 
-    {into, opts} = cmd_opts(opts, [:use_stdio, :exit_status, :binary, :hide, args: args], "")
+    do_cmd({:spawn_executable, cmd}, [args: args], opts)
+  end
+
+  defp do_cmd(port_init, base_opts, opts) do
+    {into, opts} = cmd_opts(opts, [:use_stdio, :exit_status, :binary, :hide] ++ base_opts, "")
     {initial, fun} = Collectable.into(into)
 
     try do
-      do_cmd(Port.open({:spawn_executable, cmd}, opts), initial, fun)
+      do_port(Port.open(port_init, opts), initial, fun)
     catch
       kind, reason ->
         fun.(initial, :halt)
@@ -837,17 +1059,18 @@ defmodule System do
     end
   end
 
-  defp do_cmd(port, acc, fun) do
+  defp do_port(port, acc, fun) do
     receive do
       {^port, {:data, data}} ->
-        do_cmd(port, fun.(acc, {:cont, data}), fun)
+        do_port(port, fun.(acc, {:cont, data}), fun)
 
       {^port, {:exit_status, status}} ->
         {acc, status}
     end
   end
 
-  defp cmd_opts([{:into, any} | t], opts, _into), do: cmd_opts(t, opts, any)
+  defp cmd_opts([{:into, any} | t], opts, _into),
+    do: cmd_opts(t, opts, any)
 
   defp cmd_opts([{:cd, bin} | t], opts, into) when is_binary(bin),
     do: cmd_opts(t, [{:cd, bin} | opts], into)
@@ -858,7 +1081,8 @@ defmodule System do
   defp cmd_opts([{:stderr_to_stdout, true} | t], opts, into),
     do: cmd_opts(t, [:stderr_to_stdout | opts], into)
 
-  defp cmd_opts([{:stderr_to_stdout, false} | t], opts, into), do: cmd_opts(t, opts, into)
+  defp cmd_opts([{:stderr_to_stdout, false} | t], opts, into),
+    do: cmd_opts(t, opts, into)
 
   defp cmd_opts([{:parallelism, bool} | t], opts, into) when is_boolean(bool),
     do: cmd_opts(t, [{:parallelism, bool} | opts], into)
@@ -869,7 +1093,8 @@ defmodule System do
   defp cmd_opts([{key, val} | _], _opts, _into),
     do: raise(ArgumentError, "invalid option #{inspect(key)} with value #{inspect(val)}")
 
-  defp cmd_opts([], opts, into), do: {into, opts}
+  defp cmd_opts([], opts, into),
+    do: {into, opts}
 
   defp validate_env(enum) do
     Enum.map(enum, fn
@@ -948,7 +1173,7 @@ defmodule System do
   unit before you display them to humans.
 
   To determine how many seconds the `:native` unit represents in your current
-  runtime, you can can call this function to convert 1 second to the `:native`
+  runtime, you can call this function to convert 1 second to the `:native`
   time unit: `System.convert_time_unit(1, :second, :native)`.
   """
   @spec convert_time_unit(integer, time_unit | :native, time_unit | :native) :: integer

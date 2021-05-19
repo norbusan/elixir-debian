@@ -109,8 +109,9 @@ defmodule DateTime do
       {:ok, ~U[2016-05-24 13:26:08.003Z]}
 
   When the datetime is ambiguous - for instance during changing from summer
-  to winter time - the two possible valid datetimes are returned. First the one
-  that happens first, then the one that happens after.
+  to winter time - the two possible valid datetimes are returned in a tuple.
+  The first datetime is also the one which comes first chronologically, while
+  the second one comes last.
 
       iex> {:ambiguous, first_dt, second_dt} = DateTime.new(~D[2018-10-28], ~T[02:30:00], "Europe/Copenhagen", FakeTimeZoneDatabase)
       iex> first_dt
@@ -139,7 +140,7 @@ defmodule DateTime do
   @doc since: "1.11.0"
   @spec new(Date.t(), Time.t(), Calendar.time_zone(), Calendar.time_zone_database()) ::
           {:ok, t}
-          | {:ambiguous, t, t}
+          | {:ambiguous, first_datetime :: t, second_datetime :: t}
           | {:gap, t, t}
           | {:error,
              :incompatible_calendars | :time_zone_not_found | :utc_only_time_zone_database}
@@ -240,9 +241,7 @@ defmodule DateTime do
 
       {:error, reason} ->
         raise ArgumentError,
-              "cannot build datetime with #{inspect(date)} and #{inspect(time)}, reason: #{
-                inspect(reason)
-              }"
+              "cannot build datetime with #{inspect(date)} and #{inspect(time)}, reason: #{inspect(reason)}"
     end
   end
 
@@ -366,8 +365,9 @@ defmodule DateTime do
       {:ok, ~U[2016-05-24 13:26:08.003Z]}
 
   When the datetime is ambiguous - for instance during changing from summer
-  to winter time - the two possible valid datetimes are returned. First the one
-  that happens first, then the one that happens after.
+  to winter time - the two possible valid datetimes are returned in a tuple.
+  The first datetime is also the one which comes first chronologically, while
+  the second one comes last.
 
       iex> {:ambiguous, first_dt, second_dt} = DateTime.from_naive(~N[2018-10-28 02:30:00], "Europe/Copenhagen", FakeTimeZoneDatabase)
       iex> first_dt
@@ -418,7 +418,7 @@ defmodule DateTime do
           Calendar.time_zone_database()
         ) ::
           {:ok, t}
-          | {:ambiguous, t, t}
+          | {:ambiguous, first_datetime :: t, second_datetime :: t}
           | {:gap, t, t}
           | {:error,
              :incompatible_calendars | :time_zone_not_found | :utc_only_time_zone_database}
@@ -892,13 +892,14 @@ defmodule DateTime do
 
   @doc """
   Converts the given datetime to
-  [ISO 8601:2004](https://en.wikipedia.org/wiki/ISO_8601) format.
+  [ISO 8601:2019](https://en.wikipedia.org/wiki/ISO_8601) format.
 
   By default, `DateTime.to_iso8601/2` returns datetimes formatted in the "extended"
   format, for human readability. It also supports the "basic" format through passing the `:basic` option.
 
   Only supports converting datetimes which are in the ISO calendar,
   attempting to convert datetimes from other calendars will raise.
+  You can also optionally specify an offset for the formatted string.
 
   WARNING: the ISO 8601 datetime format does not contain the time zone nor
   its abbreviation, which means information is lost when converting to such
@@ -930,11 +931,31 @@ defmodule DateTime do
       iex> DateTime.to_iso8601(dt, :basic)
       "20000229T230007-0400"
 
-  """
-  @spec to_iso8601(Calendar.datetime(), :extended | :basic) :: String.t()
-  def to_iso8601(datetime, format \\ :extended)
+      iex> dt = %DateTime{year: 2000, month: 2, day: 29, zone_abbr: "AMT",
+      ...>                hour: 23, minute: 0, second: 7, microsecond: {0, 0},
+      ...>                utc_offset: -14400, std_offset: 0, time_zone: "America/Manaus"}
+      iex> DateTime.to_iso8601(dt, :extended, 3600)
+      "2000-03-01T04:00:07+01:00"
 
-  def to_iso8601(%{calendar: Calendar.ISO} = datetime, format)
+      iex> dt = %DateTime{year: 2000, month: 2, day: 29, zone_abbr: "AMT",
+      ...>                hour: 23, minute: 0, second: 7, microsecond: {0, 0},
+      ...>                utc_offset: -14400, std_offset: 0, time_zone: "America/Manaus"}
+      iex> DateTime.to_iso8601(dt, :extended, 0)
+      "2000-03-01T03:00:07+00:00"
+
+      iex> dt = %DateTime{year: 2000, month: 3, day: 01, zone_abbr: "UTC",
+      ...>                hour: 03, minute: 0, second: 7, microsecond: {0, 0},
+      ...>                utc_offset: 0, std_offset: 0, time_zone: "Etc/UTC"}
+      iex> DateTime.to_iso8601(dt, :extended, 0)
+      "2000-03-01T03:00:07Z"
+
+      iex> {:ok, dt, offset} = DateTime.from_iso8601("2000-03-01T03:00:07Z")
+      iex> "2000-03-01T03:00:07Z" = DateTime.to_iso8601(dt, :extended, offset)
+  """
+  @spec to_iso8601(Calendar.datetime(), :basic | :extended, nil | integer()) :: String.t()
+  def to_iso8601(datetime, format \\ :extended, offset \\ nil)
+
+  def to_iso8601(%{calendar: Calendar.ISO} = datetime, format, nil)
       when format in [:extended, :basic] do
     %{
       year: year,
@@ -949,21 +970,56 @@ defmodule DateTime do
       std_offset: std_offset
     } = datetime
 
-    Calendar.ISO.date_to_string(year, month, day, format) <>
-      "T" <>
-      Calendar.ISO.time_to_string(hour, minute, second, microsecond, format) <>
+    datetime_to_string(year, month, day, hour, minute, second, microsecond, format) <>
       Calendar.ISO.offset_to_string(utc_offset, std_offset, time_zone, format)
   end
 
-  def to_iso8601(%{calendar: _} = datetime, format) when format in [:extended, :basic] do
+  def to_iso8601(
+        %{calendar: Calendar.ISO, microsecond: {_, precision}, time_zone: "Etc/UTC"} = datetime,
+        format,
+        0
+      )
+      when format in [:extended, :basic] do
+    {year, month, day, hour, minute, second, {microsecond, _}} = shift_by_offset(datetime, 0)
+
+    datetime_to_string(year, month, day, hour, minute, second, {microsecond, precision}, format) <>
+      "Z"
+  end
+
+  def to_iso8601(%{calendar: Calendar.ISO} = datetime, format, offset)
+      when format in [:extended, :basic] do
+    {_, precision} = datetime.microsecond
+    {year, month, day, hour, minute, second, {microsecond, _}} = shift_by_offset(datetime, offset)
+
+    datetime_to_string(year, month, day, hour, minute, second, {microsecond, precision}, format) <>
+      Calendar.ISO.offset_to_string(offset, 0, nil, format)
+  end
+
+  def to_iso8601(%{calendar: _} = datetime, format, offset) when format in [:extended, :basic] do
     datetime
     |> convert!(Calendar.ISO)
-    |> to_iso8601(format)
+    |> to_iso8601(format, offset)
+  end
+
+  defp shift_by_offset(%{calendar: calendar} = datetime, offset) do
+    total_offset = datetime.utc_offset + datetime.std_offset
+
+    datetime
+    |> to_iso_days()
+    # Subtract total original offset in order to get UTC and add the new offset
+    |> Calendar.ISO.add_day_fraction_to_iso_days(offset - total_offset, 86400)
+    |> calendar.naive_datetime_from_iso_days()
+  end
+
+  defp datetime_to_string(year, month, day, hour, minute, second, microsecond, format) do
+    Calendar.ISO.date_to_string(year, month, day, format) <>
+      "T" <>
+      Calendar.ISO.time_to_string(hour, minute, second, microsecond, format)
   end
 
   @doc """
   Parses the extended "Date and time of day" format described by
-  [ISO 8601:2004](https://en.wikipedia.org/wiki/ISO_8601).
+  [ISO 8601:2019](https://en.wikipedia.org/wiki/ISO_8601).
 
   Since ISO 8601 does not include the proper time zone, the given
   string will be converted to UTC and its offset in seconds will be
@@ -973,9 +1029,6 @@ defmodule DateTime do
   As specified in the standard, the separator "T" may be omitted if
   desired as there is no ambiguity within this function.
 
-  The year parsed by this function is limited to four digits and,
-  while ISO 8601 allows datetimes to specify 24:00:00 as the zero
-  hour of the next day, this notation is not supported by Elixir.
   Note leap seconds are not supported by the built-in Calendar.ISO.
 
   ## Examples

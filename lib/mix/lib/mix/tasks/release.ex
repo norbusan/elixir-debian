@@ -168,11 +168,11 @@ defmodule Mix.Tasks.Release do
 
   You can run the release in daemon mode with the command:
 
-      bin/RELEASE_NAME daemon_iex
+      bin/RELEASE_NAME daemon
 
   In daemon mode, the system is started on the background via
-  [run_erl](http://erlang.org/doc/man/run_erl.html). You may also
-  want to enable [heart](http://erlang.org/doc/man/heart.html)
+  [`run_erl`](https://erlang.org/doc/man/run_erl.html). You may also
+  want to enable [`heart`](https://erlang.org/doc/man/heart.html)
   in daemon mode so it automatically restarts the system in case
   of crashes. See the generated `releases/RELEASE_VSN/env.sh` file.
 
@@ -195,7 +195,7 @@ defmodule Mix.Tasks.Release do
 
   While daemons are not available on Windows, it is possible to install a
   released system as a service on Windows with the help of
-  [erlsrv](http://erlang.org/doc/man/erlsrv.html). This can be done by
+  [`erlsrv`](https://erlang.org/doc/man/erlsrv.html). This can be done by
   running:
 
       bin/RELEASE_NAME install
@@ -208,7 +208,7 @@ defmodule Mix.Tasks.Release do
   the service and then start it from the release root as follows:
 
       bin/demo install
-      erts-VSN/bin/erlsrv.exs start demo_demo
+      erts-VSN/bin/erlsrv.exe start demo_demo
 
   The name of the service is `demo_demo` because the name is built
   by concatenating the node name with the release name. Since Elixir
@@ -248,7 +248,7 @@ defmodule Mix.Tasks.Release do
   the following must be the same between the host and the target:
 
     * Target architecture (for example, x86_64 or ARM)
-    * Target vendor + operating system  (for example, Windows, Linux, or Darwin/macOS)
+    * Target vendor + operating system (for example, Windows, Linux, or Darwin/macOS)
     * Target ABI (for example, musl or gnu)
 
   This is often represented in the form of target triples, for example,
@@ -392,11 +392,11 @@ defmodule Mix.Tasks.Release do
 
     * `:strip_beams` - controls if BEAM files should have their debug information,
       documentation chunks, and other non-essential metadata removed. Defaults to
-      `true`. Maybe be set to `false` to disable striping. Also accepts
+      `true`. May be set to `false` to disable stripping. Also accepts
       `[keep: ["Docs", "Dbgi"]]` to keep certain chunks that are usually stripped.
 
     * `:cookie` - a string representing the Erlang Distribution cookie. If this
-      option is not set, a random cookie is  written to the `releases/COOKIE` file
+      option is not set, a random cookie is written to the `releases/COOKIE` file
       when the first release is assembled. At runtime, we will first attempt
       to fetch the cookie from the `RELEASE_COOKIE` environment variable and
       then we'll read the `releases/COOKIE` file.
@@ -449,8 +449,8 @@ defmodule Mix.Tasks.Release do
           ]
 
     * `:rel_templates_path` - the path to find template files that are copied to
-      the release, such as "vm.args.eex", "env.sh.eex" (or "env.bat.eex"), and
-      "overlays". Defaults to "rel" in the project root.
+      the release, such as "vm.args.eex", "remote.vm.args.eex", "env.sh.eex"
+      (or "env.bat.eex"), and "overlays". Defaults to "rel" in the project root.
 
     * `:overlays` - a list of directories with extra files to be copied
       as is to the release. The "overlays" directory at `:rel_templates_path`
@@ -520,20 +520,16 @@ defmodule Mix.Tasks.Release do
   ### vm.args and env.sh (env.bat)
 
   Developers may want to customize the VM flags and environment variables
-  given when the release starts. This is typically done by customizing
-  two files inside your release: `releases/RELEASE_VSN/vm.args` and
-  `releases/RELEASE_VSN/env.sh` (or `env.bat` on Windows).
+  given when the release starts. The simplest way to customize those files
+  is by running `mix release.init`. The Mix task will copy custom
+  `rel/vm.args.eex`, `rel/remote.vm.args.eex`,  `rel/env.sh.eex`, and
+  `rel/env.bat.eex` files to your project root. You can modify those files
+  and they will be evaluated every time you perform a new release. Those
+  files are regular EEx templates and they have a single assign, called
+  `@release`, with the `Mix.Release` struct.
 
-  However, instead of modifying those files after the release is built,
-  the simplest way to customize those files is by running `mix release.init`.
-  The Mix task will copy custom `rel/vm.args.eex`, `rel/env.sh.eex`, and
-  `rel/env.bat.eex` files to your project root. You can modify those
-  files and they will be evaluated every time you perform a new release.
-  Those files are regular EEx templates and they have a single assign,
-  called `@release`, with the `Mix.Release` struct.
-
-  The `vm.args` file may contain any of the VM flags accepted by the [`erl`
-  command](http://erlang.org/doc/man/erl.html).
+  The `vm.args` and `remote.vm.args` files may contain any of the VM flags
+  accepted by the [`erl` command](https://erlang.org/doc/man/erl.html).
 
   The `env.sh` and `env.bat` is used to set environment variables.
   In there, you can set vars such as `RELEASE_NODE`, `RELEASE_COOKIE`,
@@ -543,10 +539,10 @@ defmodule Mix.Tasks.Release do
   `RELEASE_COMMAND` have already been set, so you can rely on them.
   See the section on environment variables for more information.
 
-  Furthermore, while `vm.args` is static, you can use `env.sh` and
-  `env.bat` to dynamically set VM options. For example, if you want
-  to make sure the Erlang Distribution listens only on a given port
-  known at runtime, you can set the following:
+  Furthermore, while the `vm.args` files are static, you can use
+  `env.sh` and `env.bat` to dynamically set VM options. For example,
+  if you want to make sure the Erlang Distribution listens only on
+  a given port known at runtime, you can set the following:
 
       case $RELEASE_COMMAND in
         start*|daemon*)
@@ -691,9 +687,11 @@ defmodule Mix.Tasks.Release do
       detect you are inside a release, you can check for release specific
       environment variables, such as `RELEASE_NODE` or `RELEASE_MODE`
 
-    * `rel/vm.args.eex` - a template file that is copied into every release
-      and provides static configuration of the Erlang Virtual Machine and
-      other runtime flags
+    * `rel/vm.args.eex` and `rel/remote.vm.args.eex` - template files that
+      are copied into every release and provides static configuration of the
+      Erlang Virtual Machine and other runtime flags. `vm.args` runs on
+      `start`, `daemon`, and `eval` commands. `remote.vm.args` configures
+      the VM for `remote` and `rpc` commands
 
     * `rel/env.sh.eex` and `rel/env.bat.eex` - template files that are copied
       into every release and are executed on every command to set up environment
@@ -720,6 +718,7 @@ defmodule Mix.Tasks.Release do
           env.sh
           iex
           iex.bat
+          remote.vm.args
           runtime.exs
           start.boot
           start.script
@@ -730,6 +729,12 @@ defmodule Mix.Tasks.Release do
         COOKIE
         start_erl.data
       tmp/
+
+  We document this structure for completeness. In practice, developers
+  should not modify any of those files after the release is assembled.
+  Instead use env scripts, custom config provider, overlays, and all
+  other mechanisms described in this guide to configure how your release
+  works.
 
   ## Environment variables
 
@@ -756,6 +761,8 @@ defmodule Mix.Tasks.Release do
       release. The custom value must be an existing release version in
       the `releases/` directory
 
+    * `RELEASE_PROG` - the command line executable used to start the release
+
   The following variables can be set before you invoke the release or
   inside `env.sh` and `env.bat`:
 
@@ -771,6 +778,9 @@ defmodule Mix.Tasks.Release do
 
     * `RELEASE_VM_ARGS` - the location of the vm.args file. It can be set
       to a custom path
+
+    * `RELEASE_REMOTE_VM_ARGS` - the location of the remote.vm.args file.
+      It can be set to a custom path
 
     * `RELEASE_TMP` - the directory in the release to write temporary
       files to. It can be set to a custom directory. It defaults to
@@ -924,7 +934,7 @@ defmodule Mix.Tasks.Release do
   If you were to perform a hot code upgrade in such an application, it would
   crash, because in the initial version the state was just a counter
   but in the new version the state is a tuple. Furthermore, you changed
-  the format of the `call` message from `:bump` to  `{:bump, by}` and
+  the format of the `call` message from `:bump` to `{:bump, by}` and
   the process may have both old and new messages temporarily mixed, so
   we need to handle both. The final version would be:
 
@@ -962,13 +972,13 @@ defmodule Mix.Tasks.Release do
   hot code upgrade it. This is one of the many steps necessary
   to perform hot code upgrades and it must be taken into account by
   every process and application being upgraded in the system.
-  The [`.appup` cookbook](http://erlang.org/doc/design_principles/appup_cookbook.html)
+  The [`.appup` cookbook](https://erlang.org/doc/design_principles/appup_cookbook.html)
   provides a good reference and more examples.
 
   Once `.appup`s are created, the next step is to create a `.relup`
   file with all instructions necessary to update the release itself.
   Erlang documentation does provide a chapter on
-  [Creating and Upgrading a Target System](http://erlang.org/doc/system_principles/create_target.html).
+  [Creating and upgrading a target system](https://erlang.org/doc/system_principles/create_target.html).
   [Learn You Some Erlang has a chapter on hot code upgrades](https://learnyousomeerlang.com/relups).
 
   Overall, there are many steps, complexities and assumptions made
@@ -1168,12 +1178,14 @@ defmodule Mix.Tasks.Release do
       end
 
     vm_args_path = Path.join(version_path, "vm.args")
+    remote_vm_args_path = Path.join(version_path, "remote.vm.args")
     cookie_path = Path.join(release.path, "releases/COOKIE")
     start_erl_path = Path.join(release.path, "releases/start_erl.data")
     config_provider_path = {:system, "RELEASE_SYS_CONFIG", ".config"}
 
     with :ok <- make_boot_scripts(release, version_path, consolidation_path),
          :ok <- make_vm_args(release, vm_args_path),
+         :ok <- make_vm_args(release, remote_vm_args_path),
          :ok <- Mix.Release.make_sys_config(release, sys_config, config_provider_path),
          :ok <- Mix.Release.make_cookie(release, cookie_path),
          :ok <- Mix.Release.make_start_erl(release, start_erl_path) do
@@ -1259,7 +1271,7 @@ defmodule Mix.Tasks.Release do
   end
 
   defp make_vm_args(release, path) do
-    vm_args_template = Mix.Release.rel_templates_path(release, "vm.args.eex")
+    vm_args_template = Mix.Release.rel_templates_path(release, "#{Path.basename(path)}.eex")
 
     if File.exists?(vm_args_template) do
       copy_template(vm_args_template, path, [release: release], force: true)
@@ -1423,7 +1435,7 @@ defmodule Mix.Tasks.Release do
     end
   end
 
-  defp executable!(path), do: File.chmod!(path, 0o744)
+  defp executable!(path), do: File.chmod!(path, 0o755)
 
   # Helper functions
 

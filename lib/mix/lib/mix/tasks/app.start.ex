@@ -6,13 +6,13 @@ defmodule Mix.Tasks.App.Start do
   @moduledoc """
   Starts all registered apps.
 
-  First this task guarantees that all dependencies are in place
-  and that the current project has been compiled. Then the current
+  First, this task guarantees that all dependencies are in place
+  and that the current project has been compiled. Then, the current
   application is started as a temporary application, unless
   `:start_permanent` is set to `true` in your project configuration
-  or the `--permanent` option is given, then it's started as permanent,
-  which guarantees the node will shut down if the application
-  crashes permanently.
+  or the `--permanent` option is given. Setting it to permanent
+  guarantees the node will shut down if the application terminates
+  (typically because its root supervisor has terminated).
 
   ## Configuration
 
@@ -66,7 +66,24 @@ defmodule Mix.Tasks.App.Start do
 
   @doc false
   def start(apps, type) do
-    Enum.each(apps, &ensure_all_started(&1, type))
+    for app <- apps do
+      case Application.ensure_all_started(app, type) do
+        {:ok, _} ->
+          :ok
+
+        {:error, {app, reason}} when type == :permanent ->
+          # We need to stop immediately because application_controller is
+          # shutting down all applications. Since any work we do here is prone
+          # to race conditions as whatever process we call may no longer exist,
+          # we print a quick message, and then we block by calling `System.stop/1`.
+          Mix.shell().error(["** (Mix) ", could_not_start(app, reason)])
+          System.stop(1)
+
+        {:error, {app, reason}} ->
+          Mix.raise(could_not_start(app, reason))
+      end
+    end
+
     :ok
   end
 
@@ -75,31 +92,6 @@ defmodule Mix.Tasks.App.Start do
       Mix.Project.umbrella?(config) -> Enum.map(Mix.Dep.Umbrella.cached(), & &1.app)
       app = config[:app] -> [app]
       true -> []
-    end
-  end
-
-  defp ensure_all_started(app, type) do
-    case Application.start(app, type) do
-      :ok ->
-        :ok
-
-      {:error, {:already_started, ^app}} ->
-        :ok
-
-      {:error, {:not_started, dep}} ->
-        :ok = ensure_all_started(dep, type)
-        ensure_all_started(app, type)
-
-      {:error, reason} when type == :permanent ->
-        # We need to stop immediately because application_controller is
-        # shutting down all applications. Since any work we do here is prone
-        # to race conditions as whatever process we call may no longer exist,
-        # we print a quick message and then block by calling `System.stop/1`.
-        Mix.shell().error(["** (Mix) ", could_not_start(app, reason)])
-        System.stop(1)
-
-      {:error, reason} ->
-        Mix.raise(could_not_start(app, reason))
     end
   end
 

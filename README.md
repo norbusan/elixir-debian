@@ -1,4 +1,4 @@
-# ![Elixir](https://github.com/elixir-lang/elixir-lang.github.com/raw/master/images/logo/logo.png)
+<img src="https://github.com/elixir-lang/elixir-lang.github.com/raw/master/images/logo/logo.png" width="200" alt="Elixir">
 
 [![CI](https://github.com/elixir-lang/elixir/workflows/CI/badge.svg?branch=master)](https://github.com/elixir-lang/elixir/actions?query=branch%3Amaster+workflow%3ACI) [![Build status](https://api.cirrus-ci.com/github/elixir-lang/elixir.svg?branch=master)](https://cirrus-ci.com/github/elixir-lang/elixir)
 
@@ -29,7 +29,7 @@ For the many different ways to install Elixir,
 [see our installation instructions on the website](https://elixir-lang.org/install.html).
 To compile from source, you can follow the steps below.
 
-First, [install Erlang](https://elixir-lang.org/install.html#installing-erlang). Then clone this repository to your machine, compile and test it:
+First, [install Erlang](https://elixir-lang.org/install.html#installing-erlang). After that, clone this repository to your machine, compile and test it:
 
 ```sh
 git clone https://github.com/elixir-lang/elixir.git
@@ -48,10 +48,10 @@ If Elixir fails to build (specifically when pulling in a new version via
 If tests pass, you can use Interactive Elixir by running `bin/iex` in your terminal.
 
 However, if tests fail, it is likely that you have an outdated Erlang/OTP version
-(Elixir requires Erlang/OTP 21.0 or later). You can check your Erlang/OTP version
+(Elixir requires Erlang/OTP 22.0 or later). You can check your Erlang/OTP version
 by calling `erl` in the command line. You will see some information similar to:
 
-    Erlang/OTP 21 [erts-9.0] [smp:2:2] [async-threads:10] [kernel-poll:false]
+    Erlang/OTP 22 [erts-9.0] [smp:2:2] [async-threads:10] [kernel-poll:false]
 
 If you have properly set up your dependencies and tests still fail,
 you may want to open up a bug report, as explained next.
@@ -131,9 +131,9 @@ With tests running and passing, you are ready to contribute to Elixir and
 We have saved some excellent pull requests we have received in the past in
 case you are looking for some examples:
 
-* [Implement Enum.member? - Pull Request](https://github.com/elixir-lang/elixir/pull/992)
-* [Add String.valid? - Pull Request](https://github.com/elixir-lang/elixir/pull/1058)
-* [Implement capture_io for ExUnit - Pull Request](https://github.com/elixir-lang/elixir/pull/1059)
+* [Implement Enum.member? - Pull request](https://github.com/elixir-lang/elixir/pull/992)
+* [Add String.valid? - Pull request](https://github.com/elixir-lang/elixir/pull/1058)
+* [Implement capture_io for ExUnit - Pull request](https://github.com/elixir-lang/elixir/pull/1059)
 
 ### Reviewing changes
 

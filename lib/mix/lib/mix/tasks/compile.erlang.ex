@@ -84,11 +84,10 @@ defmodule Mix.Tasks.Compile.Erlang do
 
     compile_path = Path.relative_to(compile_path, File.cwd!())
 
-    tuples =
-      files
-      |> scan_sources(include_path, source_paths)
-      |> sort_dependencies()
-      |> Enum.map(&annotate_target(&1, compile_path, opts[:force]))
+    {erls, tuples} =
+      Enum.unzip(scan_sources(files, include_path, source_paths, compile_path, opts))
+
+    opts = [parallel: MapSet.new(find_parallel(erls))] ++ opts
 
     Erlang.compile(manifest(), tuples, opts, fn input, _output ->
       # We're purging the module because a previous compiler (for example, Phoenix)
@@ -100,9 +99,10 @@ defmodule Mix.Tasks.Compile.Erlang do
       file = Erlang.to_erl_file(Path.rootname(input, ".erl"))
 
       case :compile.file(file, erlc_options) do
-        {:error, :badarg} ->
+        # TODO: Don't handle {:error, :badarg} when we require OTP 24
+        error when error == :error or error == {:error, :badarg} ->
           message =
-            "Compiling Erlang #{inspect(file)} failed with ArgumentError, probably because of invalid :erlc_options"
+            "Compiling Erlang file #{inspect(file)} failed, probably because of invalid :erlc_options"
 
           Mix.raise(message)
 
@@ -123,12 +123,21 @@ defmodule Mix.Tasks.Compile.Erlang do
 
   ## Internal helpers
 
-  defp scan_sources(files, include_path, source_paths) do
+  defp scan_sources(files, include_path, source_paths, compile_path, opts) do
     include_paths = [include_path | source_paths]
-    Enum.reduce(files, [], &scan_source(&2, &1, include_paths)) |> Enum.reverse()
+
+    files
+    |> Task.async_stream(&scan_source(&1, include_paths, compile_path, opts),
+      timeout: :infinity,
+      ordered: false
+    )
+    |> Enum.flat_map(fn
+      {:ok, {:ok, erl_file, target_tuple}} -> [{erl_file, target_tuple}]
+      {:ok, :error} -> []
+    end)
   end
 
-  defp scan_source(acc, file, include_paths) do
+  defp scan_source(file, include_paths, compile_path, opts) do
     erl_file = %{
       file: file,
       module: module_from_artifact(file),
@@ -140,10 +149,12 @@ defmodule Mix.Tasks.Compile.Erlang do
 
     case :epp.parse_file(Erlang.to_erl_file(file), include_paths, []) do
       {:ok, forms} ->
-        [List.foldl(tl(forms), erl_file, &do_form(file, &1, &2)) | acc]
+        erl_file = List.foldl(tl(forms), erl_file, &do_form(file, &1, &2))
+        target_tuple = annotate_target(erl_file, compile_path, opts[:force])
+        {:ok, erl_file, target_tuple}
 
       {:error, _error} ->
-        acc
+        :error
     end
   end
 
@@ -173,40 +184,24 @@ defmodule Mix.Tasks.Compile.Erlang do
     end
   end
 
-  defp sort_dependencies(erls) do
-    graph = :digraph.new()
+  defp find_parallel(erls) do
+    serial = MapSet.new(find_dependencies(erls))
 
-    _ =
-      for erl <- erls do
-        :digraph.add_vertex(graph, erl.module, erl)
-      end
+    erls
+    |> Enum.reject(&(&1.module in serial))
+    |> Enum.map(& &1.file)
+  end
 
-    _ =
-      for erl <- erls do
-        _ = for b <- erl.behaviours, do: :digraph.add_edge(graph, b, erl.module)
+  defp find_dependencies(erls) do
+    Enum.flat_map(erls, fn erl ->
+      transforms =
+        Enum.flat_map(erl.compile, fn
+          {:parse_transform, transform} -> [transform]
+          _ -> []
+        end)
 
-        _ =
-          for c <- erl.compile do
-            case c do
-              {:parse_transform, transform} -> :digraph.add_edge(graph, transform, erl.module)
-              _ -> :ok
-            end
-          end
-
-        :ok
-      end
-
-    result =
-      case :digraph_utils.topsort(graph) do
-        false ->
-          erls
-
-        mods ->
-          for m <- mods, do: elem(:digraph.vertex(graph, m), 1)
-      end
-
-    :digraph.delete(graph)
-    result
+      transforms ++ erl.behaviours
+    end)
   end
 
   defp annotate_target(erl, compile_path, force) do
